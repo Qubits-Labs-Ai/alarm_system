@@ -26,11 +26,41 @@ export function UnhealthyBarChart({
       <div key="tooltip" className="bg-dashboard-chart-tooltip-bg p-3 rounded shadow-lg border">
         <p className="font-medium text-foreground">{payload.source}</p>
         <p className="text-sm text-muted-foreground">
-          Hits: <span className="font-medium text-foreground">{payload.hits}</span>
+          Flood count: <span className="font-medium text-foreground">{payload.hits}</span>
         </p>
-        <p className="text-sm text-muted-foreground">
+        {/* <p className="text-sm text-muted-foreground">
           Over threshold by: <span className="font-medium text-red-600">{payload.over_by}</span>
-        </p>
+        </p> */}
+        {(payload.priority || payload.priority_severity) && (
+          <p className="text-sm text-muted-foreground">
+            Priority: <span className="font-medium text-foreground">{payload.priority || payload.priority_severity}</span>
+          </p>
+        )}
+        {payload.condition && (
+          <p className="text-sm text-muted-foreground">
+            Condition: <span className="font-medium text-foreground">{payload.condition}</span>
+          </p>
+        )}
+        {payload.action && payload.action !== 'Not Provided' && (
+          <p className="text-sm text-muted-foreground">
+            Action: <span className="font-medium text-foreground">{payload.action}</span>
+          </p>
+        )}
+        {payload.location_tag && (
+          <p className="text-sm text-muted-foreground">
+            Location: <span className="font-medium text-foreground">{payload.location_tag}</span>
+          </p>
+        )}
+        {payload.description && payload.description !== 'Not Provided' && (
+          <p className="text-sm text-muted-foreground">
+            Description: <span className="font-medium text-foreground">{payload.description}</span>
+          </p>
+        )}
+        {payload.setpoint_value !== undefined && payload.setpoint_value !== null && (
+          <p className="text-sm text-muted-foreground">
+            Setpoint: <span className="font-medium text-foreground">{String(payload.setpoint_value)}{payload.raw_units ? ` ${payload.raw_units}` : ''}</span>
+          </p>
+        )}
         <p className="text-xs text-muted-foreground mt-1">
           {new Date(payload.bin_start).toLocaleString()} - {new Date(payload.bin_end).toLocaleString()}
         </p>
@@ -68,7 +98,7 @@ export function UnhealthyBarChart({
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="text-lg font-semibold text-foreground">
-              Unhealthy Sources
+              Unhealthy Bar Chart
             </CardTitle>
             <CardDescription>
               Sources exceeding threshold of {threshold} hits
@@ -113,7 +143,7 @@ export function UnhealthyBarChart({
                   top: 20,
                   right: 30,
                   left: 20,
-                  bottom: 5,
+                  bottom: 70,
                 }}
               >
                 <CartesianGrid 
@@ -125,15 +155,20 @@ export function UnhealthyBarChart({
                   dataKey="source" 
                   tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
                   axisLine={{ stroke: 'var(--border)' }}
+                  angle={-45}
+                  textAnchor="end"
+                  height={70}
+                  label={{ value: 'Alarm Source', position: 'bottom', offset: 10, fill: 'var(--muted-foreground)' }}
                 />
                 <YAxis 
                   tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
                   axisLine={{ stroke: 'var(--border)' }}
+                  label={{ value: 'Flood count', angle: -90, position: 'insideLeft', offset: 10, fill: 'var(--muted-foreground)' }}
                 />
                 <Tooltip 
                   content={({ active, payload }) => {
                     if (active && payload && payload.length) {
-                      return formatTooltip(payload[0].value as number, payload[0].name as string, payload[0]);
+                      return formatTooltip(payload[0].value as number, 'Flood count', payload[0]);
                     }
                     return null;
                   }}

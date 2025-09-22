@@ -316,13 +316,13 @@ def get_pvcI_unhealthy_sources(
                             continue
                         thr = int(det.get("threshold", alarm_threshold) or alarm_threshold)
 
-                        # Priority per-bin based on how much the threshold is exceeded
+                        # Priority per-bin based on how much the threshold is exceeded (severity label)
                         if hits >= thr + 15:
-                            prio = "High"
+                            prio_sev = "High"
                         elif hits >= thr + 5:
-                            prio = "Medium"
+                            prio_sev = "Medium"
                         else:
-                            prio = "Low"
+                            prio_sev = "Low"
 
                         record = {
                             "event_time": bstart.isoformat(),
@@ -332,13 +332,22 @@ def get_pvcI_unhealthy_sources(
                             "threshold": thr,
                             "over_by": int(det.get("over_by", max(0, hits - thr))),
                             "rate_per_min": float(det.get("rate_per_min", round(hits / 10.0, 2))),
-                            "location_tag": None,
-                            "condition": "Alarm Threshold Exceeded",
-                            "action": "Monitor and Investigate",
-                            "priority": prio,
-                            "description": f"Source exceeded {thr} alarms in 10-minute window",
+                            # pass-through human fields when present in JSON
+                            "location_tag": det.get("location_tag"),
+                            "condition": det.get("condition", "Alarm Threshold Exceeded"),
+                            "action": det.get("action", "Monitor and Investigate"),
+                            # keep both: raw priority from JSON (if any) and computed severity label
+                            "priority": det.get("priority"),
+                            "priority_severity": prio_sev,
+                            "description": det.get("description", f"Source exceeded {thr} alarms in 10-minute window"),
                             "value": hits,
                             "units": "alarms",
+                            # pass-through extras when available in saved JSON
+                            "flood_count": det.get("flood_count"),
+                            "peak_window_start": det.get("peak_window_start"),
+                            "peak_window_end": det.get("peak_window_end"),
+                            "setpoint_value": det.get("setpoint_value"),
+                            "raw_units": det.get("units"),
                         }
                         records.append(record)
 

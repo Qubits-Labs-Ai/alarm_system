@@ -436,6 +436,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
                 height={100}
                 tick={{ fontSize: 10 }}
                 interval={0}
+                label={{ value: 'Alarm Source', position: 'insideBottom', offset: -5 }}
                 tickFormatter={(value) => {
                   // Truncate long source names for better readability
                   if (value.length > 15) {
@@ -445,7 +446,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
                 }}
               />
               <YAxis 
-                label={{ value: 'Total Hits', angle: -90, position: 'insideLeft' }}
+                label={{ value: 'Total Hits (per 10-min bin)', angle: -90, position: 'insideLeft', offset: 10 }}
                 tick={{ fontSize: 12 }}
               />
               
