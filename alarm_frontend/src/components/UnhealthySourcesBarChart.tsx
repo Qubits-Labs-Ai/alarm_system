@@ -30,6 +30,10 @@ interface UnhealthyRecord {
   description?: string;
   value?: number;
   units?: string;
+  // Extended fields from backend saved JSON
+  flood_count?: number;
+  peak_window_start?: string;
+  peak_window_end?: string;
 }
 
 interface UnhealthySourcesData {
@@ -47,57 +51,137 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
   const [data, setData] = useState<UnhealthySourcesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState<string>('24h');
+  const [timeRange, setTimeRange] = useState<string>('1h');
   const [sortBy, setSortBy] = useState<'hits' | 'alphabetical'>('hits');
   const [topLimit, setTopLimit] = useState<number>(20);
+  // Month and window controls (mirror timeline chart)
+  const [selectedMonth, setSelectedMonth] = useState<string>('2025-01'); // 'all' or 'YYYY-MM'
+  const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
+  const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
 
   useEffect(() => {
     fetchUnhealthySources();
-  }, [timeRange]);
+  }, [timeRange, selectedMonth, windowMode]);
+
+  // Load months list once on mount
+  useEffect(() => {
+    loadAvailableMonths();
+  }, []);
+
+  // Helpers
+  const getWindowMs = (tr: string) => {
+    switch (tr) {
+      case 'all': return null as unknown as number;
+      case '1h': return 1 * 60 * 60 * 1000;
+      case '6h': return 6 * 60 * 60 * 1000;
+      case '24h': return 24 * 60 * 60 * 1000;
+      case '7d': return 7 * 24 * 60 * 60 * 1000;
+      default: return 24 * 60 * 60 * 1000;
+    }
+  };
+
+  const loadAvailableMonths = async () => {
+    try {
+      const { fetchUnhealthySources } = await import('../api/plantHealth');
+      const res = await fetchUnhealthySources();
+      const records: any[] = res?.records || [];
+      const monthMap = new Map<string, { start: Date; end: Date }>();
+      for (const r of records) {
+        const ds = r.peak_window_start || r.event_time || r.bin_start || r.bin_end;
+        if (!ds) continue;
+        const d = new Date(ds);
+        const value = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+        if (!monthMap.has(value)) {
+          const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0));
+          const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0, 0));
+          monthMap.set(value, { start, end });
+        }
+      }
+      const items = Array.from(monthMap.entries()).map(([value, range]) => ({
+        value,
+        label: new Date(`${value}-01T00:00:00Z`).toLocaleString(undefined, { month: 'short', year: 'numeric' }),
+        start: range.start,
+        end: range.end,
+      })).sort((a, b) => a.start.getTime() - b.start.getTime());
+      setAvailableMonths(items);
+    } catch (e) {
+      console.warn('Failed to load months for bar chart', e);
+    }
+  };
 
   const fetchUnhealthySources = async (skipTimeFilter = false) => {
     try {
       setLoading(true);
       setError(null);
       
-      let startTimeStr, endTimeStr;
-      
-      if (!skipTimeFilter) {
-        // Calculate time range
-        const endTime = new Date();
-        const startTime = new Date();
-        
-        switch (timeRange) {
-          case '1h':
-            startTime.setHours(endTime.getHours() - 1);
-            break;
-          case '6h':
-            startTime.setHours(endTime.getHours() - 6);
-            break;
-          case '24h':
-            startTime.setDate(endTime.getDate() - 1);
-            break;
-          case '7d':
-            startTime.setDate(endTime.getDate() - 7);
-            break;
-          default:
-            startTime.setDate(endTime.getDate() - 1);
-        }
+      const { fetchUnhealthySources } = await import('../api/plantHealth');
 
-        startTimeStr = startTime.toISOString();
-        endTimeStr = endTime.toISOString();
-        console.log(`Fetching unhealthy sources from ${startTimeStr} to ${endTimeStr}`);
-      } else {
+      if (skipTimeFilter) {
         console.log('Fetching all historical unhealthy sources (no time filter)');
+        const result = await fetchUnhealthySources();
+        setData(result);
+        return;
+      }
+
+      const windowMs = getWindowMs(timeRange);
+      let result: any = null;
+
+      if (selectedMonth === 'all') {
+        if (timeRange === 'all') {
+          result = await fetchUnhealthySources();
+        } else {
+          const full = await fetchUnhealthySources();
+          const recs: any[] = full?.records || [];
+          const ts = (r: any) => new Date(r.peak_window_start || r.event_time || r.bin_start || r.bin_end || Date.now()).getTime();
+          const flood = (r: any) => (r.flood_count ?? r.hits ?? 0) as number;
+          if (recs.length === 0) {
+            result = full;
+          } else {
+            let anchor = 0;
+            if (windowMode === 'peak') {
+              let best = recs[0];
+              for (const r of recs) if (flood(r) > flood(best)) best = r;
+              anchor = ts(best);
+            } else {
+              anchor = recs.reduce((m, r) => Math.max(m, ts(r)), 0);
+            }
+            const end = new Date(anchor);
+            const start = new Date(end.getTime() - (windowMs as number));
+            result = await fetchUnhealthySources(start.toISOString(), end.toISOString());
+          }
+        }
+      } else {
+        // Month range
+        const month = availableMonths.find(m => m.value === selectedMonth);
+        const monthStart = month?.start || new Date(`${selectedMonth}-01T00:00:00Z`);
+        const monthEnd = month?.end || new Date(new Date(`${selectedMonth}-01T00:00:00Z`).getTime() + 32*24*60*60*1000);
+
+        if (timeRange === 'all') {
+          result = await fetchUnhealthySources(monthStart.toISOString(), monthEnd.toISOString());
+        } else {
+          const monthFull = await fetchUnhealthySources(monthStart.toISOString(), monthEnd.toISOString());
+          const recs: any[] = monthFull?.records || [];
+          const ts = (r: any) => new Date(r.peak_window_start || r.event_time || r.bin_start || r.bin_end || Date.now()).getTime();
+          const flood = (r: any) => (r.flood_count ?? r.hits ?? 0) as number;
+          if (recs.length === 0) {
+            result = monthFull;
+          } else {
+            let anchor = 0;
+            if (windowMode === 'peak') {
+              let best = recs[0];
+              for (const r of recs) if (flood(r) > flood(best)) best = r;
+              anchor = ts(best);
+            } else {
+              anchor = recs.reduce((m, r) => Math.max(m, ts(r)), 0);
+            }
+            let end = new Date(Math.min(anchor, monthEnd.getTime()));
+            let start = new Date(Math.max(monthStart.getTime(), end.getTime() - (windowMs as number)));
+            result = await fetchUnhealthySources(start.toISOString(), end.toISOString());
+          }
+        }
       }
       
-      const { fetchUnhealthySources } = await import('../api/plantHealth');
-      const result = await fetchUnhealthySources(
-        startTimeStr,
-        endTimeStr
-      );
-      
-      console.log('Unhealthy sources API response:', result);
+      console.log('Unhealthy sources API response (bar):', result);
       setData(result);
       
     } catch (err) {
@@ -109,7 +193,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
     }
   };
 
-  // Process data for bar chart - Extract actual alarm sources from records
+  // Process data for bar chart - Extract actual alarm sources from records (using flood_count)
   const processedData = React.useMemo(() => {
     if (!data || !data.records) return [];
 
@@ -118,10 +202,10 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
     // Group by actual alarm source (not filename)
     const sourceMap = new Map<string, {
       source: string;
-      totalHits: number;
+      totalFlood: number;
       incidents: number;
-      maxHits: number;
-      avgHits: number;
+      maxFlood: number;
+      avgFlood: number;
       latestRecord: UnhealthyRecord;
       priority: string;
       allRecords: UnhealthyRecord[];
@@ -144,25 +228,28 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
       }
       
       // Log the actual source for debugging
-      console.log('Processing source:', actualSource, 'with hits:', record.hits);
+      const flood = (record as any).flood_count ?? record.hits ?? 0;
+      console.log('Processing source:', actualSource, 'with flood:', flood);
 
       const existing = sourceMap.get(actualSource);
       if (existing) {
-        existing.totalHits += record.hits;
+        existing.totalFlood += flood;
         existing.incidents += 1;
-        existing.maxHits = Math.max(existing.maxHits, record.hits);
+        existing.maxFlood = Math.max(existing.maxFlood, flood);
         existing.allRecords.push(record);
         // Keep the latest record for details
-        if (new Date(record.event_time) > new Date(existing.latestRecord.event_time)) {
+        const recTs = new Date((record as any).peak_window_start || record.event_time).getTime();
+        const exTs = new Date((existing.latestRecord as any).peak_window_start || existing.latestRecord.event_time).getTime();
+        if (recTs > exTs) {
           existing.latestRecord = record;
         }
       } else {
         sourceMap.set(actualSource, {
           source: actualSource,
-          totalHits: record.hits,
+          totalFlood: flood,
           incidents: 1,
-          maxHits: record.hits,
-          avgHits: record.hits,
+          maxFlood: flood,
+          avgFlood: flood,
           latestRecord: record,
           priority: record.priority || 'Medium',
           allRecords: [record]
@@ -173,12 +260,12 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
     // Convert to array and calculate averages
     let result = Array.from(sourceMap.values()).map(item => ({
       ...item,
-      avgHits: Math.round((item.totalHits / item.incidents) * 10) / 10
+      avgFlood: Math.round((item.totalFlood / item.incidents) * 10) / 10
     }));
 
     // Sort data
     if (sortBy === 'hits') {
-      result.sort((a, b) => b.totalHits - a.totalHits);
+      result.sort((a, b) => b.totalFlood - a.totalFlood);
     } else {
       result.sort((a, b) => a.source.localeCompare(b.source));
     }
@@ -197,7 +284,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
       case 'medium': return '#f59e0b'; // Orange
       case 'low': return '#eab308'; // Yellow
       default: 
-        // Fallback based on hits if priority not available
+        // Fallback based on flood count if priority not available
         if (hits > 25) return '#ef4444';
         if (hits > 15) return '#f59e0b';
         return '#eab308';
@@ -218,26 +305,24 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
           
           <div className="space-y-2 text-sm">
             <div className="grid grid-cols-2 gap-2">
-              <div><span className="font-medium text-gray-600">Total Hits:</span></div>
-              <div className="font-semibold text-red-600">{data.totalHits}</div>
+              <div><span className="font-medium text-gray-600">Total Flood:</span></div>
+              <div className="font-semibold text-red-600">{data.totalFlood}</div>
               
               <div><span className="font-medium text-gray-600">Incidents:</span></div>
               <div>{data.incidents}</div>
               
-              <div><span className="font-medium text-gray-600">Max Hits:</span></div>
-              <div className="font-semibold">{data.maxHits}</div>
+              <div><span className="font-medium text-gray-600">Max Flood:</span></div>
+              <div className="font-semibold">{data.maxFlood}</div>
               
-              <div><span className="font-medium text-gray-600">Avg Hits:</span></div>
-              <div>{data.avgHits}</div>
+              <div><span className="font-medium text-gray-600">Avg Flood:</span></div>
+              <div>{data.avgFlood}</div>
             </div>
             
             <hr className="my-2" />
             
             <div className="bg-gray-50 p-2 rounded text-xs">
               <div className="font-medium text-gray-700 mb-1">Latest Incident:</div>
-              <div><span className="font-medium">Start:</span> {new Date(record.event_time).toLocaleString()}</div>
-              <div><span className="font-medium">End:</span> {new Date(record.bin_end).toLocaleString()}</div>
-              <div><span className="font-medium">Duration:</span> 10 minutes</div>
+              <div><span className="font-medium">Peak Window:</span> {new Date((record as any).peak_window_start || record.event_time).toLocaleString()} → {new Date((record as any).peak_window_end || record.bin_end).toLocaleString()}</div>
             </div>
             
             <div><span className="font-medium text-gray-600">Priority:</span> 
@@ -326,6 +411,29 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
+              {/* Month Selector */}
+              <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+                <SelectTrigger className="w-36">
+                  <SelectValue placeholder="Month" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  {availableMonths.map(m => (
+                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {/* Window Mode */}
+              <Select value={windowMode} onValueChange={(v) => setWindowMode(v as any)}>
+                <SelectTrigger className="w-36">
+                  <SelectValue placeholder="Window" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="recent">Most Recent</SelectItem>
+                  <SelectItem value="peak">Peak Activity</SelectItem>
+                </SelectContent>
+              </Select>
+              {/* Time Range */}
               <Select value={timeRange} onValueChange={setTimeRange}>
                 <SelectTrigger className="w-20">
                   <SelectValue />
@@ -335,6 +443,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
                   <SelectItem value="6h">6H</SelectItem>
                   <SelectItem value="24h">24H</SelectItem>
                   <SelectItem value="7d">7D</SelectItem>
+                  <SelectItem value="all">All</SelectItem>
                 </SelectContent>
               </Select>
               <Button variant="outline" size="sm" onClick={fetchUnhealthySources}>
@@ -376,7 +485,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
               Unhealthy Sources Analysis
             </CardTitle>
             <CardDescription>
-              Alarm sources exceeding 10 hits per 10-minute window • Top {processedData.length} sources shown
+              Alarm sources exceeding 10 alarms per 10-minute window • Top {processedData.length} sources shown
               {data?.isHistoricalData && (
                 <div className="text-amber-600 text-sm mt-1">
                   📅 {data.note}
@@ -385,6 +494,28 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
+            {/* Month Selector */}
+            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+              <SelectTrigger className="w-36">
+                <SelectValue placeholder="Month" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                {availableMonths.map(m => (
+                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {/* Window Mode */}
+            <Select value={windowMode} onValueChange={(v) => setWindowMode(v as any)}>
+              <SelectTrigger className="w-36">
+                <SelectValue placeholder="Window" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="recent">Most Recent</SelectItem>
+                <SelectItem value="peak">Peak Activity</SelectItem>
+              </SelectContent>
+            </Select>
             <Select value={topLimit.toString()} onValueChange={(value) => setTopLimit(parseInt(value))}>
               <SelectTrigger className="w-20">
                 <SelectValue />
@@ -400,7 +531,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="hits">By Hits</SelectItem>
+                <SelectItem value="hits">By Flood</SelectItem>
                 <SelectItem value="alphabetical">A-Z</SelectItem>
               </SelectContent>
             </Select>
@@ -413,6 +544,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
                 <SelectItem value="6h">6H</SelectItem>
                 <SelectItem value="24h">24H</SelectItem>
                 <SelectItem value="7d">7D</SelectItem>
+                <SelectItem value="all">All</SelectItem>
               </SelectContent>
             </Select>
             <Button variant="outline" size="sm" onClick={fetchUnhealthySources}>
@@ -446,7 +578,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
                 }}
               />
               <YAxis 
-                label={{ value: 'Total Hits (per 10-min bin)', angle: -90, position: 'insideLeft', offset: 10 }}
+                label={{ value: 'Total Flood Count', angle: -90, position: 'insideLeft', offset: 10 }}
                 tick={{ fontSize: 12 }}
               />
               
@@ -456,16 +588,16 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
                 stroke="#ef4444" 
                 strokeDasharray="5 5" 
                 strokeWidth={2}
-                label={{ value: "Unhealthy Threshold (10)", position: "topLeft", fill: "#ef4444", fontSize: 11 }}
+                label={{ value: "Unhealthy Threshold (10)", position: "insideTopLeft", fill: "#ef4444", fontSize: 11 }}
               />
               
               <Tooltip content={<CustomTooltip />} />
               
-              <Bar dataKey="totalHits" radius={[4, 4, 0, 0]} maxBarSize={60}>
+              <Bar dataKey="totalFlood" radius={[4, 4, 0, 0]} maxBarSize={60}>
                 {processedData.map((entry, index) => (
                   <Cell 
                     key={`cell-${index}`} 
-                    fill={getPriorityColor(entry.priority, entry.totalHits)}
+                    fill={getPriorityColor(entry.priority, entry.totalFlood)}
                   />
                 ))}
               </Bar>
@@ -478,15 +610,15 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
           <div className="flex items-center justify-center gap-6 text-sm">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 bg-red-500 rounded"></div>
-              <span>High Priority (25+ hits)</span>
+              <span>High Priority (25+ flood)</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 bg-orange-500 rounded"></div>
-              <span>Medium Priority (15-24 hits)</span>
+              <span>Medium Priority (15-24 flood)</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 bg-yellow-500 rounded"></div>
-              <span>Low Priority (10-14 hits)</span>
+              <span>Low Priority (10-14 flood)</span>
             </div>
           </div>
           
@@ -502,9 +634,9 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
               </div>
             </div>
             <div className="bg-yellow-50 p-3 rounded-lg">
-              <div className="text-yellow-800 font-semibold">Total Hits</div>
+              <div className="text-yellow-800 font-semibold">Total Flood</div>
               <div className="text-2xl font-bold text-yellow-900">
-                {processedData.reduce((sum, item) => sum + item.totalHits, 0)}
+                {processedData.reduce((sum, item) => sum + item.totalFlood, 0)}
               </div>
             </div>
           </div>
