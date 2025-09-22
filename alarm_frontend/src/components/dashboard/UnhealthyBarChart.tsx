@@ -2,6 +2,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { UnhealthyBar } from '@/types/dashboard';
+import { CHART_GREEN_MEDIUM } from '@/theme/chartColors';
 
 interface UnhealthyBarChartProps {
   data: UnhealthyBar[];
@@ -187,7 +188,7 @@ export function UnhealthyBarChart({
                 />
                 <Bar 
                   dataKey="hits" 
-                  fill="var(--primary)"
+                  fill={CHART_GREEN_MEDIUM}
                   radius={[4, 4, 0, 0]}
                   opacity={0.8}
                 />

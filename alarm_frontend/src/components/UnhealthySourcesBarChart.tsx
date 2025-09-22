@@ -14,6 +14,7 @@ import {
   ReferenceLine,
   Cell
 } from 'recharts';
+import { CHART_GREEN_DARK, CHART_GREEN_LIGHT, CHART_GREEN_MEDIUM, CHART_GREEN_PALE, priorityToGreen, magnitudeToGreen } from '@/theme/chartColors';
 
 interface UnhealthyRecord {
   event_time: string;
@@ -279,16 +280,9 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
 
   // Color mapping for priorities
   const getPriorityColor = (priority: string, hits: number) => {
-    switch (priority?.toLowerCase()) {
-      case 'high': return '#ef4444'; // Red
-      case 'medium': return '#f59e0b'; // Orange
-      case 'low': return '#eab308'; // Yellow
-      default: 
-        // Fallback based on flood count if priority not available
-        if (hits > 25) return '#ef4444';
-        if (hits > 15) return '#f59e0b';
-        return '#eab308';
-    }
+    // Use centralized green palette for consistency
+    if (priority) return priorityToGreen(priority);
+    return magnitudeToGreen(hits || 0);
   };
 
   // Custom tooltip with enhanced source information
@@ -306,13 +300,13 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
           <div className="space-y-2 text-sm">
             <div className="grid grid-cols-2 gap-2">
               <div><span className="font-medium text-gray-600">Total Flood:</span></div>
-              <div className="font-semibold text-red-600">{data.totalFlood}</div>
+              <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>{data.totalFlood}</div>
               
               <div><span className="font-medium text-gray-600">Incidents:</span></div>
               <div>{data.incidents}</div>
               
               <div><span className="font-medium text-gray-600">Max Flood:</span></div>
-              <div className="font-semibold">{data.maxFlood}</div>
+              <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>{data.maxFlood}</div>
               
               <div><span className="font-medium text-gray-600">Avg Flood:</span></div>
               <div>{data.avgFlood}</div>
@@ -326,11 +320,13 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
             </div>
             
             <div><span className="font-medium text-gray-600">Priority:</span> 
-              <span className={`ml-1 px-2 py-1 rounded text-xs font-medium ${
-                record.priority === 'High' ? 'bg-red-100 text-red-800' :
-                record.priority === 'Medium' ? 'bg-orange-100 text-orange-800' :
-                'bg-yellow-100 text-yellow-800'
-              }`}>
+              <span
+                className="ml-1 px-2 py-1 rounded text-xs font-medium"
+                style={{
+                  backgroundColor: CHART_GREEN_PALE,
+                  color: priorityToGreen(record.priority || 'Medium'),
+                }}
+              >
                 {record.priority || 'Medium'}
               </span>
             </div>
@@ -349,7 +345,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
               </div>
             )}
             
-            <div className="text-xs text-gray-500 mt-2 bg-red-50 p-2 rounded">
+            <div className="text-xs text-gray-700 mt-2 p-2 rounded" style={{backgroundColor: CHART_GREEN_PALE}}>
               ⚠️ Threshold: {record.threshold} alarms/10min • Over by: {record.over_by} hits
             </div>
             
@@ -481,7 +477,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-red-500" />
+              <AlertTriangle className="h-5 w-5 text-green-600" />
               Unhealthy Sources Analysis
             </CardTitle>
             <CardDescription>
@@ -585,13 +581,16 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
               {/* Threshold line at 10 */}
               <ReferenceLine 
                 y={10} 
-                stroke="#ef4444" 
+                stroke="#ef4444"
                 strokeDasharray="5 5" 
                 strokeWidth={2}
                 label={{ value: "Unhealthy Threshold (10)", position: "insideTopLeft", fill: "#ef4444", fontSize: 11 }}
               />
               
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip 
+                content={<CustomTooltip />} 
+                cursor={{ fill: 'var(--accent)', opacity: 0.1 }}
+              />
               
               <Bar dataKey="totalFlood" radius={[4, 4, 0, 0]} maxBarSize={60}>
                 {processedData.map((entry, index) => (
@@ -609,33 +608,33 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
         <div className="mt-4 space-y-4">
           <div className="flex items-center justify-center gap-6 text-sm">
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-red-500 rounded"></div>
+              <div className="w-3 h-3 rounded" style={{backgroundColor: CHART_GREEN_DARK}}></div>
               <span>High Priority (25+ flood)</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-orange-500 rounded"></div>
+              <div className="w-3 h-3 rounded" style={{backgroundColor: CHART_GREEN_MEDIUM}}></div>
               <span>Medium Priority (15-24 flood)</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-yellow-500 rounded"></div>
+              <div className="w-3 h-3 rounded" style={{backgroundColor: CHART_GREEN_LIGHT}}></div>
               <span>Low Priority (10-14 flood)</span>
             </div>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
-            <div className="bg-red-50 p-3 rounded-lg">
-              <div className="text-red-800 font-semibold">Total Sources</div>
-              <div className="text-2xl font-bold text-red-900">{processedData.length}</div>
+            <div className="p-3 rounded-lg" style={{backgroundColor: CHART_GREEN_PALE}}>
+              <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>Total Sources</div>
+              <div className="text-2xl font-bold" style={{color: CHART_GREEN_DARK}}>{processedData.length}</div>
             </div>
-            <div className="bg-orange-50 p-3 rounded-lg">
-              <div className="text-orange-800 font-semibold">Total Incidents</div>
-              <div className="text-2xl font-bold text-orange-900">
+            <div className="p-3 rounded-lg" style={{backgroundColor: CHART_GREEN_PALE}}>
+              <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>Total Incidents</div>
+              <div className="text-2xl font-bold" style={{color: CHART_GREEN_DARK}}>
                 {processedData.reduce((sum, item) => sum + item.incidents, 0)}
               </div>
             </div>
-            <div className="bg-yellow-50 p-3 rounded-lg">
-              <div className="text-yellow-800 font-semibold">Total Flood</div>
-              <div className="text-2xl font-bold text-yellow-900">
+            <div className="p-3 rounded-lg" style={{backgroundColor: CHART_GREEN_PALE}}>
+              <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>Total Flood</div>
+              <div className="text-2xl font-bold" style={{color: CHART_GREEN_DARK}}>
                 {processedData.reduce((sum, item) => sum + item.totalFlood, 0)}
               </div>
             </div>

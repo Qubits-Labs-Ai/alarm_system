@@ -6,6 +6,7 @@ import { InsightCards } from '@/components/dashboard/InsightCards';
 import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
 import { ErrorState } from '@/components/dashboard/ErrorState';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
+import UnhealthySourcesWordCloud from '@/components/UnhealthySourcesWordCloud';
 import UnhealthySourcesBarChart from '@/components/UnhealthySourcesBarChart';
 import { useAuth } from '@/hooks/useAuth';
 import { usePlantHealth } from '@/hooks/usePlantHealth';
@@ -245,6 +246,9 @@ export default function DashboardPage() {
             />
 
             <UnhealthySourcesChart />
+
+            {/* New Word Cloud (priority-colored, bins-heavy score) */}
+            <UnhealthySourcesWordCloud />
           </div>
           
           {/* New Simple Bar Chart */}

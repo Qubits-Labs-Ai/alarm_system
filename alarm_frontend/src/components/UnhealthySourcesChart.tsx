@@ -19,6 +19,7 @@ import {
   BarChart,
   Bar
 } from 'recharts';
+import { CHART_GREEN_DARK, CHART_GREEN_LIGHT, CHART_GREEN_MEDIUM, CHART_GREEN_PALE, priorityToGreen } from '@/theme/chartColors';
 
 interface UnhealthyRecord {
   event_time: string;
@@ -311,12 +312,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
 
   // Color mapping for priorities
   const getPriorityColor = (priority: string) => {
-    switch (priority?.toLowerCase()) {
-      case 'high': return '#ef4444';
-      case 'medium': return '#f59e0b';
-      case 'low': return '#10b981';
-      default: return '#6b7280';
-    }
+    return priorityToGreen(priority);
   };
 
   // Custom tooltip for timeline chart
@@ -472,7 +468,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-red-500" />
+              <Zap className="h-5 w-5 text-green-600" />
               Unhealthy Sources Timeline
             </CardTitle>
             <CardDescription>
@@ -640,7 +636,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                   <li>• <strong>X-axis:</strong> Peak window start time</li>
                   <li>• <strong>Y-axis:</strong> Source names (alarm sources)</li>
                   <li>• <strong>Dot size:</strong> Flood count (larger = more events in peak window)</li>
-                  <li>• <strong>Dot color:</strong> Priority level (Red=High, Yellow=Medium, Green=Low)</li>
+                  <li>• <strong>Dot color:</strong> Priority level (Dark green = High, Base green = Medium, Light green = Low)</li>
                   <li>• <strong>Hover:</strong> Shows peak window (start → end) and details</li>
                 </ul>
               </div>
@@ -664,16 +660,16 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                       labelFormatter={(label) => `Source: ${label}`}
                     />
                     <Legend />
-                    <Bar dataKey="totalFlood" fill="#ef4444" name="Total Flood Count" />
-                    <Bar dataKey="incidents" fill="#f59e0b" name="Incidents" />
+                    <Bar dataKey="totalFlood" fill={CHART_GREEN_DARK} name="Total Flood Count" />
+                    <Bar dataKey="incidents" fill={CHART_GREEN_LIGHT} name="Incidents" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
               <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded-lg">
                 <div className="font-medium mb-1">Top unhealthy sources by total flood count:</div>
                 <ul className="space-y-1">
-                  <li>• <strong>Red bars:</strong> Total flood count across all incidents</li>
-                  <li>• <strong>Yellow bars:</strong> Number of separate 10-minute incidents</li>
+                  <li>• <strong>Dark green bars:</strong> Total flood count across all incidents</li>
+                  <li>• <strong>Light green bars:</strong> Number of separate 10-minute incidents</li>
                   <li>• Sources are ranked by total flood count (most problematic first)</li>
                 </ul>
               </div>
@@ -682,25 +678,25 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
 
           {/* Summary Stats */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
-            <div className="bg-red-50 p-3 rounded-lg">
-              <div className="text-red-800 font-semibold">Total Incidents</div>
-              <div className="text-2xl font-bold text-red-900">{filteredRecords.length}</div>
+            <div className="p-3 rounded-lg" style={{backgroundColor: CHART_GREEN_PALE}}>
+              <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>Total Incidents</div>
+              <div className="text-2xl font-bold" style={{color: CHART_GREEN_DARK}}>{filteredRecords.length}</div>
             </div>
-            <div className="bg-orange-50 p-3 rounded-lg">
-              <div className="text-orange-800 font-semibold">Unique Sources</div>
-              <div className="text-2xl font-bold text-orange-900">
+            <div className="p-3 rounded-lg" style={{backgroundColor: CHART_GREEN_PALE}}>
+              <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>Unique Sources</div>
+              <div className="text-2xl font-bold" style={{color: CHART_GREEN_DARK}}>
                 {new Set(filteredRecords.map(r => r.source)).size}
               </div>
             </div>
-            <div className="bg-yellow-50 p-3 rounded-lg">
-              <div className="text-yellow-800 font-semibold">Total Flood Count</div>
-              <div className="text-2xl font-bold text-yellow-900">
+            <div className="p-3 rounded-lg" style={{backgroundColor: CHART_GREEN_PALE}}>
+              <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>Total Flood Count</div>
+              <div className="text-2xl font-bold" style={{color: CHART_GREEN_DARK}}>
                 {filteredRecords.reduce((sum, r: any) => sum + (r.flood_count ?? r.hits ?? 0), 0)}
               </div>
             </div>
-            <div className="bg-blue-50 p-3 rounded-lg">
-              <div className="text-blue-800 font-semibold">Avg Flood/Incident</div>
-              <div className="text-2xl font-bold text-blue-900">
+            <div className="p-3 rounded-lg" style={{backgroundColor: CHART_GREEN_PALE}}>
+              <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>Avg Flood/Incident</div>
+              <div className="text-2xl font-bold" style={{color: CHART_GREEN_DARK}}>
                 {filteredRecords.length > 0 
                   ? Math.round(
                       filteredRecords.reduce((sum, r: any) => sum + (r.flood_count ?? r.hits ?? 0), 0) / filteredRecords.length * 10
