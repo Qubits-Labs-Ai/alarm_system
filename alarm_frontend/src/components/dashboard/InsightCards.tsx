@@ -71,9 +71,9 @@ export function InsightCards({ metrics, isLoading = false }: InsightCardsProps) 
               <Icon 
                 className={`h-4 w-4 ${
                   card.trend === 'positive' 
-                    ? 'text-green-600' 
+                    ? 'text-success' 
                     : card.trend === 'negative' 
-                    ? 'text-red-600' 
+                    ? 'text-destructive' 
                     : 'text-muted-foreground'
                 }`} 
               />

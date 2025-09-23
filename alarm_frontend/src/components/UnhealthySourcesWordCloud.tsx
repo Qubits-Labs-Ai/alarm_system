@@ -7,7 +7,7 @@ import { Slider } from '@/components/ui/slider';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { AlertTriangle, RefreshCw, Type, Info, TrendingUp } from 'lucide-react';
-import { priorityToGreen, CHART_GREEN_PALE } from '@/theme/chartColors';
+import { priorityToGreen, CHART_GREEN_PALE, severityToColor, CHART_SUCCESS, CHART_GREEN_PRIMARY, CHART_GREEN_SECONDARY, CHART_GREEN_TERTIARY, CHART_DESTRUCTIVE, CHART_WARNING } from '@/theme/chartColors';
 
 interface UnhealthyRecord {
   event_time: string;
@@ -67,13 +67,18 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string }> = ({ className
   const [data, setData] = useState<UnhealthySourcesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState<string>('1h');
-  const [selectedMonth, setSelectedMonth] = useState<string>('2025-01');
+  const [timeRange, setTimeRange] = useState<string>('all');
+  const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
   const [binsWeight, setBinsWeight] = useState<number>(DEFAULT_BINS_WEIGHT);
   const [floodWeight, setFloodWeight] = useState<number>(DEFAULT_FLOOD_WEIGHT);
   const [topLimit, setTopLimit] = useState<number>(100); // Show more sources by default
+
+  // Responsive container refs/states (must be before useMemo)
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState<number>(800); // Start with safe default
+  const [measured, setMeasured] = useState<boolean>(true); // Start as measured to avoid stuck state
 
   useEffect(() => {
     loadAvailableMonths();
@@ -242,28 +247,55 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string }> = ({ className
     }));
 
     // Enhanced font size mapping for better visibility of all sources
-    const sized = normalizedSources.map((x, index) => {
-      let fontSize;
-      
+    // and dynamic clamping to container bounds to avoid overflow
+    const PADDING_X = 32; // matches p-4 horizontal padding in container
+    const availableWidth = Math.max(200, containerWidth - PADDING_X);
+    // dynamic estimate for height based on width to reduce crowding
+    const availableHeight = Math.max(420, Math.floor(containerWidth * 0.65));
+    const CHAR_FACTOR = 0.58; // approximate width per character in em for Arial
+
+    // Deterministic rotation: ~15% vertical for variety, rest horizontal for readability
+    const pickRotation = (text: string) => {
+      // simple stable hash
+      let h = 0;
+      for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
+      const r = Math.abs(h) % 100;
+      return r < 15 ? 90 : 0;
+    };
+
+    const sized = normalizedSources.map((x) => {
+      // base font sizing based on normalized weight
+      let fontSize: number;
       if (normalizedSources.length <= 10) {
-        // Few sources: use wider range
         const linearScale = x.normalizedSize / 100;
         fontSize = 20 + (linearScale * 50); // 20-70px
       } else {
-        // Many sources: ensure smaller ones are visible
         const sqrtScale = Math.sqrt(x.normalizedSize / 100);
-        // Minimum 16px for readability, maximum 75px
-        fontSize = 16 + (sqrtScale * 59); // 16-75px range
-        
-        // Boost smaller sources slightly
-        if (x.normalizedSize < 20) {
-          fontSize = Math.max(fontSize, 18); // Minimum 18px for small sources
-        }
+        fontSize = 14 + (sqrtScale * 56); // 14-70px range
       }
-      
+
+      const rotation = pickRotation(x.source);
+
+      // Clamp font size so a single long word cannot overflow container
+      const textLen = Math.max(1, x.source.length);
+      // Estimate text extent in pixels for given font size
+      if (rotation === 0) {
+        // horizontal fit to width
+        const maxByWidth = (availableWidth * 0.92) / (textLen * CHAR_FACTOR);
+        fontSize = Math.min(fontSize, maxByWidth);
+      } else {
+        // vertical fit to height
+        const maxByHeight = (availableHeight * 0.92) / (textLen * CHAR_FACTOR);
+        fontSize = Math.min(fontSize, maxByHeight);
+      }
+
+      // Apply global min/max for readability and prevent overflow
+      fontSize = Math.max(12, Math.min(64, fontSize)); // Reduced max from 72 to 64
+
       return {
         text: x.source,
-        value: Math.max(16, Math.min(75, fontSize)),
+        value: fontSize,
+        rotate: rotation,
         weightedSize: x.weightedSize,
         normalizedSize: x.normalizedSize,
         bins: x.bins,
@@ -310,36 +342,54 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string }> = ({ className
     });
 
     return { words: sized, topStats: stats, weightingInfo: weightInfo };
-  }, [data, binsWeight, floodWeight, topLimit]);
+  }, [data, binsWeight, floodWeight, topLimit, containerWidth]);
+
+  // Compute dynamic cloud height based on width and total estimated text area.
+  const cloudHeight = useMemo(() => {
+    const availW = Math.max(300, containerWidth - 32);
+    const MIN_H = Math.max(460, Math.floor(containerWidth * 0.6));
+    const MAX_H = 1200; // Reduced max to prevent excessive height
+    const LINE_H = 1.15; // line height multiplier relative to font size
+    const CHAR_FACTOR = 0.58; // width per char in em for Arial
+    const TARGET_DENSITY = 0.48; // Tighter packing to prevent overflow
+
+    if (!words || words.length === 0) return MIN_H;
+    // Estimate total area for all words
+    const totalArea = words.reduce((sum, w) => {
+      const font = Math.max(10, w.value || 12);
+      const widthPx = font * CHAR_FACTOR * (w.text?.length || 1);
+      const heightPx = font * LINE_H;
+      return sum + widthPx * heightPx;
+    }, 0);
+
+    // Required height to keep within target density
+    const requiredH = Math.ceil(totalArea / (availW * TARGET_DENSITY));
+    return Math.min(MAX_H, Math.max(MIN_H, requiredH));
+  }, [containerWidth, words]);
 
   const fontMapper = (word: any) => word.value;
   
-  // Professional rotation strategy: mostly horizontal for readability with some variety
-  const rotate = () => {
-    const rotations = [0, 0, 0, 0, 0, 90, -90]; // 70% horizontal, 30% vertical
-    return rotations[Math.floor(Math.random() * rotations.length)];
-  };
+  // Professional rotation strategy: deterministic and mostly horizontal for readability
+  const rotate = (word?: any) => (word && word.rotate) ?? 0;
   
-  // Professional color scheme based on severity
+  // Professional color scheme based on severity using new green theme
   const fill = (word: any) => {
     const severity = word.normalizedSize;
-    if (severity >= 80) return '#dc2626'; // High severity - red
-    if (severity >= 60) return '#ea580c'; // Medium-high - orange
-    if (severity >= 40) return '#d97706'; // Medium - amber
-    if (severity >= 20) return '#65a30d'; // Low-medium - lime
-    return '#16a34a'; // Low severity - green
+    return severityToColor(severity);
   };
 
   // Responsive container width handling for the cloud
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [containerWidth, setContainerWidth] = useState<number>(800);
+  // containerRef and containerWidth are declared above
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const update = () => {
       const rect = el.getBoundingClientRect();
-      if (rect.width) setContainerWidth(Math.max(300, Math.floor(rect.width)));
+      if (rect.width) {
+        setContainerWidth(Math.max(300, Math.floor(rect.width)));
+        setMeasured(true);
+      }
     };
     update();
     const ro = new ResizeObserver(update);
@@ -443,7 +493,7 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string }> = ({ className
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="flex items-center gap-2">
-              <Type className="h-5 w-5 text-green-600" />
+              <Type className="h-5 w-5 text-primary" />
               Unhealthy Sources Word Cloud
             </CardTitle>
             <CardDescription>
@@ -503,20 +553,20 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string }> = ({ className
       <CardContent>
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Main Word Cloud */}
-          <div ref={containerRef} className="lg:col-span-3 h-[500px] rounded-lg border-2 shadow-lg" style={{ backgroundColor: '#fafafa' }}>
-            <div className="h-full w-full p-4">
+          <div ref={containerRef} className="lg:col-span-3 rounded-lg border-2 shadow-lg bg-card overflow-hidden relative" style={{ height: cloudHeight + 32 }}>
+            <div className="h-full w-full p-4 overflow-hidden">
               <TooltipProvider>
                 <WordCloud
+                  key={`${Math.round(containerWidth)}x${cloudHeight}`}
                   data={words}
                   fontSize={fontMapper}
                   rotate={rotate}
                   padding={3}
                   spiral="archimedean"
-                  height={460}
-                  width={containerWidth - 32}
+                  height={Math.max(320, cloudHeight - 32)}
+                  width={Math.max(300, containerWidth - 32)}
                   fill={fill}
-                  fontWeight="600"
-                  fontFamily="Arial, sans-serif"
+                  font="Arial, sans-serif"
                   random={() => 0.5}
                   onWordClick={(event, word) => {
                     console.log('Clicked word:', word);

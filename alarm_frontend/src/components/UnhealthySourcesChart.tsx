@@ -320,9 +320,9 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
-        <div className="bg-white p-4 border rounded-lg shadow-lg max-w-sm">
-          <div className="font-semibold text-gray-900 mb-2">{data.y}</div>
-          <div className="space-y-1 text-sm">
+        <div className="bg-popover text-popover-foreground p-4 border rounded-lg shadow-lg max-w-sm">
+          <div className="font-semibold text-foreground mb-2">{data.y}</div>
+          <div className="space-y-1 text-sm text-muted-foreground">
             <div>
               <span className="font-medium">Peak Window:</span> {new Date(data.peak_window_start || data.x).toLocaleString()} → {new Date(data.peak_window_end || data.x).toLocaleString()}
             </div>
@@ -358,7 +358,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
       <Card className={className}>
         <CardContent className="flex items-center justify-center h-64">
           <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
             <p>Loading unhealthy sources...</p>
           </div>
         </CardContent>
@@ -374,7 +374,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Zap className="h-5 w-5 text-green-500" />
+                <Zap className="h-5 w-5 text-primary" />
                 Unhealthy Sources Timeline
               </CardTitle>
               <CardDescription>
@@ -425,11 +425,11 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
         </CardHeader>
         <CardContent>
           <div className="flex flex-col items-center justify-center h-64 text-center">
-            <div className="bg-green-100 p-4 rounded-full mb-4">
-              <Zap className="h-8 w-8 text-green-600" />
+            <div className="bg-accent p-4 rounded-full mb-4">
+              <Zap className="h-8 w-8 text-primary" />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">All Systems Healthy!</h3>
-            <p className="text-gray-600 mb-4">
+            <h3 className="text-lg font-semibold text-foreground mb-2">All Systems Healthy!</h3>
+            <p className="text-muted-foreground mb-4">
               No sources are exceeding the 10 alarms per 10-minute threshold in the selected time range.
             </p>
             <div className="flex gap-2">
@@ -450,7 +450,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
     return (
       <Card className={className}>
         <CardContent className="flex items-center justify-center h-64">
-          <div className="text-center text-red-600">
+          <div className="text-center text-destructive">
             <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
             <p>{error}</p>
             <Button onClick={fetchUnhealthySources} className="mt-2" variant="outline">
@@ -468,13 +468,13 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-green-600" />
+              <Zap className="h-5 w-5 text-primary" />
               Unhealthy Sources Timeline
             </CardTitle>
             <CardDescription>
               Sources exceeding 10 alarms per 10-minute window • {filteredRecords.length} incidents found
               {data && data.count === 0 && (
-                <span className="text-green-600 ml-2">• All systems healthy!</span>
+                <span className="text-success ml-2">• All systems healthy!</span>
               )}
             </CardDescription>
           </div>
@@ -523,9 +523,9 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
       <CardContent>
         <div className="space-y-4">
           {/* Filters */}
-          <div className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg">
+          <div className="flex items-center gap-4 p-3 bg-accent rounded-lg">
             <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-gray-500" />
+              <Filter className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-medium">Filters:</span>
             </div>
             <Select value={selectedPriority} onValueChange={setSelectedPriority}>
@@ -542,7 +542,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
             </Select>
             {/* Window Mode Tabs (quick toggle) */}
             <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-600">Window:</span>
+              <span className="text-sm text-muted-foreground">Window:</span>
               <Tabs value={windowMode} onValueChange={(v) => setWindowMode(v as any)}>
                 <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger value="recent">Most Recent</TabsTrigger>
@@ -551,7 +551,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
               </Tabs>
             </div>
             <div className="flex items-center gap-2 ml-auto">
-              <span className="text-sm text-gray-600">Chart Type:</span>
+              <span className="text-sm text-muted-foreground">Chart Type:</span>
               <Tabs value={chartType} onValueChange={(value) => setChartType(value as any)}>
                 <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger value="timeline">Timeline</TabsTrigger>
@@ -559,7 +559,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                 </TabsList>
               </Tabs>
               <div className="ml-4 flex items-center gap-2">
-                <span className="text-sm text-gray-600">Orientation:</span>
+                <span className="text-sm text-muted-foreground">Orientation:</span>
                 <Tabs value={orientation} onValueChange={(value) => setOrientation(value as any)}>
                   <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="horizontal">Time →</TabsTrigger>
@@ -577,7 +577,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                 <ResponsiveContainer width="100%" height="100%">
                   {orientation === 'horizontal' ? (
                     <ScatterChart margin={{ top: 20, right: 30, bottom: 60, left: 120 }}>
-                      <CartesianGrid strokeDasharray="3 3" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
                       <XAxis
                         type="number"
                         dataKey="x"
@@ -603,7 +603,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                     </ScatterChart>
                   ) : (
                     <ScatterChart margin={{ top: 20, right: 30, bottom: 40, left: 120 }}>
-                      <CartesianGrid strokeDasharray="3 3" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
                       <XAxis
                         type="category"
                         dataKey="y"
@@ -630,7 +630,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                   )}
                 </ResponsiveContainer>
               </div>
-              <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded-lg">
+              <div className="text-sm text-muted-foreground bg-accent p-3 rounded-lg">
                 <div className="font-medium mb-1">How to read this chart:</div>
                 <ul className="space-y-1">
                   <li>• <strong>X-axis:</strong> Peak window start time</li>
@@ -646,7 +646,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
               <div className="h-96">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={sourceHitsData} margin={{ top: 20, right: 30, bottom: 60, left: 100 }}>
-                    <CartesianGrid strokeDasharray="3 3" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
                     <XAxis 
                       dataKey="source"
                       angle={-45}
@@ -665,7 +665,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-              <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded-lg">
+              <div className="text-sm text-muted-foreground bg-accent p-3 rounded-lg">
                 <div className="font-medium mb-1">Top unhealthy sources by total flood count:</div>
                 <ul className="space-y-1">
                   <li>• <strong>Dark green bars:</strong> Total flood count across all incidents</li>
@@ -709,7 +709,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
 
           {/* Debug Information - Remove in production */}
           {process.env.NODE_ENV === 'development' && (
-            <div className="mt-4 p-3 bg-gray-100 rounded-lg text-xs">
+            <div className="mt-4 p-3 bg-accent rounded-lg text-xs text-muted-foreground">
               <div className="font-semibold mb-2">Debug Info:</div>
               <div>API Response Count: {data?.count || 'N/A'}</div>
               <div>Raw Records Length: {data?.records?.length || 0}</div>
@@ -723,7 +723,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
               {data?.records?.length > 0 && (
                 <div className="mt-2">
                   <div>Sample Record:</div>
-                  <pre className="text-xs bg-white p-2 rounded mt-1 overflow-auto">
+                  <pre className="text-xs bg-card p-2 rounded mt-1 overflow-auto">
                     {JSON.stringify(data.records[0], null, 2)}
                   </pre>
                 </div>

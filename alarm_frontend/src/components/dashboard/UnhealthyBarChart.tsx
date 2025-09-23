@@ -24,7 +24,7 @@ export function UnhealthyBarChart({
     if (!payload) return null;
 
     return [
-      <div key="tooltip" className="bg-dashboard-chart-tooltip-bg p-3 rounded shadow-lg border">
+      <div key="tooltip" className="bg-popover text-popover-foreground p-3 rounded shadow-lg border">
         <p className="font-medium text-foreground">{payload.source}</p>
         <p className="text-sm text-muted-foreground">
           Flood count: <span className="font-medium text-foreground">{payload.hits}</span>
@@ -141,10 +141,10 @@ export function UnhealthyBarChart({
               <BarChart
                 data={data}
                 margin={{
-                  top: 20,
-                  right: 30,
-                  left: 20,
-                  bottom: 70,
+                  top: 24,
+                  right: 120,
+                  left: 70,
+                  bottom: 80,
                 }}
               >
                 <CartesianGrid 
@@ -164,7 +164,8 @@ export function UnhealthyBarChart({
                 <YAxis 
                   tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
                   axisLine={{ stroke: 'var(--border)' }}
-                  label={{ value: 'Flood count', angle: -90, position: 'insideLeft', offset: 10, fill: 'var(--muted-foreground)' }}
+                  tickMargin={8}
+                  label={{ value: 'Flood count', angle: -90, position: 'left', offset: 10, fill: 'var(--muted-foreground)' }}
                 />
                 <Tooltip 
                   content={({ active, payload }) => {
@@ -179,11 +180,15 @@ export function UnhealthyBarChart({
                   y={threshold} 
                   stroke="var(--muted-foreground)" 
                   strokeDasharray="5 5"
+                  isFront
                   label={{ 
                     value: `Threshold (${threshold})`, 
                     position: 'right',
                     fill: 'var(--muted-foreground)',
-                    fontSize: 12
+                    fontSize: 12,
+                    dx: 8,
+                    dy: -2,
+                    textAnchor: 'start'
                   }}
                 />
                 <Bar 

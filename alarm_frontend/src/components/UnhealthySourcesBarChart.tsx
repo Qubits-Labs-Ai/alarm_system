@@ -366,7 +366,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
       <Card className={className}>
         <CardContent className="flex items-center justify-center h-64">
           <div className="text-center">
-            <RefreshCw className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-2" />
+            <RefreshCw className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
             <p>Loading unhealthy sources...</p>
           </div>
         </CardContent>
@@ -378,7 +378,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
     return (
       <Card className={className}>
         <CardContent className="flex items-center justify-center h-64">
-          <div className="text-center text-red-600">
+          <div className="text-center text-destructive">
             <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
             <p className="mb-2">{error}</p>
             <Button onClick={fetchUnhealthySources} variant="outline" size="sm">
@@ -399,7 +399,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-green-500" />
+                <TrendingUp className="h-5 w-5 text-primary" />
                 Unhealthy Sources Analysis
               </CardTitle>
               <CardDescription>
@@ -450,11 +450,11 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
         </CardHeader>
         <CardContent>
           <div className="flex flex-col items-center justify-center h-48 text-center">
-            <div className="bg-green-100 p-4 rounded-full mb-4">
-              <TrendingUp className="h-8 w-8 text-green-600" />
+            <div className="bg-accent p-4 rounded-full mb-4">
+              <TrendingUp className="h-8 w-8 text-primary" />
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">All Systems Healthy!</h3>
-            <p className="text-gray-600 mb-4">
+            <h3 className="text-lg font-semibold text-foreground mb-2">All Systems Healthy!</h3>
+            <p className="text-muted-foreground mb-4">
               No sources are exceeding the alarm threshold in the selected time range.
             </p>
             <div className="flex gap-2">
@@ -477,7 +477,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-green-600" />
+              <AlertTriangle className="h-5 w-5 text-primary" />
               Unhealthy Sources Analysis
             </CardTitle>
             <CardDescription>
@@ -554,9 +554,9 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={processedData}
-              margin={{ top: 20, right: 30, left: 40, bottom: 120 }}
+              margin={{ top: 20, right: 30, left: 140, bottom: 120 }}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
               <XAxis 
                 dataKey="source"
                 angle={-45}
@@ -581,10 +581,11 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
               {/* Threshold line at 10 */}
               <ReferenceLine 
                 y={10} 
-                stroke="#ef4444"
+                stroke="hsl(var(--destructive))"
                 strokeDasharray="5 5" 
                 strokeWidth={2}
-                label={{ value: "Unhealthy Threshold (10)", position: "insideTopLeft", fill: "#ef4444", fontSize: 11 }}
+                isFront
+                label={{ value: "Threshold (10)", position: "insideLeft", fill: "hsl(var(--destructive))", fontSize: 10, dx: 6, dy: -2, textAnchor: 'start' }}
               />
               
               <Tooltip 
