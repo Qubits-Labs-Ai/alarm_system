@@ -46,6 +46,7 @@ app.add_middleware(
         "http://127.0.0.1:8080",
         "http://0.0.0.0:8080",
         "http://localhost:8081",
+        "all",
         "http://127.0.0.1:8081",
     ],
     allow_credentials=True,
