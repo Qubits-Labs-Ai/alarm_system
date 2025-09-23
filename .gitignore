@@ -1,0 +1,4 @@
+# Ignore environment files at repo level
+.env
+alarm_backend/.env
+alarm_frontend/.env
