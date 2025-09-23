@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar, Clock, AlertTriangle, Filter, Download, Zap } from 'lucide-react';
+import { useInsightModal } from '@/components/insights/useInsightModal';
+import { InsightButton } from '@/components/insights/InsightButton';
 import {
   ScatterChart,
   Scatter,
@@ -58,6 +60,12 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
   const [selectedMonth, setSelectedMonth] = useState<string>('2025-01'); // default Jan 2025; supports 'all' or 'YYYY-MM'
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
+  const { onOpen: openInsightModal } = useInsightModal();
+
+  const handleInsightClick = () => {
+    // useInsightModal.onOpen expects (data, title)
+    openInsightModal(filteredRecords, 'Unhealthy Sources Analysis');
+  };
 
   useEffect(() => {
     fetchUnhealthySources();
@@ -513,6 +521,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                 <SelectItem value="all">All</SelectItem>
               </SelectContent>
             </Select>
+                        <InsightButton onClick={handleInsightClick} disabled={loading || filteredRecords.length === 0} />
             <Button variant="outline" size="sm" onClick={fetchUnhealthySources}>
               <Clock className="h-4 w-4 mr-1" />
               Refresh

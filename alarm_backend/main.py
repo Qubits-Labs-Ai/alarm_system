@@ -15,6 +15,23 @@ import re
 import logging
 import json
 from datetime import datetime, timedelta
+from pydantic import BaseModel
+from typing import List, Any, Dict
+import google.generativeai as genai
+from dotenv import load_dotenv
+from collections import Counter
+from statistics import mean
+from pathlib import Path
+import hashlib
+
+load_dotenv(dotenv_path=Path(__file__).parent / '.env')  # Load .env from alarm_backend directory explicitly
+
+# Configure Gemini client
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
+class ChartInsightRequest(BaseModel):
+    chartTitle: str
+    chartData: List[Dict[str, Any]]
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -37,7 +54,334 @@ app.add_middleware(
 )
 
 # Define the ALARM_DATA_DIR path
-ALARM_DATA_DIR = os.path.join(os.path.dirname(__file__), "ALARM_DATA_DIR")
+BASE_DIR = os.path.dirname(__file__)
+ALARM_DATA_DIR = os.path.join(BASE_DIR, "ALARM_DATA_DIR")
+INSIGHTS_CACHE_DIR = Path(os.path.join(BASE_DIR, "INSIGHTS_CACHE"))
+INSIGHTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+def _compute_cache_key(title: str, rows: List[Dict[str, Any]]) -> str:
+    # Build a compact signature: title + first 200 rows with stable keys
+    sample = rows[:200]
+    payload = {
+        "title": title,
+        "rows": sample,
+    }
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _read_cache(key: str) -> Dict[str, Any] | None:
+    f = INSIGHTS_CACHE_DIR / f"{key}.json"
+    if not f.exists():
+        return None
+    try:
+        with f.open("r", encoding="utf-8") as fp:
+            return json.load(fp)
+    except Exception:
+        return None
+
+
+def _write_cache(key: str, data: Dict[str, Any]) -> None:
+    f = INSIGHTS_CACHE_DIR / f"{key}.json"
+    try:
+        with f.open("w", encoding="utf-8") as fp:
+            json.dump(data, fp, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to write insight cache: {e}")
+
+
+@app.post("/insights")
+async def get_chart_insight(request: ChartInsightRequest, regenerate: bool = False):
+    """Generate AI-powered insights for a given chart's data."""
+    logger.info(f"Received insight request for chart: {request.chartTitle}")
+    logger.info(f"Chart data contains {len(request.chartData)} records.")
+
+    # Helper: simple heuristic fallback generator
+    def _generate_fallback_insight(title: str, rows: List[Dict[str, Any]]) -> str:
+        n = len(rows)
+        if n == 0:
+            return (
+                f"""
+### 📊 Descriptive Analysis
+
+No unhealthy incidents are present for **{title}** in the selected window.
+
+### 🩺 Diagnostic Analysis
+
+System is operating within thresholds in the selected window.
+
+### 💡 Prescriptive Recommendations
+
+Maintain current operating parameters and continue monitoring.
+"""
+            )
+        sources = [str(r.get("source", "?")) for r in rows]
+        src_counts = Counter(sources)
+        top_sources = src_counts.most_common(5)
+        hits_list = [int(r.get("hits") or r.get("flood_count") or 0) for r in rows]
+        over_by_list = [int(r.get("over_by", 0)) for r in rows]
+        priorities = [str(r.get("priority") or r.get("priority_severity") or "") for r in rows]
+        pr_counts = Counter(priorities)
+        avg_hits = round(mean([h for h in hits_list if isinstance(h, (int, float))]) if any(isinstance(h, (int, float)) for h in hits_list) else 0, 1)
+        max_hits = max(hits_list) if hits_list else 0
+        uniq_sources = len(src_counts)
+        top_sources_md = "\n".join([f"- {name}: {cnt} incidents" for name, cnt in top_sources])
+        pr_summary = ", ".join([f"{k or 'Unknown'}: {v}" for k, v in pr_counts.items() if k]) or "N/A"
+        return f"""
+### 📊 Descriptive Analysis
+
+For **{title}**, we detected **{n}** unhealthy incidents across **{uniq_sources}** unique sources.
+
+- Average hits per incident: **{avg_hits}**
+- Peak hits in a single 10-min window: **{max_hits}**
+- Priority distribution: {pr_summary}
+- Top impacted sources (by incident frequency):
+{top_sources_md or '- (no dominant sources)'}
+
+### 🩺 Diagnostic Analysis
+
+The distribution suggests that {'multiple sources are contributing' if uniq_sources > 3 else 'a small set of sources is dominant'}. High-hit windows (max {max_hits}) indicate either bursty conditions (process upsets) or repeated sensor chatter. The presence of over-threshold values (avg over_by ≈ {round(mean(over_by_list),1) if over_by_list else 0}) points to:
+
+1. Threshold exceedances during transient operations (startups/shutdowns/batch transitions).
+2. Potential sensor drift or fouling causing repeated alarms.
+3. Localized control loop oscillation or upstream variability.
+
+### 💡 Prescriptive Recommendations
+
+1. Immediate: Review top sources above. Validate sensor health and check recent maintenance or parameter changes.
+2. Short-Term: Correlate these incidents with process logs (rates, temperatures, setpoints) to identify time-aligned causes.
+3. Long-Term: Tune alarm thresholds and deadbands for chattering sources; schedule calibration for sensors with recurring exceedances.
+"""
+
+    # Cache lookup unless regeneration is requested
+    cache_key = _compute_cache_key(request.chartTitle, request.chartData)
+    if not regenerate:
+        cached = _read_cache(cache_key)
+        if cached and isinstance(cached.get("insight"), str):
+            meta = cached.get("meta") or {}
+            # Normalize meta for cache hits
+            meta.update({
+                "provider": meta.get("provider") or cached.get("provider", "cache"),
+                "model": meta.get("model") or cached.get("model", "unknown"),
+                "cached": True,
+                "generated_at": cached.get("generated_at"),
+                "cache_key": cache_key,
+            })
+            return {"insight": cached["insight"], "meta": meta}
+
+    # Check API key and log status
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        logger.warning("GEMINI_API_KEY not set; returning fallback insight.")
+        fb = _generate_fallback_insight(request.chartTitle, request.chartData)
+        now = datetime.utcnow().isoformat() + "Z"
+        meta = {
+            "provider": "fallback",
+            "model": None,
+            "cached": False,
+            "generated_at": now,
+            "cache_key": cache_key,
+            "error": "no_api_key",
+        }
+        _write_cache(cache_key, {
+            "chartTitle": request.chartTitle,
+            "generated_at": now,
+            "insight": fb + "\n\n> Note: Fallback heuristic insight used (no AI key configured).",
+            "cache_key": cache_key,
+            "provider": "fallback",
+            "model": None,
+            "meta": meta,
+        })
+        return {"insight": fb + "\n\n> Note: Fallback heuristic insight used (no AI key configured).", "meta": meta}
+    
+    logger.info(f"Gemini API key found (length: {len(api_key)})")
+
+    # Basic data validation
+    if not request.chartTitle or not request.chartData:
+        raise HTTPException(status_code=400, detail="Chart title and data are required.")
+
+    # Prepare the data for the prompt by converting it to a compact JSON string
+    # We'll also truncate it to avoid exceeding token limits
+    data_summary = json.dumps(request.chartData[:20], indent=2) # Send first 20 records as a sample
+
+    system_prompt = """
+As an expert Plant Operations Analyst for a major chemical manufacturing facility (Engro Polymer & Chemicals Ltd.), your task is to provide a concise, actionable analysis of operational data presented in markdown format. Your insights must be structured into three specific sections: Descriptive, Diagnostic, and Prescriptive.
+
+**Tone and Style:**
+- **Professional and Authoritative:** Use industry-standard terminology.
+- **Concise:** Get straight to the point. No filler.
+- **Data-Driven:** Reference specific data points or trends from the provided information.
+- **Action-Oriented:** Focus on practical, actionable recommendations.
+
+**Output Format (Strict Markdown):**
+
+### 📊 Descriptive Analysis
+*(Summarize what the data shows. What are the key facts, trends, or outliers? Example: "The data shows a surge in alarms from the PVC-I unit, with 85% of incidents occurring in the last 2 hours.")*
+
+### 🩺 Diagnostic Analysis
+*(Provide potential root causes for the observations. What could be causing this? Example: "This pattern is often indicative of a sensor calibration issue or an upstream process fluctuation.")*
+
+### 💡 Prescriptive Recommendations
+*(Give clear, actionable next steps. What should the operations team do right now? Example: "1. **Immediate:** Dispatch a technician to inspect sensors on Reactor B. 2. **Short-Term:** Correlate these alarms with batch production logs to identify any process deviations.")*
+"""
+
+    user_prompt = f"""
+Analyze the following data for the chart titled '{request.chartTitle}'. The data represents unhealthy operational signals.
+
+**Chart Title:** {request.chartTitle}
+**Number of Unhealthy Records:** {len(request.chartData)}
+
+**Data Sample (first 20 records):**
+```json
+{data_summary}
+```
+
+Please provide your analysis in the specified markdown format.
+"""
+
+    try:
+        logger.info("Attempting Gemini API call...")
+        
+        # Create the model with system instruction
+        model_name = 'gemini-2.5-flash'
+        model = genai.GenerativeModel(model_name, system_instruction=system_prompt)
+        
+        # Only pass user content; system instruction is set at model-level
+        # Also sanitize by stripping markdown code fences to avoid unnecessary blocking
+        full_prompt = user_prompt.replace("```json", "").replace("```", "")
+        
+        # Generate content with safety settings (enum-based)
+        safety_settings = {
+            genai.types.HarmCategory.HARM_CATEGORY_HARASSMENT: genai.types.HarmBlockThreshold.BLOCK_NONE,
+            genai.types.HarmCategory.HARM_CATEGORY_HATE_SPEECH: genai.types.HarmBlockThreshold.BLOCK_NONE,
+            genai.types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: genai.types.HarmBlockThreshold.BLOCK_NONE,
+            genai.types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: genai.types.HarmBlockThreshold.BLOCK_NONE,
+        }
+        
+        response = model.generate_content(
+            full_prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.5,
+                max_output_tokens=1024,
+            ),
+            safety_settings=safety_settings
+        )
+
+        # Check if response was blocked by safety filters
+        if not response.candidates or not response.candidates[0].content.parts:
+            finish_reason = response.candidates[0].finish_reason if response.candidates else "UNKNOWN"
+            # Log safety ratings for diagnosis
+            try:
+                ratings = getattr(response.candidates[0], "safety_ratings", [])
+                for r in ratings or []:
+                    logger.warning(f"Safety rating: category={getattr(r,'category',None)}, probability={getattr(r,'probability',None)}, blocked={getattr(r,'blocked',None)}")
+            except Exception:
+                pass
+            logger.warning(f"Gemini response blocked. Finish reason: {finish_reason}")
+            # Retry once with simplified prompt and alternate model
+            alt_model_name = 'gemini-1.5-flash'
+            alt_model = genai.GenerativeModel(alt_model_name, system_instruction=system_prompt)
+            simple_prompt = (
+                "Provide a concise, safe, technical summary in markdown with Descriptive, Diagnostic, Prescriptive sections based on the following industrial telemetry.\n\n"
+                + user_prompt.replace("```json", "").replace("```", "")
+            )
+            response2 = alt_model.generate_content(
+                simple_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.4,
+                    max_output_tokens=900,
+                ),
+                safety_settings=safety_settings
+            )
+            if not response2.candidates or not response2.candidates[0].content.parts:
+                finish_reason2 = response2.candidates[0].finish_reason if response2.candidates else "UNKNOWN"
+                logger.warning(f"Gemini retry blocked. Finish reason: {finish_reason2}")
+                raise Exception(f"Response blocked by safety filters. Finish reason: {finish_reason2}")
+            else:
+                insight = response2.text.strip()
+                finish_reason = response2.candidates[0].finish_reason if response2.candidates else None
+                now = datetime.utcnow().isoformat() + "Z"
+                meta = {
+                    "provider": "gemini",
+                    "model": alt_model_name,
+                    "cached": False,
+                    "generated_at": now,
+                    "cache_key": cache_key,
+                    "finish_reason": finish_reason,
+                }
+                _write_cache(cache_key, {
+                    "chartTitle": request.chartTitle,
+                    "generated_at": now,
+                    "insight": insight,
+                    "cache_key": cache_key,
+                    "provider": "gemini",
+                    "model": alt_model_name,
+                    "meta": meta,
+                })
+                return {"insight": insight, "meta": meta}
+        
+        logger.info("Gemini API call successful!")
+        insight = response.text.strip()
+        finish_reason = response.candidates[0].finish_reason if response.candidates else None
+        now = datetime.utcnow().isoformat() + "Z"
+        meta = {
+            "provider": "gemini",
+            "model": model_name,
+            "cached": False,
+            "generated_at": now,
+            "cache_key": cache_key,
+            "finish_reason": finish_reason,
+        }
+        _write_cache(cache_key, {
+            "chartTitle": request.chartTitle,
+            "generated_at": now,
+            "insight": insight,
+            "cache_key": cache_key,
+            "provider": "gemini",
+            "model": model_name,
+            "meta": meta,
+        })
+        return {"insight": insight, "meta": meta}
+    except Exception as e:
+        logger.error(f"Gemini API Error - Type: {type(e).__name__}")
+        logger.error(f"Gemini API Error - Message: {str(e)}")
+        if hasattr(e, 'response'):
+            logger.error(f"Gemini API Error - Response: {e.response}")
+        if hasattr(e, 'status_code'):
+            logger.error(f"Gemini API Error - Status Code: {e.status_code}")
+        
+        # Provide a robust fallback instead of a 500 to keep UX responsive
+        fb = _generate_fallback_insight(request.chartTitle, request.chartData)
+        now = datetime.utcnow().isoformat() + "Z"
+        meta = {
+            "provider": "fallback",
+            "model": locals().get("model_name"),
+            "cached": False,
+            "generated_at": now,
+            "cache_key": cache_key,
+            "error": str(e),
+        }
+        _write_cache(cache_key, {
+            "chartTitle": request.chartTitle,
+            "generated_at": now,
+            "insight": fb + f"\n\n> Note: Fallback heuristic insight used due to AI service error: {str(e)}",
+            "cache_key": cache_key,
+            "provider": "fallback",
+            "model": locals().get("model_name"),
+            "meta": meta,
+        })
+        return {"insight": fb + f"\n\n> Note: Fallback heuristic insight used due to AI service error: {str(e)}", "meta": meta}
+
+
+@app.get("/debug/env")
+def debug_env():
+    """Debug endpoint to check environment variables"""
+    api_key = os.getenv("GEMINI_API_KEY")
+    return {
+        "api_key_present": bool(api_key),
+        "api_key_length": len(api_key) if api_key else 0,
+        "api_key_prefix": api_key[:10] + "..." if api_key and len(api_key) > 10 else api_key
+    }
 
 @app.get("/plants")
 def get_all_plants():

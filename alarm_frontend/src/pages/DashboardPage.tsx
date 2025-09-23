@@ -235,25 +235,27 @@ export default function DashboardPage() {
         />
 
         {/* Charts Section */}
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 gap-6">
-            <UnhealthyBarChart
-              data={unhealthyBarData}
-              threshold={10}
-              topN={topN}
-              onTopNChange={handleTopNChange}
-              isLoading={unhealthyBarsLoading}
-            />
+        {selectedPlant.id === 'pvcI' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 gap-6">
+              <UnhealthyBarChart
+                data={unhealthyBarData}
+                threshold={10}
+                topN={topN}
+                onTopNChange={handleTopNChange}
+                isLoading={unhealthyBarsLoading}
+              />
 
-            <UnhealthySourcesChart />
+              <UnhealthySourcesChart />
 
-            {/* New Word Cloud (priority-colored, bins-heavy score) */}
-            <UnhealthySourcesWordCloud />
+              {/* New Word Cloud (priority-colored, bins-heavy score) */}
+              <UnhealthySourcesWordCloud />
+            </div>
+            
+            {/* New Simple Bar Chart */}
+            <UnhealthySourcesBarChart />
           </div>
-          
-          {/* New Simple Bar Chart */}
-          <UnhealthySourcesBarChart />
-        </div>
+        )}
       </div>
     </PageShell>
   );

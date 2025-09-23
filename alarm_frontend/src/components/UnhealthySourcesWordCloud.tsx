@@ -344,28 +344,8 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string }> = ({ className
     return { words: sized, topStats: stats, weightingInfo: weightInfo };
   }, [data, binsWeight, floodWeight, topLimit, containerWidth]);
 
-  // Compute dynamic cloud height based on width and total estimated text area.
-  const cloudHeight = useMemo(() => {
-    const availW = Math.max(300, containerWidth - 32);
-    const MIN_H = Math.max(460, Math.floor(containerWidth * 0.6));
-    const MAX_H = 1200; // Reduced max to prevent excessive height
-    const LINE_H = 1.15; // line height multiplier relative to font size
-    const CHAR_FACTOR = 0.58; // width per char in em for Arial
-    const TARGET_DENSITY = 0.48; // Tighter packing to prevent overflow
-
-    if (!words || words.length === 0) return MIN_H;
-    // Estimate total area for all words
-    const totalArea = words.reduce((sum, w) => {
-      const font = Math.max(10, w.value || 12);
-      const widthPx = font * CHAR_FACTOR * (w.text?.length || 1);
-      const heightPx = font * LINE_H;
-      return sum + widthPx * heightPx;
-    }, 0);
-
-    // Required height to keep within target density
-    const requiredH = Math.ceil(totalArea / (availW * TARGET_DENSITY));
-    return Math.min(MAX_H, Math.max(MIN_H, requiredH));
-  }, [containerWidth, words]);
+  // Responsive height determined by container aspect ratio
+  const [containerHeight, setContainerHeight] = useState(450);
 
   const fontMapper = (word: any) => word.value;
   
@@ -386,14 +366,17 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string }> = ({ className
     if (!el) return;
     const update = () => {
       const rect = el.getBoundingClientRect();
-      if (rect.width) {
-        setContainerWidth(Math.max(300, Math.floor(rect.width)));
+      if (rect.width && rect.height) {
+        setContainerWidth(Math.floor(rect.width));
+        setContainerHeight(Math.floor(rect.height));
         setMeasured(true);
       }
     };
-    update();
+    // Use ResizeObserver for robust dimension tracking
     const ro = new ResizeObserver(update);
     ro.observe(el);
+    // Initial measurement
+    update();
     return () => ro.disconnect();
   }, []);
 
@@ -552,27 +535,29 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string }> = ({ className
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* Main Word Cloud */}
-          <div ref={containerRef} className="lg:col-span-3 rounded-lg border-2 shadow-lg bg-card overflow-hidden relative" style={{ height: cloudHeight + 32 }}>
-            <div className="h-full w-full p-4 overflow-hidden">
-              <TooltipProvider>
-                <WordCloud
-                  key={`${Math.round(containerWidth)}x${cloudHeight}`}
-                  data={words}
-                  fontSize={fontMapper}
-                  rotate={rotate}
-                  padding={3}
-                  spiral="archimedean"
-                  height={Math.max(320, cloudHeight - 32)}
-                  width={Math.max(300, containerWidth - 32)}
-                  fill={fill}
-                  font="Arial, sans-serif"
-                  random={() => 0.5}
-                  onWordClick={(event, word) => {
-                    console.log('Clicked word:', word);
-                  }}
-                />
-              </TooltipProvider>
+          {/* Main Word Cloud - now fully responsive */}
+          <div className="lg:col-span-3 rounded-lg border-2 shadow-lg bg-card overflow-hidden relative aspect-video">
+            <div ref={containerRef} className="absolute top-0 left-0 w-full h-full p-4">
+              {measured && containerWidth > 0 && (
+                <TooltipProvider>
+                  <WordCloud
+                    key={`${containerWidth}x${containerHeight}`}
+                    data={words}
+                    fontSize={fontMapper}
+                    rotate={rotate}
+                    padding={3}
+                    spiral="archimedean"
+                    height={containerHeight - 32}
+                    width={containerWidth - 32}
+                    fill={fill}
+                    font="Arial, sans-serif"
+                    random={() => 0.5} // Make layout deterministic
+                    onWordClick={(event, word) => {
+                      console.log('Clicked word:', word);
+                    }}
+                  />
+                </TooltipProvider>
+              )}
             </div>
           </div>
           

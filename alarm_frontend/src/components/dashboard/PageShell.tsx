@@ -1,4 +1,4 @@
-import { LogOut, User, ChevronDown, Settings } from 'lucide-react';
+import { LogOut, User, ChevronDown, Settings, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -12,13 +12,22 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
 import engroLogo from '@/assets/engro-logo.svg';
+import { cn } from '@/lib/utils';
+import { formatDistanceToNow } from 'date-fns';
+import { ModalProvider } from '@/components/providers/ModalProvider';
 
 interface PageShellProps {
   children: React.ReactNode;
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
+  lastUpdated?: string;
 }
 
 export function PageShell({ 
-  children 
+  children,
+  onRefresh,
+  isRefreshing,
+  lastUpdated,
 }: PageShellProps) {
   const { logout, user } = useAuth();
 
@@ -44,6 +53,7 @@ export function PageShell({
 
   return (
     <div className="min-h-screen bg-background">
+      <ModalProvider />
       {/* Professional Header */}
       <header className="relative sticky top-0 z-50 border-b bg-dashboard-header-bg/50 backdrop-blur-sm shadow-sm">
         <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-primary/3 to-secondary/5"></div>
@@ -70,8 +80,30 @@ export function PageShell({
               </div>
             </div>
             
-            {/* Right Section - Profile */}
+            {/* Right Section - Actions & Profile */}
             <div className="flex items-center gap-6">
+              {/* Last Updated & Refresh */}
+              {(lastUpdated || onRefresh) && (
+                <div className="hidden lg:flex items-center gap-3 text-sm text-muted-foreground pr-4 border-r border-border/50">
+                  {lastUpdated && (
+                    <span>
+                      Last updated {formatDistanceToNow(new Date(lastUpdated), { addSuffix: true })}
+                    </span>
+                  )}
+                  {onRefresh && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onRefresh}
+                      disabled={isRefreshing}
+                      className="rounded-full h-8 w-8"
+                    >
+                      <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
+                    </Button>
+                  )}
+                </div>
+              )}
+
               {/* Theme Toggle */}
               <ThemeToggle />
               
