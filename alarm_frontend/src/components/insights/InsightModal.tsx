@@ -6,6 +6,16 @@ import type { InsightMeta } from '@/api/insights';
 import { Lightbulb, AlertTriangle, Cpu, Copy, RotateCcw } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader as ADHeader,
+  AlertDialogTitle as ADTitle,
+  AlertDialogDescription as ADDescription,
+  AlertDialogFooter as ADFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
 
 export const InsightModal = () => {
   const { isOpen, onClose, chartData, chartTitle } = useInsightModal();
@@ -15,11 +25,11 @@ export const InsightModal = () => {
   const safeTitle = typeof chartTitle === 'string' ? chartTitle : 'Selected Chart';
   const [copied, setCopied] = useState(false);
   const [meta, setMeta] = useState<InsightMeta | undefined>(undefined);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const handleRegenerate = async () => {
+  const doRegenerate = async () => {
     if (!chartData) return;
-    const ok = window.confirm('Regenerate AI insight for the current chart context?');
-    if (!ok) return;
+    setConfirmOpen(false);
     setIsLoading(true);
     setError(null);
     setInsight(null);
@@ -33,6 +43,8 @@ export const InsightModal = () => {
     }
     setIsLoading(false);
   };
+
+  const handleRegenerate = () => setConfirmOpen(true);
 
   useEffect(() => {
     if (isOpen && chartData) {
@@ -89,6 +101,25 @@ export const InsightModal = () => {
           <DialogDescription className="sr-only">Automatically generated operational insights for the current chart selection.</DialogDescription>
         </DialogHeader>
 
+        {/* Confirmation dialog for regenerate */}
+        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <AlertDialogContent>
+            <ADHeader>
+              <ADTitle className="flex items-center">
+                <RotateCcw className="h-5 w-5 mr-2 text-primary" />
+                Regenerate AI Insight?
+              </ADTitle>
+              <ADDescription>
+                This will replace the current insight with a fresh analysis using the current chart context{safeTitle ? ` for "${safeTitle}"` : ''}. Any copied text will remain unchanged.
+              </ADDescription>
+            </ADHeader>
+            <ADFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={doRegenerate}>Regenerate</AlertDialogAction>
+            </ADFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
         {/* Scrollable body */}
         <div className="px-6 py-4 max-h-[70vh] overflow-y-auto">
           <div className="prose prose-sm dark:prose-invert max-w-none prose-headings:mb-2 prose-p:leading-relaxed prose-li:my-0.5">
@@ -144,3 +175,4 @@ export const InsightModal = () => {
     </Dialog>
   );
 };
+
