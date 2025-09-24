@@ -13,6 +13,11 @@ export default {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ['var(--font-sans)', 'ui-sans-serif', 'system-ui'],
+        mono: ['var(--font-mono)', 'ui-monospace', 'SFMono-Regular'],
+        serif: ['var(--font-serif)', 'ui-serif', 'Georgia'],
+      },
       colors: {
         border: "var(--border)",
         input: "var(--input)",
@@ -80,17 +85,21 @@ export default {
         },
       },
       boxShadow: {
+        '2xs': 'var(--shadow-2xs)',
+        xs: 'var(--shadow-xs)',
         "metric-card": "var(--metric-card-shadow)",
         sm: "var(--shadow-sm)",
         DEFAULT: "var(--shadow)",
         md: "var(--shadow-md)",
         lg: "var(--shadow-lg)",
         xl: "var(--shadow-xl)",
+        '2xl': 'var(--shadow-2xl)',
       },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+        xl: "calc(var(--radius) + 4px)",
       },
       keyframes: {
         "accordion-down": {
@@ -109,10 +118,43 @@ export default {
             height: "0",
           },
         },
+        // Professional UI animations
+        "gradient-x": {
+          '0%': { backgroundPosition: '0% 50%' },
+          '50%': { backgroundPosition: '100% 50%' },
+          '100%': { backgroundPosition: '0% 50%' },
+        },
+        float: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-4px)' },
+        },
+        'fade-up': {
+          '0%': { opacity: '0', transform: 'translateY(12px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+        'blur-in': {
+          '0%': { filter: 'blur(8px)', opacity: '0' },
+          '100%': { filter: 'blur(0)', opacity: '1' },
+        },
+        shimmer: {
+          '0%': { backgroundPosition: '-200% 0' },
+          '100%': { backgroundPosition: '200% 0' },
+        },
+        'scale-in': {
+          '0%': { opacity: '0', transform: 'scale(0.98)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        // Professional UI animations
+        "gradient-x": "gradient-x 8s ease-in-out infinite",
+        float: "float 6s ease-in-out infinite",
+        "fade-up": "fade-up 600ms cubic-bezier(0.22, 1, 0.36, 1) both",
+        "blur-in": "blur-in 700ms cubic-bezier(0.22, 1, 0.36, 1) both",
+        shimmer: "shimmer 2s linear infinite",
+        "scale-in": "scale-in 500ms cubic-bezier(0.22, 1, 0.36, 1) both",
       },
     },
   },

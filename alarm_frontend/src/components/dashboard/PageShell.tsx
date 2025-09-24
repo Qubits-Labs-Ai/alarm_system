@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
-import engroLogo from '@/assets/engro-logo.svg';
+import engroLogo from '@/assets/engro-logo.png';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
 import { ModalProvider } from '@/components/providers/ModalProvider';
@@ -56,7 +56,7 @@ export function PageShell({
       <ModalProvider />
       {/* Professional Header */}
       <header className="relative sticky top-0 z-50 border-b bg-dashboard-header-bg/50 backdrop-blur-sm shadow-sm">
-        <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-primary/3 to-secondary/5"></div>
+        <div className="absolute inset-0 bg-gradient-to-r from-primary/5 via-primary/3 to-secondary/5 bg-[length:200%_200%] motion-safe:animate-gradient-x"></div>
         <div className="relative container mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             {/* Left Section - Logo and Title */}
@@ -70,8 +70,8 @@ export function PageShell({
                   />
                 </div>
                 <div className="border-l border-border pl-4">
-                  <h1 className="text-2xl font-bold bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent">
-                    Plant Health Dashboard
+                  <h1 className="text-2xl font-bold bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-transparent motion-safe:animate-fade-up">
+                  Standard-Aligned Alarm Management System
                   </h1>
                   <p className="text-sm text-muted-foreground font-medium">
                     Real-time monitoring & analytics
@@ -168,7 +168,7 @@ export function PageShell({
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-6 py-8">
+      <main className="container mx-auto px-6 py-8 motion-safe:animate-fade-up">
         {children}
       </main>
     </div>

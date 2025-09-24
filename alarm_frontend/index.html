@@ -1,20 +1,34 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Engro Alarm Plant</title>
-    <meta name="description" content="Lovable Generated Project" />
-    <meta name="author" content="Lovable" />
+    <title>Alarm Management System</title>
+    <meta name="description" content="Alarm Management System" />
+    <meta name="author" content="Engro" />
+    <meta name="color-scheme" content="light dark" />
 
-    <meta property="og:title" content="sprout-guard" />
-    <meta property="og:description" content="Lovable Generated Project" />
+    <meta property="og:title" content="Engro Alarm Plant" />
+    <meta property="og:description" content="Alarm Management System" />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+    <meta property="og:image" content="./public/engro-logo.png" />
 
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:site" content="@lovable_dev" />
-    <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+    <meta name="twitter:site" content="@engro" />
+    <meta name="twitter:image" content="./public/engro-logo.png" />
+    <script>
+      (function () {
+        try {
+          var key = 'theme';
+          var stored = localStorage.getItem(key);
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var theme = stored === 'dark' || (!stored && prefersDark) ? 'dark' : 'light';
+          var root = document.documentElement;
+          root.classList.remove('light', 'dark');
+          root.classList.add(theme);
+        } catch (e) {}
+      })();
+    </script>
   </head>
 
   <body>

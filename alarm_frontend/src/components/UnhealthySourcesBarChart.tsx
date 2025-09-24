@@ -15,6 +15,8 @@ import {
   Cell
 } from 'recharts';
 import { CHART_GREEN_DARK, CHART_GREEN_LIGHT, CHART_GREEN_MEDIUM, CHART_GREEN_PALE, priorityToGreen, magnitudeToGreen } from '@/theme/chartColors';
+import { useInsightModal } from '@/components/insights/useInsightModal';
+import { InsightButton } from '@/components/insights/InsightButton';
 
 interface UnhealthyRecord {
   event_time: string;
@@ -59,6 +61,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
   const [selectedMonth, setSelectedMonth] = useState<string>('2025-01'); // 'all' or 'YYYY-MM'
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
+  const { onOpen: openInsightModal } = useInsightModal();
 
   useEffect(() => {
     fetchUnhealthySources();
@@ -278,6 +281,11 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
     return result;
   }, [data, sortBy, topLimit]);
 
+  // Open AI insight modal with the currently processed Top Sources data
+  const handleInsightClick = () => {
+    openInsightModal(processedData, 'Unhealthy Sources Analysis');
+  };
+
   // Color mapping for priorities
   const getPriorityColor = (priority: string, hits: number) => {
     // Use centralized green palette for consistency
@@ -442,6 +450,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
                   <SelectItem value="all">All</SelectItem>
                 </SelectContent>
               </Select>
+              <InsightButton onClick={handleInsightClick} disabled={loading || processedData.length === 0} />
               <Button variant="outline" size="sm" onClick={fetchUnhealthySources}>
                 <RefreshCw className="h-4 w-4" />
               </Button>
@@ -482,11 +491,6 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
             </CardTitle>
             <CardDescription>
               Alarm sources exceeding 10 alarms per 10-minute window • Top {processedData.length} sources shown
-              {data?.isHistoricalData && (
-                <div className="text-amber-600 text-sm mt-1">
-                  📅 {data.note}
-                </div>
-              )}
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
@@ -543,6 +547,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
                 <SelectItem value="all">All</SelectItem>
               </SelectContent>
             </Select>
+            <InsightButton onClick={handleInsightClick} disabled={loading || processedData.length === 0} />
             <Button variant="outline" size="sm" onClick={fetchUnhealthySources}>
               <RefreshCw className="h-4 w-4" />
             </Button>
