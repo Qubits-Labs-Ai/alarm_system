@@ -70,6 +70,11 @@ export const InsightModal = () => {
     onClose();
   };
 
+  // Normalize overly large headings from providers to smaller levels for consistent UI
+  const normalizedInsight = insight
+    ?.replace(/^#\s+/gm, '### ') // H1 -> H3
+    ?.replace(/^##\s+/gm, '### '); // H2 -> H3
+
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
       {/* Remove default padding and constrain height; make inner body scroll */}
@@ -118,7 +123,7 @@ export const InsightModal = () => {
 
         {/* Scrollable body */}
         <div className="px-6 py-4 max-h-[70vh] overflow-y-auto">
-          <div className="prose prose-sm dark:prose-invert max-w-none prose-headings:mb-2 prose-p:leading-relaxed prose-li:my-0.5">
+          <div className="prose prose-sm dark:prose-invert max-w-none prose-headings:mb-1 prose-h1:text-base prose-h2:text-base prose-h3:text-base prose-p:leading-snug prose-li:my-0">
             {isLoading && (
               <div className="flex flex-col items-center justify-center p-8">
                 <Cpu className="h-10 w-10 animate-pulse text-primary" />
@@ -132,8 +137,21 @@ export const InsightModal = () => {
               </div>
             )}
             {/* Provider/model details intentionally hidden for a cleaner UX */}
-            {insight && (
-              <ReactMarkdown>{insight}</ReactMarkdown>
+            {normalizedInsight && (
+              <ReactMarkdown
+                components={{
+                  h1: ({ node, ...props }) => <h3 className="text-base font-semibold mt-3 mb-1" {...props} />,
+                  h2: ({ node, ...props }) => <h3 className="text-base font-semibold mt-3 mb-1" {...props} />,
+                  h3: ({ node, ...props }) => <h3 className="text-base font-semibold mt-3 mb-1" {...props} />,
+                  p: ({ node, ...props }) => <p className="mb-2 leading-snug" {...props} />,
+                  ul: ({ node, ...props }) => <ul className="list-disc pl-5 space-y-1" {...props} />,
+                  ol: ({ node, ...props }) => <ol className="list-decimal pl-5 space-y-1" {...props} />,
+                  li: ({ node, ...props }) => <li className="leading-snug" {...props} />,
+                  strong: ({ node, ...props }) => <strong className="font-semibold" {...props} />,
+                }}
+              >
+                {normalizedInsight}
+              </ReactMarkdown>
             )}
           </div>
         </div>
