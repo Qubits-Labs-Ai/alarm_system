@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from pvcI_files import list_pvc_files, read_pvc_file, read_all_pvc_files
 from pvcI_health_monitor import (
     compute_pvcI_file_health,
@@ -38,15 +38,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load environment and initialize OpenAI client and in-memory cache
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-try:
-    openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-except Exception:
-    openai_client = None
-
-INSIGHT_CACHE: Dict[str, Dict[str, Any]] = {}
 # Define the ALARM_DATA_DIR path
 BASE_DIR = os.path.dirname(__file__)
 ALARM_DATA_DIR = os.path.join(BASE_DIR, "ALARM_DATA_DIR")
@@ -503,132 +494,3 @@ def regenerate_pvcI_health_cache(
     except Exception as e:
         logger.error(f"Error regenerating health cache: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to regenerate cache: {str(e)}")
-
-
-# -------------------- AI Insights Endpoint --------------------
-class InsightRequest(BaseModel):
-    chartTitle: str
-    chartData: Any
-
-def _hash_payload(title: str, data: Any, model: str) -> str:
-    try:
-        trimmed = data
-        if isinstance(data, list):
-            def _sev(rec: Dict[str, Any]):
-                return int((rec or {}).get('flood_count') or (rec or {}).get('hits') or 0)
-            trimmed = sorted(data, key=_sev, reverse=True)[:200]
-        s = json.dumps({"t": title, "d": trimmed, "m": model}, default=str, ensure_ascii=False)
-        import hashlib as _hl
-        return _hl.sha1(s.encode('utf-8')).hexdigest()
-    except Exception:
-        import hashlib as _hl
-        return _hl.sha1((title + model + str(type(data))).encode('utf-8')).hexdigest()
-
-def _build_prompt(title: str, data: Any) -> str:
-    summary: Dict[str, Any] = {"total_incidents": 0, "unique_sources": 0, "total_flood_count": 0, "top_sources": []}
-    records: List[Dict[str, Any]] = []
-    if isinstance(data, list):
-        for r in data:
-            if isinstance(r, dict):
-                records.append(r)
-        summary["total_incidents"] = len(records)
-        summary["unique_sources"] = len({(r.get('source') or '').strip() for r in records})
-        total_flood = 0
-        by_source: Dict[str, Dict[str, Any]] = {}
-        for r in records:
-            hits = int(r.get('flood_count') or r.get('hits') or 0)
-            total_flood += hits
-            src = str(r.get('source') or 'Unknown')
-            if src not in by_source:
-                by_source[src] = {"incidents": 0, "total": 0, "max": 0}
-            by_source[src]["incidents"] += 1
-            by_source[src]["total"] += hits
-            by_source[src]["max"] = max(by_source[src]["max"], hits)
-        summary["total_flood_count"] = total_flood
-        top = sorted(({"source": s, **m} for s, m in by_source.items()), key=lambda x: x["total"], reverse=True)[:10]
-        summary["top_sources"] = top
-
-    prompt = (
-        f"You are an expert Alarm Management analyst. Analyze an alarm flooding chart called '{title}'.\n"
-        "The chart shows time-windowed incidents where a source exceeded 10 alarms in 10 minutes.\n"
-        "Fields per incident (when present): source, peak_window_start/end, flood_count or hits, threshold, over_by, rate_per_min, priority, location_tag, condition, description.\n\n"
-        "Context summary (computed):\n"
-        f"- Total incidents: {summary['total_incidents']}\n"
-        f"- Unique sources: {summary['unique_sources']}\n"
-        f"- Total flood count: {summary['total_flood_count']}\n"
-        f"- Top sources by total flood (source, incidents, total, max): {json.dumps(summary['top_sources'], ensure_ascii=False)}\n\n"
-        "Write a concise, professional markdown insight grounded ONLY in the provided context.\n"
-        "Structure strictly as sections with headings: \n"
-        "1) Executive Summary (2-3 bullet points)\n"
-        "2) Key Drivers & Patterns (bullets)\n"
-        "3) Source-Level Observations (bullets referencing top actors)\n"
-        "4) Temporal/Operational Context (bullets)\n"
-        "5) Recommended Actions (prioritized, actionable, specific).\n"
-        "Avoid speculation and vendor language. Keep it under 220 words."
-    )
-    return prompt
-
-@app.post("/insights")
-def generate_insights_endpoint(payload: InsightRequest, regenerate: bool = False):
-    try:
-        if openai_client is None:
-            raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured on server.")
-
-        model = os.getenv("INSIGHTS_MODEL", "gpt-4o-mini")
-        cache_key = _hash_payload(payload.chartTitle, payload.chartData, model)
-
-        if not regenerate and cache_key in INSIGHT_CACHE:
-            cached = INSIGHT_CACHE[cache_key]
-            return {
-                "insight": cached["insight"],
-                "meta": {**cached.get("meta", {}), "cached": True, "cache_key": cache_key},
-            }
-
-        system_msg = "You are a senior Alarm Management SME. Be precise, concise, and action-oriented."
-        prompt = _build_prompt(payload.chartTitle, payload.chartData)
-
-        preview_records = []
-        if isinstance(payload.chartData, list):
-            def _sev2(r: Dict[str, Any]):
-                return int((r or {}).get('flood_count') or (r or {}).get('hits') or 0)
-            for r in sorted(payload.chartData, key=_sev2, reverse=True)[:50]:
-                preview_records.append({
-                    "source": r.get("source"),
-                    "flood": int((r.get("flood_count") or r.get("hits") or 0)),
-                    "priority": r.get("priority") or r.get("priority_severity"),
-                    "rate_per_min": r.get("rate_per_min"),
-                    "over_by": r.get("over_by"),
-                })
-
-        messages = [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": prompt},
-            {"role": "user", "content": f"Preview incidents: {json.dumps(preview_records, ensure_ascii=False)}"},
-        ]
-
-        completion = openai_client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.4,
-            max_tokens=700,
-        )
-        content = (completion.choices[0].message.content or "").strip()
-        finish_reason = getattr(completion.choices[0], "finish_reason", None)
-
-        result = {
-            "insight": content,
-            "meta": {
-                "provider": "openai",
-                "model": model,
-                "generated_at": datetime.utcnow().isoformat() + "Z",
-                "cache_key": cache_key,
-                "finish_reason": finish_reason,
-            },
-        }
-        INSIGHT_CACHE[cache_key] = result
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error generating insights: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
