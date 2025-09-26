@@ -300,34 +300,34 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
       const record = data.latestRecord;
       
       return (
-        <div className="bg-white p-4 border rounded-lg shadow-lg max-w-sm border-gray-200">
-          <div className="font-semibold text-gray-900 mb-3 text-base">
+        <div className="bg-dashboard-chart-tooltip-bg p-4 border border-border rounded-lg shadow-xl max-w-sm">
+          <div className="font-semibold text-foreground mb-3 text-base">
             🚨 {data.source}
           </div>
           
           <div className="space-y-2 text-sm">
             <div className="grid grid-cols-2 gap-2">
-              <div><span className="font-medium text-gray-600">Total Flood:</span></div>
+              <div><span className="font-medium text-muted-foreground">Total Flood:</span></div>
               <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>{data.totalFlood}</div>
               
-              <div><span className="font-medium text-gray-600">Incidents:</span></div>
+              <div><span className="font-medium text-muted-foreground">Incidents:</span></div>
               <div>{data.incidents}</div>
               
-              <div><span className="font-medium text-gray-600">Max Flood:</span></div>
+              <div><span className="font-medium text-muted-foreground">Max Flood:</span></div>
               <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>{data.maxFlood}</div>
               
-              <div><span className="font-medium text-gray-600">Avg Flood:</span></div>
+              <div><span className="font-medium text-muted-foreground">Avg Flood:</span></div>
               <div>{data.avgFlood}</div>
             </div>
             
-            <hr className="my-2" />
+            <div className="my-2 border-t border-border" />
             
-            <div className="bg-gray-50 p-2 rounded text-xs">
-              <div className="font-medium text-gray-700 mb-1">Latest Incident:</div>
+            <div className="bg-accent p-2 rounded text-xs">
+              <div className="font-medium text-foreground mb-1">Latest Incident:</div>
               <div><span className="font-medium">Peak Window:</span> {new Date((record as any).peak_window_start || record.event_time).toLocaleString()} → {new Date((record as any).peak_window_end || record.bin_end).toLocaleString()}</div>
             </div>
             
-            <div><span className="font-medium text-gray-600">Priority:</span> 
+            <div><span className="font-medium text-muted-foreground">Priority:</span> 
               <span
                 className="ml-1 px-2 py-1 rounded text-xs font-medium"
                 style={{
@@ -340,25 +340,25 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
             </div>
             
             {record.location_tag && record.location_tag !== 'Production Area' && (
-              <div><span className="font-medium text-gray-600">Location:</span> {record.location_tag}</div>
+              <div><span className="font-medium text-muted-foreground">Location:</span> {record.location_tag}</div>
             )}
             
             {record.condition && record.condition !== 'Alarm Threshold Exceeded' && (
-              <div><span className="font-medium text-gray-600">Condition:</span> {record.condition}</div>
+              <div><span className="font-medium text-muted-foreground">Condition:</span> {record.condition}</div>
             )}
             
             {record.description && record.description !== 'Not Provided' && !record.description.includes('Source exceeded') && (
-              <div><span className="font-medium text-gray-600">Description:</span> 
-                <div className="text-xs text-gray-600 mt-1">{record.description}</div>
+              <div><span className="font-medium text-muted-foreground">Description:</span> 
+                <div className="text-xs text-muted-foreground mt-1">{record.description}</div>
               </div>
             )}
             
-            <div className="text-xs text-gray-700 mt-2 p-2 rounded" style={{backgroundColor: CHART_GREEN_PALE}}>
+            <div className="text-xs text-foreground mt-2 p-2 rounded" style={{backgroundColor: CHART_GREEN_PALE}}>
               ⚠️ Threshold: {record.threshold} alarms/10min • Over by: {record.over_by} hits
             </div>
             
             {data.allRecords && data.allRecords.length > 1 && (
-              <div className="text-xs text-blue-600 mt-1">
+              <div className="text-xs text-primary mt-1">
                 📊 Total {data.allRecords.length} incidents in selected period
               </div>
             )}
@@ -596,6 +596,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
               <Tooltip 
                 content={<CustomTooltip />} 
                 cursor={{ fill: 'var(--accent)', opacity: 0.1 }}
+                contentStyle={{ background: 'transparent', border: 'none', boxShadow: 'none' }}
               />
               
               <Bar dataKey="totalFlood" radius={[4, 4, 0, 0]} maxBarSize={60}>

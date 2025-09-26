@@ -18,6 +18,14 @@ export default {
         mono: ['var(--font-mono)', 'ui-monospace', 'SFMono-Regular'],
         serif: ['var(--font-serif)', 'ui-serif', 'Georgia'],
       },
+      fontWeight: {
+        normal: '400',
+        medium: '400',
+        semibold: '400',
+        bold: '400',
+        extrabold: '400',
+        black: '400',
+      },
       colors: {
         border: "var(--border)",
         input: "var(--input)",

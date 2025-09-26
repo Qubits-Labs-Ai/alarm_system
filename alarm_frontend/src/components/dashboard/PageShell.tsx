@@ -82,27 +82,6 @@ export function PageShell({
             
             {/* Right Section - Actions & Profile */}
             <div className="flex items-center gap-6">
-              {/* Last Updated & Refresh */}
-              {(lastUpdated || onRefresh) && (
-                <div className="hidden lg:flex items-center gap-3 text-sm text-muted-foreground pr-4 border-r border-border/50">
-                  {lastUpdated && (
-                    <span>
-                      Last updated {formatDistanceToNow(new Date(lastUpdated), { addSuffix: true })}
-                    </span>
-                  )}
-                  {onRefresh && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={onRefresh}
-                      disabled={isRefreshing}
-                      className="rounded-full h-8 w-8"
-                    >
-                      <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
-                    </Button>
-                  )}
-                </div>
-              )}
 
               {/* Theme Toggle */}
               <ThemeToggle />

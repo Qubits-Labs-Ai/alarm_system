@@ -8,6 +8,8 @@ import { ErrorState } from '@/components/dashboard/ErrorState';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
 import UnhealthySourcesWordCloud from '@/components/UnhealthySourcesWordCloud';
 import UnhealthySourcesBarChart from '@/components/UnhealthySourcesBarChart';
+import ParetoTopOffendersChart from '@/components/ParetoTopOffendersChart';
+import ConditionDistributionByLocation from '@/components/ConditionDistributionByLocation';
 import { useAuth } from '@/hooks/useAuth';
 import { usePlantHealth } from '@/hooks/usePlantHealth';
 import { Plant } from '@/types/dashboard';
@@ -245,6 +247,12 @@ export default function DashboardPage() {
                 onTopNChange={handleTopNChange}
                 isLoading={unhealthyBarsLoading}
               />
+
+              {/* New Pareto Top Offenders Chart (Bar + Line) */}
+              <ParetoTopOffendersChart />
+
+              {/* New Stacked Bar: Condition Distribution by Location */}
+              <ConditionDistributionByLocation />
 
               <UnhealthySourcesChart />
 

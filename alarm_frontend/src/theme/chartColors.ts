@@ -48,6 +48,19 @@ function lightenHslTupleVar(name: string, delta: number): string {
   return `hsl(${h} ${s} ${newL}%)`;
 }
 
+// Adjust both hue (degrees) and lightness (%) of a CSS var HSL tuple
+function shiftHueLightnessVar(name: string, hueDelta: number, lightnessDelta: number): string {
+  const tuple = cssVar(name); // e.g. "96 62% 40%"
+  if (!tuple) return '';
+  const parts = tuple.split(/\s+/);
+  if (parts.length !== 3) return `hsl(${tuple})`;
+  const [hRaw, s, lRaw] = parts;
+  const h = (parseFloat(hRaw) + hueDelta + 360) % 360;
+  const l = parseFloat(lRaw.replace('%', ''));
+  const newL = Math.max(0, Math.min(95, l + lightnessDelta));
+  return `hsl(${h} ${s} ${newL}%)`;
+}
+
 // Helper to map priority -> green shades using CSS variables
 export function priorityToGreen(priority?: string): string {
   switch ((priority || "").toLowerCase()) {
@@ -94,4 +107,56 @@ export function severityToColor(severity: number): string {
   }
   // Minimal → success green
   return cssVar('--success') || CHART_SUCCESS;
+}
+
+// Generate a palette of distinct green shades using the theme's CSS variables.
+// It cycles across the 5 base green tokens and varies lightness for additional distinct shades.
+export function getGreenPalette(count: number): string[] {
+  const bases: Array<{ varName: string; fallback: string }> = [
+    { varName: '--chart-1', fallback: CHART_GREEN_PRIMARY },
+    { varName: '--chart-2', fallback: CHART_GREEN_SECONDARY },
+    { varName: '--chart-3', fallback: CHART_GREEN_TERTIARY },
+    { varName: '--chart-4', fallback: CHART_GREEN_QUATERNARY },
+    { varName: '--chart-5', fallback: CHART_GREEN_QUINARY },
+  ];
+
+  // Rings of (hueDelta, lightnessDelta) for stronger separation while staying in green vicinity
+  // Dark mode uses brighter lightness for legibility
+  const rings: Array<{ dh: number; dl: number }> = isDarkMode()
+    ? [
+        { dh: 0, dl: 18 },
+        { dh: 10, dl: 12 },
+        { dh: -10, dl: 8 },
+        { dh: 16, dl: 22 },
+        { dh: -16, dl: 26 },
+        { dh: 24, dl: 14 },
+        { dh: -24, dl: 10 },
+      ]
+    : [
+        { dh: 0, dl: -12 },
+        { dh: 10, dl: -6 },
+        { dh: -10, dl: 0 },
+        { dh: 16, dl: 8 },
+        { dh: -16, dl: 14 },
+        { dh: 24, dl: 20 },
+        { dh: -24, dl: 26 },
+      ];
+
+  const palette: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const base = bases[i % bases.length];
+    const ring = rings[Math.floor(i / bases.length) % rings.length] || { dh: 0, dl: 0 };
+    const tuple = cssVar(base.varName); // e.g. "96 62% 40%"
+    let color = '';
+    if (tuple) {
+      if (ring.dh === 0 && ring.dl === 0) {
+        color = `hsl(${tuple})`;
+      } else {
+        color = shiftHueLightnessVar(base.varName, ring.dh, ring.dl);
+      }
+    }
+    if (!color) color = base.fallback;
+    palette.push(color);
+  }
+  return palette;
 }

@@ -63,8 +63,8 @@
     --sidebar-accent-foreground: oklch(0.20 0.02 140);
     --sidebar-border: oklch(0.88 0.02 140);
     --sidebar-ring: oklch(0.55 0.15 140);
-
-    --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+    
+    --font-sans: "Inter var", Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", ui-sans-serif, sans-serif;
     --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
     
@@ -84,34 +84,34 @@
   }
 
   .dark {
-    /* Dark Mode - Greens and Dark Neutrals */
-    --background: oklch(0.12 0.015 140);  /* Very dark green-gray */
-    --foreground: oklch(0.92 0.01 140);   /* Light green-tinted text */
-    --card: oklch(0.16 0.02 140);         /* Dark green-gray card */
-    --card-foreground: oklch(0.92 0.01 140);
-    --popover: oklch(0.18 0.02 140);
-    --popover-foreground: oklch(0.92 0.01 140);
+    /* Dark Mode - Neutral Blacks & Greys (matte, no green tint) */
+    --background: oklch(0.11 0 0);        /* Matte near-black */
+    --foreground: oklch(0.94 0 0);        /* Light neutral text */
+    --card: oklch(0.16 0 0);              /* Deep neutral card */
+    --card-foreground: oklch(0.94 0 0);
+    --popover: oklch(0.14 0 0);           /* Slightly lighter than bg */
+    --popover-foreground: oklch(0.94 0 0);
     
-    /* Primary green palette for dark mode */
+    /* Keep green accents/buttons as-is */
     --primary: oklch(0.68 0.12 140);      /* Bright green for dark mode */
-    --primary-foreground: oklch(0.12 0.015 140);
+    --primary-foreground: oklch(0.11 0 0);
     --secondary: oklch(0.45 0.08 140);    /* Muted green */
-    --secondary-foreground: oklch(0.88 0.01 140);
+    --secondary-foreground: oklch(0.92 0 0);
     
-    /* Dark neutral grays with green undertones */
-    --muted: oklch(0.22 0.02 140);        /* Dark gray-green */
-    --muted-foreground: oklch(0.65 0.02 140);
-    --accent: oklch(0.25 0.025 140);      /* Accent dark green-gray */
-    --accent-foreground: oklch(0.88 0.01 140);
+    /* Neutral greys, no hue */
+    --muted: oklch(0.22 0 0);             /* Dark grey */
+    --muted-foreground: oklch(0.72 0 0);
+    --accent: oklch(0.24 0 0);            /* Subtle panel/hover */
+    --accent-foreground: oklch(0.92 0 0);
     
     /* Status colors for dark mode */
     --destructive: oklch(0.65 0.20 25);   /* Brighter red for dark mode */
     --destructive-foreground: oklch(0.92 0.01 140);
     
-    /* Borders and inputs for dark mode */
-    --border: oklch(0.28 0.025 140);      /* Dark green-tinted border */
-    --input: oklch(0.20 0.02 140);        /* Dark input background */
-    --ring: oklch(0.68 0.12 140);         /* Focus ring matches primary */
+    /* Borders and inputs - neutral */
+    --border: oklch(0.28 0 0);            /* Neutral grey border */
+    --input: oklch(0.16 0 0);             /* Neutral input background */
+    --ring: oklch(0.68 0.12 140);         /* Keep green focus ring */
     
     /* Chart colors - unified to requested shade #5aa427 (HSL ~ 96 62% 40%) */
     --chart-1: 96 62% 40%;
@@ -120,12 +120,12 @@
     --chart-4: 96 62% 40%;
     --chart-5: 96 62% 40%;
     
-    /* Dashboard specific variables for dark mode */
-    --dashboard-header-bg: oklch(0.14 0.018 140);
-    --metric-card-bg: oklch(0.16 0.02 140);
-    --metric-card-shadow: 0 4px 12px 0px oklch(0 0% 0% / 0.25), 0 2px 6px -2px oklch(0.68 0.12 140 / 0.15);
-    --chart-grid: oklch(0.25 0.025 140);
-    --chart-tooltip-bg: oklch(0.18 0.02 140);
+    /* Dashboard specific variables (neutral surfaces) */
+    --dashboard-header-bg: oklch(0.13 0 0);
+    --metric-card-bg: oklch(0.16 0 0);
+    --metric-card-shadow: 0 6px 16px 0px hsl(0 0% 0% / 0.35), 0 2px 8px -2px hsl(0 0% 0% / 0.25);
+    --chart-grid: oklch(0.32 0 0);        /* Subtle grid lines */
+    --chart-tooltip-bg: oklch(0.18 0 0);
     
     /* Success and health indicators for dark mode */
     --success: oklch(0.70 0.12 140);
@@ -133,13 +133,13 @@
     --warning: oklch(0.75 0.15 80);
     --warning-foreground: oklch(0.12 0.015 140);
     
-    --sidebar-background: oklch(0.14 0.018 140);
-    --sidebar-foreground: oklch(0.92 0.01 140);
+    --sidebar-background: oklch(0.13 0 0);
+    --sidebar-foreground: oklch(0.94 0 0);
     --sidebar-primary: oklch(0.68 0.12 140);
-    --sidebar-primary-foreground: oklch(0.12 0.015 140);
-    --sidebar-accent: oklch(0.25 0.025 140);
-    --sidebar-accent-foreground: oklch(0.88 0.01 140);
-    --sidebar-border: oklch(0.28 0.025 140);
+    --sidebar-primary-foreground: oklch(0.11 0 0);
+    --sidebar-accent: oklch(0.24 0 0);
+    --sidebar-accent-foreground: oklch(0.92 0 0);
+    --sidebar-border: oklch(0.28 0 0);
     --sidebar-ring: oklch(0.68 0.12 140);
     /* TweakCN shadow scale (added for dark) */
     --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
@@ -159,7 +159,12 @@
   }
 
   body {
+    font-synthesis-weight: none;
+    font-synthesis: none;
     @apply bg-background text-foreground font-sans antialiased;
+  }
+  h1, h2, h3, h4, h5, h6, strong, b {
+    font-weight: 400;
   }
 }
 
