@@ -8,6 +8,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from config import PVCI_FOLDER
 from pvcI_files import read_pvc_file, list_pvc_files
+import re
 
 
 # Configure logging
