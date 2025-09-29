@@ -17,6 +17,8 @@ import {
   Cell,
 } from 'recharts';
 import { CHART_GREEN_DARK, CHART_GREEN_LIGHT, CHART_GREEN_PALE, CHART_WARNING } from '@/theme/chartColors';
+import { InsightButton } from '@/components/insights/InsightButton';
+import { useInsightModal } from '@/components/insights/useInsightModal';
 
 // API
 import { fetchUnhealthySources } from '@/api/plantHealth';
@@ -57,6 +59,8 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string }
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
   const [records, setRecords] = React.useState<UnhealthyRecord[]>([]);
+  const { onOpen: openInsightModal } = useInsightModal();
+  const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
 
   // Controls (aligned with other charts)
   const [selectedMonth, setSelectedMonth] = React.useState<string>(DEFAULT_MONTH); // 'all' or 'YYYY-MM'
@@ -253,6 +257,16 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string }
     return idx === -1 ? paretoData.length - 1 : idx;
   }, [paretoData]);
 
+  // AI Insight: build payload representing top offenders
+  const handleInsightClick = () => {
+    const payload = paretoData.map(p => ({
+      source: p.source,
+      flood_count: p.totalFlood,
+    }));
+    const title = `Top Offenders • Pareto — ${plantLabel} — ${selectedMonth} — ${timeRange} — ${windowMode} — Top ${topLimit} — Metric:${metricMode}`;
+    openInsightModal(payload, title);
+  };
+
   // Tooltip renderer
   const formatTooltip = (value: any, name: any, info: any) => {
     const dataKey = info?.dataKey;
@@ -429,6 +443,7 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string }
                 <SelectItem value="all">All</SelectItem>
               </SelectContent>
             </Select>
+            <InsightButton onClick={handleInsightClick} disabled={loading || paretoData.length === 0} />
             <Button variant="outline" size="sm" onClick={fetchData}>
               <RefreshCw className="h-4 w-4" />
             </Button>

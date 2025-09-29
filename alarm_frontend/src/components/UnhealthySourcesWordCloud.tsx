@@ -7,6 +7,8 @@ import { Slider } from '@/components/ui/slider';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { AlertTriangle, RefreshCw, Type, Info, TrendingUp } from 'lucide-react';
+import { InsightButton } from '@/components/insights/InsightButton';
+import { useInsightModal } from '@/components/insights/useInsightModal';
 import { priorityToGreen, CHART_GREEN_PALE, severityToColor, CHART_SUCCESS, CHART_GREEN_PRIMARY, CHART_GREEN_SECONDARY, CHART_GREEN_TERTIARY, CHART_DESTRUCTIVE, CHART_WARNING } from '@/theme/chartColors';
 
 interface UnhealthyRecord {
@@ -67,6 +69,8 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
   const [data, setData] = useState<UnhealthySourcesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { onOpen: openInsightModal } = useInsightModal();
+  const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
   const [timeRange, setTimeRange] = useState<string>('all');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
@@ -345,6 +349,17 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
     return { words: sized, topStats: stats, weightingInfo: weightInfo };
   }, [data, binsWeight, floodWeight, topLimit, containerWidth]);
 
+  // AI Insights: use current displayed word list to form payload
+  const handleInsightClick = () => {
+    const payload = words.map(w => ({
+      source: w.text,
+      flood_count: Math.round(w.weightedSize),
+      priority: w.priority,
+    }));
+    const title = `Unhealthy Sources Word Cloud — ${plantLabel} — ${selectedMonth} — ${timeRange} — ${windowMode} — Top ${topLimit} — F:${Math.round(floodWeight*100)}%/B:${Math.round(binsWeight*100)}%`;
+    openInsightModal(payload, title);
+  };
+
   // Responsive height determined by container aspect ratio
   const [containerHeight, setContainerHeight] = useState(450);
 
@@ -517,6 +532,7 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
                 <SelectItem value="all">All</SelectItem>
               </SelectContent>
             </Select>
+            <InsightButton onClick={handleInsightClick} disabled={loading || words.length === 0} />
             <Select value={String(topLimit)} onValueChange={(v) => setTopLimit(parseInt(v))}>
               <SelectTrigger className="w-28">
                 <SelectValue />

@@ -62,10 +62,12 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
   const { onOpen: openInsightModal } = useInsightModal();
+  const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
 
   const handleInsightClick = () => {
     // useInsightModal.onOpen expects (data, title)
-    openInsightModal(filteredRecords, 'Unhealthy Sources Analysis');
+    const title = `Unhealthy Sources Timeline — ${plantLabel} — ${selectedMonth} — ${timeRange} — ${windowMode}`;
+    openInsightModal(filteredRecords, title);
   };
 
   useEffect(() => {

@@ -26,6 +26,8 @@ import {
   CHART_WARNING,
 } from '@/theme/chartColors';
 import { fetchUnhealthySources } from '@/api/plantHealth';
+import { InsightButton } from '@/components/insights/InsightButton';
+import { useInsightModal } from '@/components/insights/useInsightModal';
 
 // Types aligned with other components
 interface UnhealthyRecord {
@@ -63,6 +65,8 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
   const [records, setRecords] = React.useState<UnhealthyRecord[]>([]);
+  const { onOpen: openInsightModal } = useInsightModal();
+  const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
 
   // Controls (follow existing dashboard defaults)
   const [selectedMonth, setSelectedMonth] = React.useState<string>(DEFAULT_MONTH); // 'all' or 'YYYY-MM'
@@ -300,6 +304,16 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
     return { chartData: data, conditionKeys: condKeys, colorByCondition, totalLocations: rows.length, highThreshold, hasVeryHigh };
   }, [records, sortBy, topLocations]);
 
+  // AI Insight handler: send per-location totals as incidents the backend can summarize
+  const handleInsightClick = () => {
+    const payload = (chartData || []).map((row: any) => ({
+      source: String(row.location),
+      flood_count: Number(row.total || 0),
+    }));
+    const title = `Condition Distribution by Location — ${plantLabel} — ${selectedMonth} — ${timeRange} — ${windowMode} — Top ${topLocations} — ${sortBy} — Highlight:${highlightVeryHigh}`;
+    openInsightModal(payload, title);
+  };
+
   // Custom legend that shows per-condition greens and an extra swatch for Very High (orange)
   const renderLegend = () => (
     <div className="flex flex-wrap items-center gap-4 px-2 py-1">
@@ -511,6 +525,7 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
                 <SelectItem value="all">All</SelectItem>
               </SelectContent>
             </Select>
+            <InsightButton onClick={handleInsightClick} disabled={loading || !chartData || chartData.length === 0} />
             <Button variant="outline" size="sm" onClick={fetchData}>
               <RefreshCw className="h-4 w-4" />
             </Button>

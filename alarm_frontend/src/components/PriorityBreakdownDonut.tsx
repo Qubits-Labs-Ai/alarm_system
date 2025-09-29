@@ -12,6 +12,8 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { Button } from '@/components/ui/button';
+import { InsightButton } from '@/components/insights/InsightButton';
+import { useInsightModal } from '@/components/insights/useInsightModal';
 
 // We keep colors aligned with the theme tokens
 const COLOR_CRITICAL = 'var(--destructive)'; // red
@@ -80,6 +82,8 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string; plantId?: st
   const [data, setData] = useState<{ count: number; records: any[] } | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const { onOpen: openInsightModal } = useInsightModal();
+  const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
 
   const [selectedMonth, setSelectedMonth] = useState<string>(DEFAULT_MONTH);
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
@@ -248,6 +252,18 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string; plantId?: st
     return (processed || []).filter(r => r.__cat === selectedCat);
   }, [processed, selectedCat]);
 
+  // Open AI insights with current filtered dataset
+  const handleInsightClick = () => {
+    const base = selectedCat ? selectedRecords : processed;
+    const payload = (base || []).map((r: any) => ({
+      source: String(r?.source || 'Unknown'),
+      flood_count: Number(r?.__flood ?? 0),
+      priority: r?.priority || undefined,
+    }));
+    const title = `Priority Breakdown Donut — ${plantLabel} — ${selectedMonth} — ${timeRange} — ${windowMode}` + (selectedCat ? ` — ${selectedCat}` : "");
+    openInsightModal(payload, title);
+  };
+
   const selectedSummary = useMemo(() => {
     const total = selectedRecords.reduce((a, r) => a + (r.__flood || 0), 0);
     const incidents = selectedRecords.length;
@@ -347,6 +363,7 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string; plantId?: st
                 <SelectItem value="all">All</SelectItem>
               </SelectContent>
             </Select>
+            <InsightButton onClick={handleInsightClick} disabled={loading || (selectedCat ? selectedRecords.length === 0 : processed.length === 0)} />
             <Button variant="outline" size="sm" onClick={() => {
               // trigger effect by toggling state to same value
               setSelectedMonth((m) => m);

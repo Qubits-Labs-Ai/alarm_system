@@ -64,6 +64,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
   const { onOpen: openInsightModal } = useInsightModal();
+  const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
 
   useEffect(() => {
     fetchData();
@@ -282,7 +283,14 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
 
   // Open AI insight modal with the currently processed Top Sources data
   const handleInsightClick = () => {
-    openInsightModal(processedData, 'Unhealthy Sources Analysis');
+    // Convert aggregated rows to the schema expected by /insights (use flood_count)
+    const payload = processedData.map(item => ({
+      source: item.source,
+      flood_count: item.totalFlood,
+      priority: item.priority,
+    }));
+    const title = `Unhealthy Sources Analysis — ${plantLabel} — ${selectedMonth} — ${timeRange} — ${windowMode} — Top ${topLimit} — ${sortBy}`;
+    openInsightModal(payload, title);
   };
 
   // Color mapping for priorities
