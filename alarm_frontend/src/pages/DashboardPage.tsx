@@ -247,6 +247,7 @@ export default function DashboardPage() {
                 topN={topN}
                 onTopNChange={handleTopNChange}
                 isLoading={unhealthyBarsLoading}
+                plantId={selectedPlant.id}
               />
 
               {/* Priority Breakdown Donut (flood_count-weighted) */}
@@ -298,6 +299,7 @@ export default function DashboardPage() {
               topN={topN}
               onTopNChange={handleTopNChange}
               isLoading={unhealthyBarsLoading}
+              plantId={selectedPlant.id}
             />
           </div>
         )}

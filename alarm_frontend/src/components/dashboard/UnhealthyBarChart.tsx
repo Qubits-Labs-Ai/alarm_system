@@ -3,6 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { UnhealthyBar } from '@/types/dashboard';
 import { CHART_GREEN_MEDIUM } from '@/theme/chartColors';
+import { InsightButton } from '@/components/insights/InsightButton';
+import { useInsightModal } from '@/components/insights/useInsightModal';
 
 interface UnhealthyBarChartProps {
   data: UnhealthyBar[];
@@ -10,6 +12,7 @@ interface UnhealthyBarChartProps {
   topN: 1 | 3;
   onTopNChange: (value: 1 | 3) => void;
   isLoading?: boolean;
+  plantId?: string;
 }
 
 export function UnhealthyBarChart({ 
@@ -17,8 +20,11 @@ export function UnhealthyBarChart({
   threshold, 
   topN, 
   onTopNChange, 
-  isLoading = false 
+  isLoading = false,
+  plantId = 'pvcI',
 }: UnhealthyBarChartProps) {
+  const { onOpen: openInsightModal } = useInsightModal();
+  const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
   const formatTooltip = (value: number, name: string, props: any) => {
     const { payload } = props;
     if (!payload) return null;
@@ -93,6 +99,16 @@ export function UnhealthyBarChart({
 
   const isEmpty = data.length === 0;
 
+  const handleInsightClick = () => {
+    const payload = data.map(d => ({
+      source: d.source,
+      flood_count: typeof d.flood_count === 'number' ? d.flood_count : d.hits,
+      priority: d.priority || d.priority_severity,
+    }));
+    const title = `Unhealthy Bar Chart — ${plantLabel} — Top ${topN} — Threshold ${threshold}`;
+    openInsightModal(payload, title);
+  };
+
   return (
     <Card className="shadow-metric-card bg-dashboard-metric-card-bg">
       <CardHeader>
@@ -120,6 +136,7 @@ export function UnhealthyBarChart({
             >
               Top 3
             </Button>
+            <InsightButton onClick={handleInsightClick} disabled={isLoading || isEmpty} />
           </div>
         </div>
       </CardHeader>
