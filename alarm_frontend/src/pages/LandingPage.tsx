@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { usePlantHealth } from '@/hooks/usePlantHealth';
 import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
+import PriorityBreakdownDonut from '@/components/PriorityBreakdownDonut';
 import engroLogo from '@/assets/engro-logo.png';
 
 const LandingPage = () => {
@@ -155,7 +156,7 @@ const LandingPage = () => {
       <section className="py-8">
         <div className="container mx-auto px-6">
           <div className="grid lg:grid-cols-3 gap-8 items-stretch">
-            <div className="lg:col-span-2">
+            <div className="lg:col-span-2 space-y-8">
               <UnhealthyBarChart 
                 data={data?.unhealthyBars ?? []}
                 threshold={10}
@@ -163,6 +164,7 @@ const LandingPage = () => {
                 onTopNChange={setTopN}
                 isLoading={isLoading}
               />
+              <PriorityBreakdownDonut />
             </div>
             <div>
               <Card className="p-6 h-full bg-gradient-to-br from-primary/5 to-secondary/5 border-primary/20">

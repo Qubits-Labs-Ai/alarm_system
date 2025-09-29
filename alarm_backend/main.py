@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from pvcI_files import list_pvc_files, read_pvc_file, read_all_pvc_files
 from pvcI_health_monitor import (
     compute_pvcI_file_health,
@@ -19,8 +19,7 @@ from pydantic import BaseModel
 from typing import List, Any, Dict
 from pathlib import Path
 from dotenv import load_dotenv
-from openai import OpenAI
-import hashlib
+from openai import OpenAI, APIError, APIConnectionError, RateLimitError, BadRequestError, AuthenticationError, PermissionDeniedError
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -39,10 +38,31 @@ app.add_middleware(
 )
 
 # Load environment and initialize OpenAI client and in-memory cache
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# Explicitly load .env from the backend folder and allow override so a correct key
+# in alarm_backend/.env is not shadowed by a conflicting OS environment variable.
+dotenv_path = Path(__file__).with_name(".env")
 try:
-    openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+    load_dotenv(dotenv_path=dotenv_path, override=True)
+except Exception:
+    pass
+
+OPENAI_API_KEY = (os.getenv("OPENAI_API_KEY") or "").strip()
+OPENAI_BASE_URL = (os.getenv("OPENAI_BASE_URL") or "").strip()
+
+# Safe diagnostic (does not expose the key)
+try:
+    logger.info(f"Loaded env for insights from {dotenv_path}. OPENAI_API_KEY present={bool(OPENAI_API_KEY)}")
+except Exception:
+    pass
+
+try:
+    if OPENAI_API_KEY:
+        if OPENAI_BASE_URL:
+            openai_client = OpenAI(api_key=OPENAI_API_KEY, base_url=OPENAI_BASE_URL)
+        else:
+            openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    else:
+        openai_client = None
 except Exception:
     openai_client = None
 
@@ -50,6 +70,24 @@ INSIGHT_CACHE: Dict[str, Dict[str, Any]] = {}
 # Define the ALARM_DATA_DIR path
 BASE_DIR = os.path.dirname(__file__)
 ALARM_DATA_DIR = os.path.join(BASE_DIR, "ALARM_DATA_DIR")
+
+# -------- Utility: sanitize sensitive tokens in error strings --------
+import re as _re
+
+def _sanitize_error_message(msg: str) -> str:
+    """Remove any API key-like tokens from error strings before returning/logging.
+    Replaces patterns like 'sk-...' and 'sk-proj-...' with masked tokens.
+    """
+    if not isinstance(msg, str):
+        try:
+            msg = str(msg)
+        except Exception:
+            return ""
+    # Mask any token starting with sk- followed by a run of safe chars
+    msg = _re.sub(r"sk-[A-Za-z0-9\-_]{4,}", "sk-***", msg)
+    # Also mask project/session keys which might appear differently
+    msg = _re.sub(r"(api_key|api-key|OPENAI_API_KEY)\s*[:=]\s*[^\s,'\"]+", r"\1=***", msg, flags=_re.I)
+    return msg
 
 
 @app.get("/plants")
@@ -606,12 +644,37 @@ def generate_insights_endpoint(payload: InsightRequest, regenerate: bool = False
             {"role": "user", "content": f"Preview incidents: {json.dumps(preview_records, ensure_ascii=False)}"},
         ]
 
-        completion = openai_client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.4,
-            max_tokens=700,
-        )
+        try:
+            completion = openai_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.4,
+                max_tokens=700,
+            )
+        except AuthenticationError as e:
+            msg = _sanitize_error_message(e)
+            logger.error(f"OpenAI auth error: {msg}")
+            raise HTTPException(status_code=401, detail="OpenAI authentication failed. Please verify OPENAI_API_KEY on the server.")
+        except PermissionDeniedError as e:
+            msg = _sanitize_error_message(e)
+            logger.error(f"OpenAI permission error: {msg}")
+            raise HTTPException(status_code=403, detail="OpenAI API access denied for the requested model. Check model access/permissions.")
+        except RateLimitError as e:
+            msg = _sanitize_error_message(e)
+            logger.warning(f"OpenAI rate limit: {msg}")
+            raise HTTPException(status_code=429, detail="OpenAI rate limit exceeded. Please try again shortly.")
+        except BadRequestError as e:
+            msg = _sanitize_error_message(e)
+            logger.error(f"OpenAI bad request: {msg}")
+            raise HTTPException(status_code=400, detail="OpenAI request was invalid. Verify inputs and model name.")
+        except APIConnectionError as e:
+            msg = _sanitize_error_message(e)
+            logger.error(f"OpenAI connection error: {msg}")
+            raise HTTPException(status_code=502, detail="Failed to connect to OpenAI. Please try again.")
+        except APIError as e:
+            msg = _sanitize_error_message(e)
+            logger.error(f"OpenAI API error: {msg}")
+            raise HTTPException(status_code=502, detail="OpenAI service error. Please try again.")
         content = (completion.choices[0].message.content or "").strip()
         finish_reason = getattr(completion.choices[0], "finish_reason", None)
 

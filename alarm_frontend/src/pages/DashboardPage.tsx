@@ -15,6 +15,7 @@ import { usePlantHealth } from '@/hooks/usePlantHealth';
 import { Plant } from '@/types/dashboard';
 import { fetchPlants, fetchUnhealthySources } from '@/api/plantHealth';
 import { UnhealthyBar } from '@/types/dashboard';
+import PriorityBreakdownDonut from '@/components/PriorityBreakdownDonut';
 
 
 // Default plant used before API loads
@@ -247,6 +248,9 @@ export default function DashboardPage() {
                 onTopNChange={handleTopNChange}
                 isLoading={unhealthyBarsLoading}
               />
+
+              {/* Priority Breakdown Donut (flood_count-weighted) */}
+              <PriorityBreakdownDonut />
 
               {/* New Pareto Top Offenders Chart (Bar + Line) */}
               <ParetoTopOffendersChart />
