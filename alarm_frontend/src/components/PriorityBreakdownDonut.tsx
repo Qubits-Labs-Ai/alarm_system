@@ -9,12 +9,13 @@ import {
   Cell,
   Tooltip,
   Legend,
-  ResponsiveContainer,
+  ResponsiveContainer
 } from 'recharts';
 import { Button } from '@/components/ui/button';
 
 // We keep colors aligned with the theme tokens
 const COLOR_CRITICAL = 'var(--destructive)'; // red
+const DEFAULT_MONTH = 'all';
 const COLOR_HIGH = 'var(--warning)';        // orange/yellow
 const COLOR_MEDIUM = 'hsl(var(--chart-1))'; // primary green-ish
 const COLOR_LOW = 'hsl(var(--chart-2))';    // teal-green
@@ -24,13 +25,14 @@ const COLOR_OTHER = 'hsl(var(--chart-4))';  // for any other raw codes
 
 // API
 async function fetchUnhealthy(
-  startTime?: string,
-  endTime?: string,
-  binSize: string = '10T',
-  alarmThreshold: number = 10
+  startTime: string | undefined,
+  endTime: string | undefined,
+  binSize: string,
+  alarmThreshold: number,
+  plantId: string
 ): Promise<{ count: number; records: any[] }> {
   const { fetchUnhealthySources } = await import('@/api/plantHealth');
-  return fetchUnhealthySources(startTime, endTime, binSize, alarmThreshold);
+  return fetchUnhealthySources(startTime, endTime, binSize, alarmThreshold, plantId);
 }
 
 // Helpers
@@ -74,12 +76,12 @@ function getWindowMs(tr: string) {
   }
 }
 
-export const PriorityBreakdownDonut: React.FC<{ className?: string }>= ({ className }) => {
+export const PriorityBreakdownDonut: React.FC<{ className?: string; plantId?: string }>= ({ className, plantId = 'pvcI' }) => {
   const [data, setData] = useState<{ count: number; records: any[] } | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedMonth, setSelectedMonth] = useState<string>('2025-01');
+  const [selectedMonth, setSelectedMonth] = useState<string>(DEFAULT_MONTH);
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
   const [timeRange, setTimeRange] = useState<'1h' | '6h' | '24h' | '7d' | 'all'>('1h');
@@ -90,7 +92,7 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string }>= ({ classN
   useEffect(() => {
     (async () => {
       try {
-        const full = await fetchUnhealthy();
+        const full = await fetchUnhealthy(undefined, undefined, '10T', 10, plantId);
         const records = full?.records || [];
         const monthMap = new Map<string, { start: Date; end: Date }>();
         for (const r of records) {
@@ -115,7 +117,7 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string }>= ({ classN
         // non-fatal
       }
     })();
-  }, []);
+  }, [plantId]);
 
   useEffect(() => {
     (async () => {
@@ -126,13 +128,13 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string }>= ({ classN
 
         if (selectedMonth === 'all') {
           if (timeRange === 'all') {
-            const res = await fetchUnhealthy();
+            const res = await fetchUnhealthy(undefined, undefined, '10T', 10, plantId);
             setData(res);
             setLoading(false);
             return;
           }
           // derive anchor from full dataset
-          const full = await fetchUnhealthy();
+          const full = await fetchUnhealthy(undefined, undefined, '10T', 10, plantId);
           const records: any[] = full?.records || [];
           if (!records.length) {
             setData(full);
@@ -155,7 +157,7 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string }>= ({ classN
           }
           const anchorEnd = new Date(anchorTs || Date.now());
           const anchorStart = new Date(Math.max(0, anchorEnd.getTime() - windowMs));
-          const res = await fetchUnhealthy(anchorStart.toISOString(), anchorEnd.toISOString());
+          const res = await fetchUnhealthy(anchorStart.toISOString(), anchorEnd.toISOString(), '10T', 10, plantId);
           setData(res);
           setLoading(false);
           return;
@@ -167,13 +169,13 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string }>= ({ classN
         const monthEnd = month?.end || new Date(new Date(`${selectedMonth}-01T00:00:00Z`).getTime() + 32 * 24 * 60 * 60 * 1000);
 
         if (timeRange === 'all') {
-          const res = await fetchUnhealthy(monthStart.toISOString(), monthEnd.toISOString());
+          const res = await fetchUnhealthy(monthStart.toISOString(), monthEnd.toISOString(), '10T', 10, plantId);
           setData(res);
           setLoading(false);
           return;
         }
 
-        const monthRes = await fetchUnhealthy(monthStart.toISOString(), monthEnd.toISOString());
+        const monthRes = await fetchUnhealthy(monthStart.toISOString(), monthEnd.toISOString(), '10T', 10, plantId);
         const recs: any[] = monthRes?.records || [];
         if (!recs.length) {
           setData(monthRes);
@@ -201,7 +203,7 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string }>= ({ classN
           anchorEnd = new Date(Math.min(monthEnd.getTime(), anchorStart.getTime() + windowMs));
         }
 
-        const res = await fetchUnhealthy(anchorStart.toISOString(), anchorEnd.toISOString());
+        const res = await fetchUnhealthy(anchorStart.toISOString(), anchorEnd.toISOString(), '10T', 10, plantId);
         setData(res);
       } catch (e: any) {
         setError(e?.message || 'Failed to load priority breakdown');
@@ -209,7 +211,7 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string }>= ({ classN
         setLoading(false);
       }
     })();
-  }, [selectedMonth, timeRange, windowMode, availableMonths.length]);
+  }, [selectedMonth, timeRange, windowMode, availableMonths.length, plantId]);
 
   const { series, totalFlood, excludedCount, processed } = useMemo(() => {
     const sums: Record<PriorityCategory, number> = {

@@ -17,6 +17,7 @@ import {
 import { CHART_GREEN_DARK, CHART_GREEN_LIGHT, CHART_GREEN_MEDIUM, CHART_GREEN_PALE, priorityToGreen, magnitudeToGreen } from '@/theme/chartColors';
 import { useInsightModal } from '@/components/insights/useInsightModal';
 import { InsightButton } from '@/components/insights/InsightButton';
+import { fetchUnhealthySources } from '@/api/plantHealth';
 
 interface UnhealthyRecord {
   event_time: string;
@@ -48,9 +49,10 @@ interface UnhealthySourcesData {
 
 interface UnhealthySourcesBarChartProps {
   className?: string;
+  plantId?: string;
 }
 
-const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ className }) => {
+const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ className, plantId = 'pvcI' }) => {
   const [data, setData] = useState<UnhealthySourcesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,19 +60,19 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
   const [sortBy, setSortBy] = useState<'hits' | 'alphabetical'>('hits');
   const [topLimit, setTopLimit] = useState<number>(20);
   // Month and window controls (mirror timeline chart)
-  const [selectedMonth, setSelectedMonth] = useState<string>('2025-01'); // 'all' or 'YYYY-MM'
+  const [selectedMonth, setSelectedMonth] = useState<string>('all'); // 'all' or 'YYYY-MM'
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
   const { onOpen: openInsightModal } = useInsightModal();
 
   useEffect(() => {
-    fetchUnhealthySources();
-  }, [timeRange, selectedMonth, windowMode]);
+    fetchData();
+  }, [timeRange, selectedMonth, windowMode, plantId]);
 
   // Load months list once on mount
   useEffect(() => {
     loadAvailableMonths();
-  }, []);
+  }, [plantId]);
 
   // Helpers
   const getWindowMs = (tr: string) => {
@@ -86,8 +88,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
 
   const loadAvailableMonths = async () => {
     try {
-      const { fetchUnhealthySources } = await import('../api/plantHealth');
-      const res = await fetchUnhealthySources();
+      const res = await fetchUnhealthySources(undefined, undefined, '10T', 10, plantId);
       const records: any[] = res?.records || [];
       const monthMap = new Map<string, { start: Date; end: Date }>();
       for (const r of records) {
@@ -113,16 +114,14 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
     }
   };
 
-  const fetchUnhealthySources = async (skipTimeFilter = false) => {
+  const fetchData = async (skipTimeFilter = false) => {
     try {
       setLoading(true);
       setError(null);
-      
-      const { fetchUnhealthySources } = await import('../api/plantHealth');
 
       if (skipTimeFilter) {
         console.log('Fetching all historical unhealthy sources (no time filter)');
-        const result = await fetchUnhealthySources();
+        const result = await fetchUnhealthySources(undefined, undefined, '10T', 10, plantId);
         setData(result);
         return;
       }
@@ -132,9 +131,9 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
 
       if (selectedMonth === 'all') {
         if (timeRange === 'all') {
-          result = await fetchUnhealthySources();
+          result = await fetchUnhealthySources(undefined, undefined, '10T', 10, plantId);
         } else {
-          const full = await fetchUnhealthySources();
+          const full = await fetchUnhealthySources(undefined, undefined, '10T', 10, plantId);
           const recs: any[] = full?.records || [];
           const ts = (r: any) => new Date(r.peak_window_start || r.event_time || r.bin_start || r.bin_end || Date.now()).getTime();
           const flood = (r: any) => (r.flood_count ?? r.hits ?? 0) as number;
@@ -151,7 +150,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
             }
             const end = new Date(anchor);
             const start = new Date(end.getTime() - (windowMs as number));
-            result = await fetchUnhealthySources(start.toISOString(), end.toISOString());
+            result = await fetchUnhealthySources(start.toISOString(), end.toISOString(), '10T', 10, plantId);
           }
         }
       } else {
@@ -161,9 +160,9 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
         const monthEnd = month?.end || new Date(new Date(`${selectedMonth}-01T00:00:00Z`).getTime() + 32*24*60*60*1000);
 
         if (timeRange === 'all') {
-          result = await fetchUnhealthySources(monthStart.toISOString(), monthEnd.toISOString());
+          result = await fetchUnhealthySources(monthStart.toISOString(), monthEnd.toISOString(), '10T', 10, plantId);
         } else {
-          const monthFull = await fetchUnhealthySources(monthStart.toISOString(), monthEnd.toISOString());
+          const monthFull = await fetchUnhealthySources(monthStart.toISOString(), monthEnd.toISOString(), '10T', 10, plantId);
           const recs: any[] = monthFull?.records || [];
           const ts = (r: any) => new Date(r.peak_window_start || r.event_time || r.bin_start || r.bin_end || Date.now()).getTime();
           const flood = (r: any) => (r.flood_count ?? r.hits ?? 0) as number;
@@ -180,7 +179,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
             }
             let end = new Date(Math.min(anchor, monthEnd.getTime()));
             let start = new Date(Math.max(monthStart.getTime(), end.getTime() - (windowMs as number)));
-            result = await fetchUnhealthySources(start.toISOString(), end.toISOString());
+            result = await fetchUnhealthySources(start.toISOString(), end.toISOString(), '10T', 10, plantId);
           }
         }
       }
@@ -389,7 +388,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
           <div className="text-center text-destructive">
             <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
             <p className="mb-2">{error}</p>
-            <Button onClick={fetchUnhealthySources} variant="outline" size="sm">
+            <Button onClick={() => fetchData()} variant="outline" size="sm">
               <RefreshCw className="h-4 w-4 mr-1" />
               Retry
             </Button>
@@ -470,7 +469,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
               <Button variant="outline" onClick={() => setTimeRange('7d')}>
                 Try 7 Days Range
               </Button>
-              <Button variant="outline" onClick={() => fetchUnhealthySources(true)}>
+              <Button variant="outline" onClick={() => fetchData(true)}>
                 Show All Historical Data
               </Button>
             </div>
@@ -548,7 +547,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
               </SelectContent>
             </Select>
             <InsightButton onClick={handleInsightClick} disabled={loading || processedData.length === 0} />
-            <Button variant="outline" size="sm" onClick={fetchUnhealthySources}>
+            <Button variant="outline" size="sm" onClick={() => fetchData()}>
               <RefreshCw className="h-4 w-4" />
             </Button>
           </div>

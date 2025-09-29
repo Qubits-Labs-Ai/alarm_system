@@ -50,15 +50,16 @@ interface UnhealthyRecord {
 
 interface ConditionDistributionByLocationProps {
   className?: string;
+  plantId?: string; // pvcI, pvcII, etc.
 }
 
-const DEFAULT_MONTH = '2025-01';
+const DEFAULT_MONTH = 'all';
 const CONDITION_LIMIT = 10; // if unique conditions > 10, aggregate remainder into "Other"
 
 // Horizontal bars are better for long location labels
 // We will render Recharts BarChart with layout="vertical" (Y=locations, X=values)
 
-const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationProps> = ({ className }) => {
+const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationProps> = ({ className, plantId = 'pvcI' }) => {
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
   const [records, setRecords] = React.useState<UnhealthyRecord[]>([]);
@@ -94,7 +95,7 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
 
   async function loadAvailableMonths() {
     try {
-      const res = await fetchUnhealthySources();
+      const res = await fetchUnhealthySources(undefined, undefined, '10T', 10, plantId);
       const recs: any[] = Array.isArray(res?.records) ? res.records : [];
       const monthMap = new Map<string, { start: Date; end: Date }>();
       for (const r of recs) {
@@ -115,10 +116,17 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
         end: range.end,
       })).sort((a, b) => a.start.getTime() - b.start.getTime());
       setAvailableMonths(items);
+
+      // PVC-II friendly defaults: if default month isn't present or plant is PVC-II, widen scope
+      const hasDefault = items.some(m => m.value === DEFAULT_MONTH);
+      if (!hasDefault || plantId !== 'pvcI') {
+        setSelectedMonth('all');
+        setTimeRange('all');
+      }
     } catch (e) {
-      console.warn('Failed to load months for ConditionDistribution chart', e);
+      console.warn('Failed to load months for word cloud', e);
     }
-  }
+  };
 
   async function fetchData() {
     try {
@@ -130,9 +138,9 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
 
       if (selectedMonth === 'all') {
         if (timeRange === 'all') {
-          result = await fetchUnhealthySources();
+          result = await fetchUnhealthySources(undefined, undefined, '10T', 10, plantId);
         } else {
-          const full = await fetchUnhealthySources();
+          const full = await fetchUnhealthySources(undefined, undefined, '10T', 10, plantId);
           const recs: any[] = full?.records || [];
           const ts = (r: any) => new Date(r.peak_window_start || r.event_time || r.bin_start || r.bin_end || Date.now()).getTime();
           const flood = (r: any) => (r.flood_count ?? r.hits ?? 0) as number;
@@ -149,7 +157,7 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
             }
             const end = new Date(anchor);
             const start = new Date(end.getTime() - (windowMs as number));
-            result = await fetchUnhealthySources(start.toISOString(), end.toISOString());
+            result = await fetchUnhealthySources(start.toISOString(), end.toISOString(), '10T', 10, plantId);
           }
         }
       } else {
@@ -158,9 +166,9 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
         const monthEnd = month?.end || new Date(new Date(`${selectedMonth}-01T00:00:00Z`).getTime() + 32 * 24 * 60 * 60 * 1000);
 
         if (timeRange === 'all') {
-          result = await fetchUnhealthySources(monthStart.toISOString(), monthEnd.toISOString());
+          result = await fetchUnhealthySources(monthStart.toISOString(), monthEnd.toISOString(), '10T', 10, plantId);
         } else {
-          const monthFull = await fetchUnhealthySources(monthStart.toISOString(), monthEnd.toISOString());
+          const monthFull = await fetchUnhealthySources(monthStart.toISOString(), monthEnd.toISOString(), '10T', 10, plantId);
           const recs: any[] = monthFull?.records || [];
           const ts = (r: any) => new Date(r.peak_window_start || r.event_time || r.bin_start || r.bin_end || Date.now()).getTime();
           const flood = (r: any) => (r.flood_count ?? r.hits ?? 0) as number;
@@ -177,7 +185,7 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
             }
             let end = new Date(Math.min(anchor, monthEnd.getTime()));
             let start = new Date(Math.max(monthStart.getTime(), end.getTime() - (windowMs as number)));
-            result = await fetchUnhealthySources(start.toISOString(), end.toISOString());
+            result = await fetchUnhealthySources(start.toISOString(), end.toISOString(), '10T', 10, plantId);
           }
         }
       }

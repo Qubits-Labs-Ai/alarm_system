@@ -46,11 +46,12 @@ export async function fetchUnhealthySources(
   startTime?: string,
   endTime?: string,
   binSize: string = '10T',
-  alarmThreshold: number = 10
+  alarmThreshold: number = 10,
+  plantId: string = 'pvcI'
 ) {
   // Only call the real endpoint. No synthetic fallbacks.
   try {
-    const url = new URL(`${API_BASE_URL}/pvcI-health/unhealthy-sources`);
+    const url = new URL(`${API_BASE_URL}/${plantId}-health/unhealthy-sources`);
     url.searchParams.set('bin_size', binSize);
     url.searchParams.set('alarm_threshold', alarmThreshold.toString());
 

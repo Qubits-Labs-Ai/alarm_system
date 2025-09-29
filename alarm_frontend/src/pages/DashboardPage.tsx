@@ -80,7 +80,7 @@ export default function DashboardPage() {
       try {
         setUnhealthyBarsLoading(true);
         // Use backend fast path (saved JSON). No time filter to show historical top sources.
-        const res = await fetchUnhealthySources();
+        const res = await fetchUnhealthySources(undefined, undefined, '10T', 10, selectedPlant.id);
         const records = Array.isArray(res?.records) ? res.records : [];
 
         // Transform records -> UnhealthyBar[] (Top 1 or Top 3 per source)
@@ -166,7 +166,7 @@ export default function DashboardPage() {
     }
     loadBars();
     return () => { mounted = false; };
-  }, [topN]);
+  }, [topN, selectedPlant.id]);
 
   if (authLoading) {
     return (
@@ -256,7 +256,7 @@ export default function DashboardPage() {
               <ParetoTopOffendersChart />
 
               {/* New Stacked Bar: Condition Distribution by Location */}
-              <ConditionDistributionByLocation />
+              <ConditionDistributionByLocation plantId={selectedPlant.id} />
 
               <UnhealthySourcesChart />
 
@@ -266,6 +266,39 @@ export default function DashboardPage() {
             
             {/* New Simple Bar Chart */}
             <UnhealthySourcesBarChart />
+          </div>
+        )}
+
+        {selectedPlant.id === 'pvcII' && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 gap-6">
+              {/* PVC-II: Condition Distribution by Location */}
+              <ConditionDistributionByLocation plantId={selectedPlant.id} />
+
+              {/* PVC-II: Priority Breakdown Donut */}
+              <PriorityBreakdownDonut plantId={selectedPlant.id} />
+
+              {/* PVC-II: Pareto Top Offenders */}
+              <ParetoTopOffendersChart plantId={selectedPlant.id} />
+
+              {/* PVC-II: Unhealthy Sources Timeline/Top Sources */}
+              <UnhealthySourcesChart plantId={selectedPlant.id} />
+
+              {/* PVC-II: Word Cloud */}
+              <UnhealthySourcesWordCloud plantId={selectedPlant.id} />
+            </div>
+
+            {/* PVC-II: Simple Top Sources Bar */}
+            <UnhealthySourcesBarChart plantId={selectedPlant.id} />
+
+            {/* PVC-II: Unhealthy Bar Chart */}
+            <UnhealthyBarChart
+              data={unhealthyBarData}
+              threshold={10}
+              topN={topN}
+              onTopNChange={handleTopNChange}
+              isLoading={unhealthyBarsLoading}
+            />
           </div>
         )}
       </div>

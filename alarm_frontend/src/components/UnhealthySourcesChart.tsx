@@ -47,9 +47,10 @@ interface UnhealthySourcesData {
 
 interface UnhealthySourcesChartProps {
   className?: string;
+  plantId?: string;
 }
 
-const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className }) => {
+const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className, plantId = 'pvcI' }) => {
   const [data, setData] = useState<UnhealthySourcesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +58,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
   const [selectedPriority, setSelectedPriority] = useState<string>('all');
   const [timeRange, setTimeRange] = useState<string>('1h');
   const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('horizontal'); // horizontal: X=time, Y=source; vertical: X=source, Y=time
-  const [selectedMonth, setSelectedMonth] = useState<string>('2025-01'); // default Jan 2025; supports 'all' or 'YYYY-MM'
+  const [selectedMonth, setSelectedMonth] = useState<string>('all'); // default All; supports 'all' or 'YYYY-MM'
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
   const { onOpen: openInsightModal } = useInsightModal();
@@ -69,12 +70,12 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
 
   useEffect(() => {
     fetchUnhealthySources();
-  }, [timeRange, selectedMonth, windowMode]);
+  }, [timeRange, selectedMonth, windowMode, plantId]);
 
   // Load months list once on mount (derive from full dataset)
   useEffect(() => {
     loadAvailableMonths();
-  }, []);
+  }, [plantId]);
 
   // When user selects All months, default the timeRange to 'all' so everything shows
   useEffect(() => {
@@ -97,7 +98,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
   const loadAvailableMonths = async () => {
     try {
       const { fetchUnhealthySources } = await import('../api/plantHealth');
-      const res = await fetchUnhealthySources(); // no filters → full historical dataset
+      const res = await fetchUnhealthySources(undefined, undefined, '10T', 10, plantId); // no filters → full historical dataset
       const records: any[] = res?.records || [];
       const monthMap = new Map<string, { start: Date; end: Date }>();
       for (const r of records) {
@@ -135,14 +136,14 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
       if (selectedMonth === 'all') {
         if (timeRange === 'all') {
           console.log('Fetching entire dataset (All months, full range)');
-          result = await fetchAPI();
+          result = await fetchAPI(undefined, undefined, '10T', 10, plantId);
           setData(result);
           if (result && result.count === 0) console.log('No unhealthy sources found in entire dataset');
           return;
         }
         // Fetch full dataset to determine global anchor window across all months
         console.log('Fetching full dataset (All months, unbounded) to derive window');
-        const fullResult = await fetchAPI();
+        const fullResult = await fetchAPI(undefined, undefined, '10T', 10, plantId);
         if (!fullResult || fullResult.count === 0) {
           result = fullResult;
           setData(result);
@@ -176,7 +177,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
         let anchorStart = new Date(Math.max(datasetStart.getTime(), anchorEnd.getTime() - windowMs));
 
         console.log(`Derived global window (${windowMode}) ${anchorStart.toISOString()} → ${anchorEnd.toISOString()}`);
-        result = await fetchAPI(anchorStart.toISOString(), anchorEnd.toISOString());
+        result = await fetchAPI(anchorStart.toISOString(), anchorEnd.toISOString(), '10T', 10, plantId);
       } else {
         // Find month boundaries (UTC) from availableMonths or compute
         const month = availableMonths.find(m => m.value === selectedMonth);
@@ -186,14 +187,14 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
         // If timeRange is 'all', fetch full month directly
         if (timeRange === 'all') {
           console.log(`Fetching full month ${selectedMonth} dataset`);
-          result = await fetchAPI(monthStart.toISOString(), monthEnd.toISOString());
+          result = await fetchAPI(monthStart.toISOString(), monthEnd.toISOString(), '10T', 10, plantId);
           setData(result);
           return;
         }
 
         // First fetch the whole month to determine anchor time
         console.log(`Fetching month dataset ${selectedMonth}: ${monthStart.toISOString()} → ${monthEnd.toISOString()}`);
-        const monthResult = await fetchAPI(monthStart.toISOString(), monthEnd.toISOString());
+        const monthResult = await fetchAPI(monthStart.toISOString(), monthEnd.toISOString(), '10T', 10, plantId);
 
         if (!monthResult || monthResult.count === 0) {
           result = monthResult;
@@ -232,7 +233,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
         }
 
         console.log(`Derived window (${windowMode}) ${anchorStart.toISOString()} → ${anchorEnd.toISOString()}`);
-        result = await fetchAPI(anchorStart.toISOString(), anchorEnd.toISOString());
+        result = await fetchAPI(anchorStart.toISOString(), anchorEnd.toISOString(), '10T', 10, plantId);
       }
       setData(result);
       
