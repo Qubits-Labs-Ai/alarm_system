@@ -644,7 +644,7 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
                     <div className="font-semibold">{words.length}</div>
                   </div>
                   <div>
-                    <div className="text-gray-500">Total Bins</div>
+                    <div className="text-gray-500">Total Frequency</div>
                     <div className="font-semibold">{topStats.totalBins}</div>
                   </div>
                   <div>
@@ -670,6 +670,24 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
                     <div>Font Range: {words.length > 0 ? `${Math.min(...words.map(w => w.value)).toFixed(0)}-${Math.max(...words.map(w => w.value)).toFixed(0)}px` : 'N/A'}</div>
                     <div>Size Range: {words.length > 0 ? `${Math.min(...words.map(w => w.normalizedSize)).toFixed(1)}-${Math.max(...words.map(w => w.normalizedSize)).toFixed(1)}%` : 'N/A'}</div>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Definitions */}
+            <Card className="shadow-md">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm">Definitions</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-xs text-gray-700">
+                <div>
+                  <span className="font-medium">Frequency (bins):</span> count of 10‑minute windows where hits ≥ threshold (10). Hits are measured in fixed bins.
+                </div>
+                <div>
+                  <span className="font-medium">Severity (flood):</span> flood count = max events observed in any sliding/peak 10‑minute window inside an incident.
+                </div>
+                <div>
+                  <span className="font-medium">Risk score:</span> weightedSize = Frequency × {`F%`} + Severity × {`S%`} (default F=30%, S=70%).
                 </div>
               </CardContent>
             </Card>

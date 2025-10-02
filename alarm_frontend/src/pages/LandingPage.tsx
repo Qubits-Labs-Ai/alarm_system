@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { ArrowRight, Shield, BarChart3, Clock, CheckCircle, TrendingUp, AlertTriangle, Activity } from 'lucide-react';
+import { ArrowRight, ArrowDown, Shield, BarChart3, CheckCircle, TrendingUp, AlertTriangle, Activity, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import GridSmallBackgroundDemo from '@/components/ui/grid-small-background-demo';
 import { usePlantHealth } from '@/hooks/usePlantHealth';
 import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
-import PriorityBreakdownDonut from '@/components/PriorityBreakdownDonut';
 import engroLogo from '@/assets/engro-logo.png';
 
 const LandingPage = () => {
@@ -66,10 +66,16 @@ const LandingPage = () => {
     'Seamless handoff to the live dashboard'
   ];
 
+  // Predefine icons for bento tiles to avoid dynamic JSX like <features[i].icon />
+  const Icon0 = features[0].icon;
+  const Icon1 = features[1].icon;
+  const Icon2 = features[2].icon;
+  const Icon3 = features[3].icon;
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5 scroll-smooth">
       {/* Header */}
-      <header className="relative border-b bg-background/80 backdrop-blur-sm shadow-sm">
+      <header className="sticky top-0 z-50 border-b bg-background/70 backdrop-blur-md supports-[backdrop-filter]:bg-background/60">
         <div className="container mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -82,6 +88,12 @@ const LandingPage = () => {
                 </div>
               </div>
             </div>
+            <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
+              <a href="#snapshot" className="hover:text-foreground">Snapshot</a>
+              <a href="#features" className="hover:text-foreground">Features</a>
+              <a href="#value" className="hover:text-foreground">Benefits</a>
+              <a href="#cta" className="hover:text-foreground">Contact</a>
+            </nav>
             <Button asChild>
               <a href="/signin">Access Dashboard</a>
             </Button>
@@ -90,11 +102,19 @@ const LandingPage = () => {
       </header>
 
       {/* Hero Section */}
-      <section className="relative py-20 overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-secondary/10 bg-[length:200%_200%] motion-safe:animate-gradient-x"></div>
-        <div className="container mx-auto px-6 relative">
+      <section className="relative py-24 lg:py-32 overflow-hidden min-h-[70vh]">
+        {/* Layered professional background */}
+        <div className="absolute inset-0 z-0 pointer-events-none">
+          <div className="absolute inset-0 opacity-80">
+            <GridSmallBackgroundDemo />
+          </div>
+          {/* Spotlight gradient using CSS variable color */}
+          <div className="absolute inset-0 bg-[radial-gradient(1200px_400px_at_50%_-10%,hsl(var(--primary)/0.2),transparent_60%)]" />
+          </div>
+        <div className="container mx-auto px-6 relative z-10">
           <div className="max-w-4xl mx-auto text-center">
-            <Badge variant="secondary" className="mb-6 px-4 py-2 text-sm font-medium motion-safe:animate-fade-up">
+            <Badge variant="secondary" className="mb-6 px-4 py-2 text-sm font-medium motion-safe:animate-fade-up inline-flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
               Standards-Aligned Alarm Health Monitoring
             </Badge>
             
@@ -119,8 +139,8 @@ const LandingPage = () => {
                   <ArrowRight className="ml-2 h-5 w-5" />
                 </a>
               </Button>
-              <Button size="lg" variant="outline" className="px-8 py-3 text-lg">
-                Learn More
+              <Button size="lg" variant="outline" className="px-8 py-3 text-lg" asChild>
+                <a href="#features">Learn More</a>
               </Button>
             </div>
 
@@ -131,8 +151,8 @@ const LandingPage = () => {
                   key={index}
                   className={`transition-all duration-500 motion-safe:animate-fade-up ${
                     currentStat === index 
-                      ? 'ring-2 ring-primary shadow-lg scale-105' 
-                      : 'hover:shadow-md'
+                      ? 'ring-2 ring-primary/60 shadow-lg scale-105' 
+                      : 'hover:shadow-md hover:translate-y-0.5'
                   }`}
                   style={{ animationDelay: `${index * 120}ms` }}
                 >
@@ -148,12 +168,20 @@ const LandingPage = () => {
                 </Card>
               ))}
             </div>
+
+            {/* Scroll cue */}
+            <div className="mt-12">
+              <a href="#features" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+                <ArrowDown className="h-4 w-4 animate-bounce" />
+                Scroll to explore
+              </a>
+            </div>
           </div>
         </div>
       </section>
 
       {/* Live Snapshot */}
-      <section className="py-8">
+      <section id="snapshot" className="py-24">
         <div className="container mx-auto px-6">
           <div className="grid lg:grid-cols-3 gap-8 items-stretch">
             <div className="lg:col-span-2 space-y-8">
@@ -164,7 +192,6 @@ const LandingPage = () => {
                 onTopNChange={setTopN}
                 isLoading={isLoading}
               />
-              <PriorityBreakdownDonut />
             </div>
             <div>
               <Card className="p-6 h-full bg-gradient-to-br from-primary/5 to-secondary/5 border-primary/20">
@@ -209,7 +236,7 @@ const LandingPage = () => {
       </section>
 
       {/* How It Works */}
-      <section className="py-20 bg-muted/30">
+      <section id="features" className="py-24 bg-muted/30">
         <div className="container mx-auto px-6">
           <div className="text-center mb-16">
             <h2 className="text-4xl font-bold mb-4 text-foreground">
@@ -220,31 +247,61 @@ const LandingPage = () => {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
-            {features.map((feature, index) => (
-              <Card key={index} className="group hover:shadow-lg transition-all duration-300 border-0 bg-background/60 backdrop-blur-sm motion-safe:animate-fade-up" style={{ animationDelay: `${index * 100}ms` }}>
-                <CardContent className="p-8">
-                  <div className="flex items-center justify-between mb-4">
-                    <feature.icon className="h-12 w-12 text-primary group-hover:scale-110 transition-transform duration-300 motion-safe:animate-float" />
-                    <Badge variant="secondary" className="text-xs">
-                      {feature.highlight}
-                    </Badge>
-                  </div>
-                  <h3 className="text-xl font-semibold mb-3 text-foreground">
-                    {feature.title}
-                  </h3>
-                  <p className="text-muted-foreground leading-relaxed">
-                    {feature.description}
-                  </p>
-                </CardContent>
-              </Card>
-            ))}
+          {/* Bento-style grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-6">
+            {/* Data Ingestion */}
+            <Card className="lg:col-span-2 group border-0 bg-background/60 backdrop-blur-sm hover:shadow-lg transition-all duration-300 motion-safe:animate-fade-up">
+              <CardContent className="p-8">
+                <div className="flex items-center justify-between mb-4">
+                  <Icon0 className="h-12 w-12 text-primary group-hover:scale-110 transition-transform duration-300" />
+                  <Badge variant="secondary" className="text-xs">{features[0].highlight}</Badge>
+                </div>
+                <h3 className="text-xl font-semibold mb-3 text-foreground">{features[0].title}</h3>
+                <p className="text-muted-foreground leading-relaxed">{features[0].description}</p>
+              </CardContent>
+            </Card>
+
+            {/* Health Scoring */}
+            <Card className="lg:col-span-2 group border-0 bg-background/60 backdrop-blur-sm hover:shadow-lg transition-all duration-300 motion-safe:animate-fade-up" style={{ animationDelay: '100ms' }}>
+              <CardContent className="p-8">
+                <div className="flex items-center justify-between mb-4">
+                  <Icon1 className="h-12 w-12 text-primary group-hover:scale-110 transition-transform duration-300" />
+                  <Badge variant="secondary" className="text-xs">{features[1].highlight}</Badge>
+                </div>
+                <h3 className="text-xl font-semibold mb-3 text-foreground">{features[1].title}</h3>
+                <p className="text-muted-foreground leading-relaxed">{features[1].description}</p>
+              </CardContent>
+            </Card>
+
+            {/* Anomaly Detection - wide card */}
+            <Card className="lg:col-span-4 group border-0 bg-background/60 backdrop-blur-sm hover:shadow-lg transition-all duration-300 motion-safe:animate-fade-up" style={{ animationDelay: '200ms' }}>
+              <CardContent className="p-8">
+                <div className="flex items-center justify-between mb-4">
+                  <Icon2 className="h-12 w-12 text-primary group-hover:scale-110 transition-transform duration-300" />
+                  <Badge variant="secondary" className="text-xs">{features[2].highlight}</Badge>
+                </div>
+                <h3 className="text-xl font-semibold mb-3 text-foreground">{features[2].title}</h3>
+                <p className="text-muted-foreground leading-relaxed">{features[2].description}</p>
+              </CardContent>
+            </Card>
+
+            {/* Insight & Action */}
+            <Card className="lg:col-span-2 group border-0 bg-background/60 backdrop-blur-sm hover:shadow-lg transition-all duration-300 motion-safe:animate-fade-up" style={{ animationDelay: '300ms' }}>
+              <CardContent className="p-8">
+                <div className="flex items-center justify-between mb-4">
+                  <Icon3 className="h-12 w-12 text-primary group-hover:scale-110 transition-transform duration-300" />
+                  <Badge variant="secondary" className="text-xs">{features[3].highlight}</Badge>
+                </div>
+                <h3 className="text-xl font-semibold mb-3 text-foreground">{features[3].title}</h3>
+                <p className="text-muted-foreground leading-relaxed">{features[3].description}</p>
+              </CardContent>
+            </Card>
           </div>
         </div>
       </section>
 
       {/* Value Section */}
-      <section className="py-20">
+      <section id="value" className="py-24">
         <div className="container mx-auto px-6">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div>
@@ -297,7 +354,7 @@ const LandingPage = () => {
       </section>
 
       {/* CTA Section */}
-      <section className="py-20 bg-gradient-to-r from-primary to-secondary bg-[length:200%_200%] motion-safe:animate-gradient-x">
+      <section id="cta" className="py-24 bg-gradient-to-r from-primary to-secondary bg-[length:200%_200%] motion-safe:animate-gradient-x">
         <div className="container mx-auto px-6 text-center">
           <div className="max-w-3xl mx-auto">
             <h2 className="text-4xl font-bold mb-6 text-primary-foreground">

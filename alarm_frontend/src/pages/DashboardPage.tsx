@@ -273,14 +273,24 @@ export default function DashboardPage() {
         {selectedPlant.id === 'pvcII' && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 gap-6">
-              {/* PVC-II: Condition Distribution by Location */}
-              <ConditionDistributionByLocation plantId={selectedPlant.id} />
+              {/* PVC-II: Unhealthy Bar Chart */}
+              <UnhealthyBarChart
+                data={unhealthyBarData}
+                threshold={10}
+                topN={topN}
+                onTopNChange={handleTopNChange}
+                isLoading={unhealthyBarsLoading}
+                plantId={selectedPlant.id}
+              />
 
               {/* PVC-II: Priority Breakdown Donut */}
               <PriorityBreakdownDonut plantId={selectedPlant.id} />
 
               {/* PVC-II: Pareto Top Offenders */}
               <ParetoTopOffendersChart plantId={selectedPlant.id} />
+
+              {/* PVC-II: Condition Distribution by Location */}
+              <ConditionDistributionByLocation plantId={selectedPlant.id} />
 
               {/* PVC-II: Unhealthy Sources Timeline/Top Sources */}
               <UnhealthySourcesChart plantId={selectedPlant.id} />
@@ -291,16 +301,6 @@ export default function DashboardPage() {
 
             {/* PVC-II: Simple Top Sources Bar */}
             <UnhealthySourcesBarChart plantId={selectedPlant.id} />
-
-            {/* PVC-II: Unhealthy Bar Chart */}
-            <UnhealthyBarChart
-              data={unhealthyBarData}
-              threshold={10}
-              topN={topN}
-              onTopNChange={handleTopNChange}
-              isLoading={unhealthyBarsLoading}
-              plantId={selectedPlant.id}
-            />
           </div>
         )}
       </div>

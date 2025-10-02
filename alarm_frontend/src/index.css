@@ -181,3 +181,19 @@
     background-color: var(--dashboard-header-bg);
   }
 }
+
+@layer utilities {
+  @keyframes grid-pan {
+    from {
+      background-position: 0 0, 0 0;
+    }
+    to {
+      /* Pan diagonally to create subtle motion */
+      background-position: 40px 40px, 40px 40px;
+    }
+  }
+
+  .animate-grid-pan {
+    animation: grid-pan 30s linear infinite;
+  }
+}

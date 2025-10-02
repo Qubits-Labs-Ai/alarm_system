@@ -1,0 +1,14 @@
+Date,Day,Hours,Task
+2025-09-10,Wednesday,3.5,Reviewed raw alarm datasets; mapped columns; identified inconsistent tags and missing fields.
+2025-09-11,Thursday,4.0,Explored data distributions; attempted initial health KPIs; noticed anomalies due to status code misinterpretation.
+2025-09-12,Friday,3.0,"Prototyped charts (condition distribution, priority donut); results proved incorrect; logged issues and assumptions."
+2025-09-15,Monday,5.5,Restarted analysis with new approach; validated on PVCI single file; drafted validation plan.
+2025-09-16,Tuesday,6.0,Expanded from PVCI single file to full plant; cleaned data; recomputed overall health; cross-checked sample days.
+2025-09-17,Wednesday,5.0,PVCI backend optimized using pre-saved JSON for overall health; added endpoint and tests.
+2025-09-18,Thursday,5.5,Updated charts to new metrics; fixed lag; aligned with PVCI rules.
+2025-09-19,Friday,6.0,QA across PVCI charts; verified counts/percentages; documented analysis rules.
+2025-09-22,Monday,4.0,PVCI: implemented unhealthy sources word cloud scoring/coloring; tuned severity vs frequency weights.
+2025-09-23,Tuesday,5.5,PVCI: adjusted priority donut categories; enforced zero-hide and min-slice visibility; prepared details stub.
+2025-09-24,Wednesday,3.0,PVCII: initialized pipeline using PVCI flow; fixed month selection and filters; ensured 'All' months view consistency.
+2025-09-25,Thursday,6.0,PVCII: added landing content and microcopy; aligned branding and green theme with dashboard.
+2025-09-26,Friday,4.5,PVCII: refined time range presets; improved default selections; implemented end-to-end.

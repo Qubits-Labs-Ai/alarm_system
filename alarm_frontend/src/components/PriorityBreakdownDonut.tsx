@@ -88,7 +88,7 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string; plantId?: st
   const [selectedMonth, setSelectedMonth] = useState<string>(DEFAULT_MONTH);
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
-  const [timeRange, setTimeRange] = useState<'1h' | '6h' | '24h' | '7d' | 'all'>('1h');
+  const [timeRange, setTimeRange] = useState<'1h' | '6h' | '24h' | '7d' | 'all'>('all');
   const [selectedCat, setSelectedCat] = useState<PriorityCategory | null>(null);
   const [detailTab, setDetailTab] = useState<'sources' | 'incidents'>('sources');
 

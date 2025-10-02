@@ -56,7 +56,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
   const [data, setData] = useState<UnhealthySourcesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState<string>('1h');
+  const [timeRange, setTimeRange] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'hits' | 'alphabetical'>('hits');
   const [topLimit, setTopLimit] = useState<number>(20);
   // Month and window controls (mirror timeline chart)
@@ -317,7 +317,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
               <div><span className="font-medium text-muted-foreground">Total Flood:</span></div>
               <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>{data.totalFlood}</div>
               
-              <div><span className="font-medium text-muted-foreground">Incidents:</span></div>
+              <div><span className="font-medium text-muted-foreground">Frequency:</span></div>
               <div>{data.incidents}</div>
               
               <div><span className="font-medium text-muted-foreground">Max Flood:</span></div>
@@ -366,7 +366,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
             
             {data.allRecords && data.allRecords.length > 1 && (
               <div className="text-xs text-primary mt-1">
-                📊 Total {data.allRecords.length} incidents in selected period
+                📊 Total {data.allRecords.length} frequency in selected period
               </div>
             )}
           </div>
@@ -641,7 +641,7 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
               <div className="text-2xl font-bold" style={{color: CHART_GREEN_DARK}}>{processedData.length}</div>
             </div>
             <div className="p-3 rounded-lg" style={{backgroundColor: CHART_GREEN_PALE}}>
-              <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>Total Incidents</div>
+              <div className="font-semibold" style={{color: CHART_GREEN_DARK}}>Total Frequency</div>
               <div className="text-2xl font-bold" style={{color: CHART_GREEN_DARK}}>
                 {processedData.reduce((sum, item) => sum + item.incidents, 0)}
               </div>

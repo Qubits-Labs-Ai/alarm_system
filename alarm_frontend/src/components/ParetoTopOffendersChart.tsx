@@ -65,7 +65,7 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string }
   // Controls (aligned with other charts)
   const [selectedMonth, setSelectedMonth] = React.useState<string>(DEFAULT_MONTH); // 'all' or 'YYYY-MM'
   const [availableMonths, setAvailableMonths] = React.useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
-  const [timeRange, setTimeRange] = React.useState<string>('1h'); // 1h default
+  const [timeRange, setTimeRange] = React.useState<string>('all'); // all default
   const [windowMode, setWindowMode] = React.useState<'recent' | 'peak'>('peak');
   const [topLimit, setTopLimit] = React.useState<number>(10); // Top 10
   const [metricMode, setMetricMode] = React.useState<'flood' | 'exceedance'>('flood');
@@ -280,7 +280,7 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string }
             <div>{metricMode === 'exceedance' ? 'Exceedance (over threshold)' : 'Flood count'}: <span className="text-foreground font-medium">{p.totalFlood.toLocaleString()}</span></div>
             <div>Share of total: <span className="text-foreground font-medium">{p.sharePct}%</span></div>
             <div>Cumulative: <span className="text-foreground font-medium">{p.cumulativePct}%</span></div>
-            <div>Incidents: <span className="text-foreground font-medium">{p.incidents}</span></div>
+            <div>Frequency: <span className="text-foreground font-medium">{p.incidents}</span></div>
             <div>Latest: <span className="text-foreground font-medium">{new Date(p.latestTs).toLocaleString()}</span></div>
           </div>
         </div>

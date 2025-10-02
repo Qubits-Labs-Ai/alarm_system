@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Plant Health Charts — Reference</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --fg: #0f172a; /* slate-900 */
+      --muted: #475569; /* slate-600 */
+      --border: #e2e8f0; /* slate-200 */
+      --accent: #eaf7ee; /* pale green */
+      --green: #177245; /* dark green */
+    }
+    * { box-sizing: border-box; }
+    body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; color: var(--fg); margin: 0; }
+    .container { max-width: 920px; margin: 0 auto; padding: 40px 28px; }
+    header { border-bottom: 2px solid var(--border); margin-bottom: 28px; }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    .sub { color: var(--muted); margin-bottom: 18px; }
+    section { border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin: 16px 0 22px; }
+    h2 { margin: 0 0 12px; font-size: 22px; color: var(--green); }
+    h3 { margin: 14px 0 8px; font-size: 16px; }
+    ul { margin: 8px 0 0 18px; }
+    li { margin: 4px 0; }
+    .note { background: var(--accent); padding: 10px 12px; border-radius: 8px; color: var(--fg); border: 1px solid var(--border); }
+    .kvs { display: grid; grid-template-columns: 180px 1fr; row-gap: 6px; column-gap: 10px; }
+    .k { color: var(--muted); }
+    footer { margin-top: 28px; border-top: 1px solid var(--border); padding-top: 16px; color: var(--muted); font-size: 12px; }
+    @page { size: A4; margin: 20mm; }
+    @media print { body { -webkit-print-color-adjust: exact; }
+      a[href]:after { content: ""; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Plant Health Charts — Reference</h1>
+      <div class="sub">Updated: 2025-10-02 14:01:56 (+05:00)</div>
+    </header>
+
+    <div class="note" style="margin-bottom:18px">
+      Terminology — Frequency: number of unhealthy fixed 10‑minute windows (hits ≥ 10) for a source. Flood Count: severity within a window, defined as the maximum events observed in any sliding/peak 10‑minute span.
+    </div>
+
+    <section>
+      <h2>Unhealthy Sources Timeline (UnhealthySourcesChart.tsx)</h2>
+      <div class="kvs">
+        <div class="k">Purpose</div><div>Timeline of unhealthy windows by source with severity.</div>
+        <div class="k">X‑axis</div><div>Peak window start time.</div>
+        <div class="k">Y‑axis</div><div>Alarm Source.</div>
+        <div class="k">Encoding</div><div>Dot size = Flood Count; color = Priority.</div>
+      </div>
+      <h3>Tooltip</h3>
+      <ul>
+        <li><b>Source</b>, <b>Flood Count</b></li>
+        <li><b>Peak Window</b>: start → end</li>
+        <li><b>Priority</b>, <b>Location</b>, <b>Condition</b>, <b>Description</b> (if provided)</li>
+        <li>Rate/min and Hits/Over-by are hidden in this tooltip</li>
+      </ul>
+      <h3>Controls</h3>
+      <ul>
+        <li><b>Month</b>, <b>Window Mode</b> (Peak Activity | Most Recent), <b>Time Range</b></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Condition Distribution by Location (ConditionDistributionByLocation.tsx)</h2>
+      <div class="kvs">
+        <div class="k">Purpose</div><div>Show where (locations) total flood is coming from, broken down by condition stacks.</div>
+        <div class="k">X‑axis</div><div>Flood Count (numeric axis).</div>
+        <div class="k">Y‑axis</div><div>Location (categorical axis).</div>
+        <div class="k">Encoding</div><div>Horizontal stacked bars per location; each stack segment is a condition (e.g., PVHIGH, PVLOW). Optional highlight for very high segments.</div>
+      </div>
+      <h3>Tooltip</h3>
+      <ul>
+        <li><b>Location</b> name</li>
+        <li><b>Total flood</b> for the location</li>
+        <li><b>Per‑condition</b> values with % of row total</li>
+      </ul>
+      <h3>Controls</h3>
+      <ul>
+        <li><b>Month</b>, <b>Window Mode</b>, <b>Time Range</b>, <b>Top N</b> locations, <b>Sort</b> (By Total | A–Z), <b>Highlight Very High</b></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Unhealthy Sources Analysis — Bar (UnhealthySourcesBarChart.tsx)</h2>
+      <div class="kvs">
+        <div class="k">Purpose</div><div>Rank sources by total severity in the selected time window.</div>
+        <div class="k">X‑axis</div><div>Alarm Source.</div>
+        <div class="k">Y‑axis</div><div>Total Flood Count (Σ flood_count).</div>
+        <div class="k">Legend</div><div>Color by priority or magnitude.</div>
+      </div>
+      <h3>Tooltip</h3>
+      <ul>
+        <li><b>Total Flood</b>, <b>Frequency</b>, <b>Max Flood</b>, <b>Avg Flood</b></li>
+        <li><b>Latest Incident</b>: Peak Window start → end</li>
+        <li><b>Priority</b>, <b>Location</b>, <b>Condition</b>, <b>Description</b> (if available)</li>
+        <li><b>Threshold note</b>: 10 alarms/10min; shows Over by</li>
+      </ul>
+      <h3>Controls</h3>
+      <ul>
+        <li><b>Month</b>, <b>Window Mode</b>, <b>Time Range</b>, <b>Top N</b>, <b>Sort</b>, AI Insights</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Unhealthy Sources Word Cloud (UnhealthySourcesWordCloud.tsx)</h2>
+      <div class="kvs">
+        <div class="k">Purpose</div><div>Visual prominence of sources by combined risk.</div>
+        <div class="k">Axes</div><div>None (layout cloud).</div>
+        <div class="k">Encoding</div><div>Size = Weighted score (Frequency × 30% + Flood × 70%); color = severity scale.</div>
+      </div>
+      <h3>Tooltips</h3>
+      <ul>
+        <li>No per‑word tooltip; details are shown in Analytics/Definitions panel.</li>
+      </ul>
+      <h3>Panels</h3>
+      <ul>
+        <li><b>Analytics</b>: Total Sources, Displayed, Total Frequency, Total Flood</li>
+        <li><b>Definitions</b>: Frequency and Flood</li>
+        <li><b>Controls</b>: Frequency weight slider, Top N, Month, Window Mode, Time Range</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Top Offenders • Pareto (ParetoTopOffendersChart.tsx)</h2>
+      <div class="kvs">
+        <div class="k">Purpose</div><div>Identify vital few sources contributing most of the impact.</div>
+        <div class="k">X‑axis</div><div>Alarm Source.</div>
+        <div class="k">Y‑axis (left)</div><div>Flood Count (or Exceedance).</div>
+        <div class="k">Y‑axis (right)</div><div>Cumulative % with 80% reference line.</div>
+      </div>
+      <h3>Tooltip</h3>
+      <ul>
+        <li><b>Flood/Exceedance</b>, <b>Share of total</b>, <b>Cumulative %</b>, <b>Frequency</b></li>
+        <li><b>Latest</b> timestamp</li>
+      </ul>
+      <h3>Controls</h3>
+      <ul>
+        <li><b>Month</b>, <b>Window Mode</b>, <b>Time Range</b>, <b>Metric</b> (Flood | Exceedance), <b>Top N</b></li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Priority Breakdown Donut (PriorityBreakdownDonut.tsx)</h2>
+      <div class="kvs">
+        <div class="k">Purpose</div><div>Distribution of total flood by raw DCS priority category.</div>
+        <div class="k">Axes</div><div>None (donut chart); center shows Total Alarms (flood count sum).</div>
+        <div class="k">Slices</div><div>Critical, High, Medium, Low, J‑coded, Not Provided, Other. Zero‑value categories hidden.</div>
+      </div>
+      <h3>Tooltip</h3>
+      <ul>
+        <li>Category name and flood total.</li>
+      </ul>
+      <h3>Controls</h3>
+      <ul>
+        <li><b>Month</b>, <b>Window Mode</b>, <b>Time Range</b>; category Details view for Top Sources and Recent entries.</li>
+      </ul>
+    </section>
+
+    <footer>
+      Generated documentation. Print to PDF (Ctrl+P) for distribution.
+    </footer>
+  </div>
+</body>
+</html>
