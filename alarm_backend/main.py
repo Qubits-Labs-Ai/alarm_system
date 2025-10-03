@@ -7,6 +7,7 @@ from pvcI_health_monitor import (
     HealthConfig,
 )
 from pvcI_health_monitor import compute_pvcI_unhealthy_sources
+from isa18_flood_monitor import compute_isa18_flood_summary
 from fastapi.responses import ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from config import PVCI_FOLDER, PVCII_FOLDER
@@ -471,7 +472,7 @@ def get_pvcI_unhealthy_sources(
         logger.error(f"Error in unhealthy-sources endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/pvcI-health/{filename}")
+@app.get("/pvcI-health/file/{filename}")
 def get_pvcI_file_health_endpoint(filename: str):
     """Get health metrics for a specific file"""
     try:
@@ -489,7 +490,7 @@ def get_pvcI_file_health_endpoint(filename: str):
         result = compute_pvcI_file_health(file_path)
         return result
     except HTTPException as he:
-        return result
+        raise he
     except Exception as e:
         logger.error(f"Error processing file: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
@@ -1217,3 +1218,138 @@ def get_pvcII_overall_health(
     except Exception as e:
         logger.error(f"Error in PVC-II overall endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/pvcI-health/isa-flood-summary", response_class=ORJSONResponse)
+def get_pvci_isa_flood_summary(
+    window_minutes: int = 10,
+    threshold: int = 10,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    include_records: bool = False,
+    force_recompute: bool = False,
+    raw: bool = False,
+    operator_map_path: str | None = None,
+    operator_map_json: str | None = None,
+    # New optional enrichments and controls (defaults per user prefs)
+    include_windows: bool = True,
+    include_alarm_details: bool = True,
+    top_n: int = 10,
+    max_windows: int = 10,
+    events_sample: bool = False,
+    events_sample_max: int = 0,
+):
+    """
+    ISA 18.2 sliding 10-minute flood summary for PVC-I.
+    - Flood when alarms in any sliding 10-min window strictly exceed threshold (> threshold).
+    - Returns overall plant metrics and per-day breakdown. Optional detailed records.
+    - Uses a simple cache file when params match saved params.
+    """
+    try:
+        base_dir = os.path.dirname(__file__)
+        cache_path = os.path.join(base_dir, "PVCI-overall-health", "isa18-flood-summary.json")
+
+        current_params = {
+            "window_minutes": int(window_minutes),
+            "threshold": int(threshold),
+            "start_time": start_time,
+            "end_time": end_time,
+            "include_records": bool(include_records),
+            "operator_map_path": operator_map_path,
+            "operator_map_json": operator_map_json,
+            "include_windows": bool(include_windows),
+            "include_alarm_details": bool(include_alarm_details),
+            "top_n": int(top_n),
+            "max_windows": int(max_windows),
+            "events_sample": bool(events_sample),
+            "events_sample_max": int(events_sample_max),
+        }
+
+        saved_data = None
+        if os.path.exists(cache_path) and not force_recompute:
+            try:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    saved_data = json.load(f)
+            except Exception:
+                saved_data = None
+
+        def _params_match(saved: dict, cur: dict) -> bool:
+            try:
+                sp = saved.get("params") or {}
+                return (
+                    int(sp.get("window_minutes", -1)) == cur["window_minutes"]
+                    and int(sp.get("threshold", -1)) == cur["threshold"]
+                    and (sp.get("start_time") or None) == cur["start_time"]
+                    and (sp.get("end_time") or None) == cur["end_time"]
+                    and (sp.get("operator_map_path") or None) == cur.get("operator_map_path")
+                    and (sp.get("operator_map_json") or None) == cur.get("operator_map_json")
+                    and bool(sp.get("include_windows", False)) == cur.get("include_windows")
+                    and bool(sp.get("include_alarm_details", False)) == cur.get("include_alarm_details")
+                    and int(sp.get("top_n", -1)) == cur.get("top_n")
+                    and int(sp.get("max_windows", -1)) == cur.get("max_windows")
+                    and bool(sp.get("events_sample", False)) == cur.get("events_sample")
+                    and int(sp.get("events_sample_max", -1)) == cur.get("events_sample_max")
+                )
+            except Exception:
+                return False
+
+        if isinstance(saved_data, dict) and _params_match(saved_data, current_params):
+            if raw:
+                return saved_data
+            return saved_data
+
+        # Compute fresh
+        # Load operator map from path or inline JSON if provided
+        operator_map: dict | None = None
+        if operator_map_json:
+            try:
+                operator_map = json.loads(operator_map_json)
+            except Exception:
+                operator_map = None
+        elif operator_map_path:
+            try:
+                map_path = operator_map_path
+                if not os.path.isabs(map_path):
+                    map_path = os.path.join(base_dir, operator_map_path)
+                with open(map_path, "r", encoding="utf-8") as mf:
+                    operator_map = json.load(mf)
+            except Exception:
+                operator_map = None
+
+        result = compute_isa18_flood_summary(
+            PVCI_FOLDER,
+            window_minutes=window_minutes,
+            threshold=threshold,
+            operator_map=operator_map,
+            start_time=start_time,
+            end_time=end_time,
+            include_records=include_records,
+            include_windows=include_windows,
+            include_alarm_details=include_alarm_details,
+            top_n=top_n,
+            max_windows=max_windows,
+            events_sample=events_sample,
+            events_sample_max=events_sample_max,
+        )
+
+        # Attempt to cache
+        try:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            # Enrich params with operator map origin for cache discrimination
+            try:
+                result.setdefault("params", {})
+                result["params"]["operator_map_path"] = operator_map_path
+                result["params"]["operator_map_json"] = operator_map_json
+            except Exception:
+                pass
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2, default=str)
+        except Exception:
+            pass
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in ISA flood summary endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
