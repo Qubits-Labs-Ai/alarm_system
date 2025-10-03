@@ -1,4 +1,5 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { UnhealthyBar } from '@/types/dashboard';
@@ -13,6 +14,9 @@ interface UnhealthyBarChartProps {
   onTopNChange: (value: 1 | 3) => void;
   isLoading?: boolean;
   plantId?: string;
+  // Chart behavior: per-source keeps Top1/Top3 bins-per-source.
+  // Flood mode crops long-tail visually with TopK buttons (Top 5/10/15/All).
+  mode?: 'perSource' | 'flood';
 }
 
 export function UnhealthyBarChart({ 
@@ -22,6 +26,7 @@ export function UnhealthyBarChart({
   onTopNChange, 
   isLoading = false,
   plantId = 'pvcI',
+  mode = 'perSource',
 }: UnhealthyBarChartProps) {
   const { onOpen: openInsightModal } = useInsightModal();
   const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
@@ -75,6 +80,10 @@ export function UnhealthyBarChart({
     ];
   };
 
+  // Declare all hooks BEFORE any early returns to keep hook order stable
+  const topKDefault: number | 'all' = 10;
+  const [topK, setTopK] = useState<number | 'all'>(topKDefault);
+
   if (isLoading) {
     return (
       <Card className="shadow-metric-card">
@@ -99,6 +108,36 @@ export function UnhealthyBarChart({
 
   const isEmpty = data.length === 0;
 
+  // In flood mode, we visually crop to Top K and optionally aggregate the tail as "Others"
+  // to avoid an unprofessional-looking long tail of tiny bars.
+
+  let displayData: UnhealthyBar[] = data;
+  if (mode === 'flood' && !isEmpty) {
+    const k = topK ?? topKDefault;
+    if (k !== 'all') {
+      const cropped = data.slice(0, k);
+      const rest = data.slice(k);
+      const restSum = rest.reduce((acc, r) => acc + Number(r.hits || r.flood_count || 0), 0);
+      // Build an aggregated Others bar if tail has any weight
+      if (restSum > 0) {
+        const ref = cropped[0] || data[0];
+        const nowIso = new Date().toISOString();
+        const others = {
+          id: `others-${ref?.id || nowIso}`,
+          source: 'Others',
+          hits: restSum,
+          threshold: threshold,
+          over_by: Math.max(0, restSum - threshold),
+          bin_start: (ref as any)?.bin_start || nowIso,
+          bin_end: (ref as any)?.bin_end || nowIso,
+        } as UnhealthyBar;
+        displayData = [...cropped, others];
+      } else {
+        displayData = cropped;
+      }
+    }
+  }
+
   const handleInsightClick = () => {
     const payload = data.map(d => ({
       source: d.source,
@@ -122,20 +161,55 @@ export function UnhealthyBarChart({
             </CardDescription>
           </div>
           <div className="flex gap-2">
-            <Button
-              variant={topN === 1 ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => onTopNChange(1)}
-            >
-              Top 1
-            </Button>
-            <Button
-              variant={topN === 3 ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => onTopNChange(3)}
-            >
-              Top 3
-            </Button>
+            {mode === 'perSource' ? (
+              <>
+                <Button
+                  variant={topN === 1 ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => onTopNChange(1)}
+                >
+                  Top 1
+                </Button>
+                <Button
+                  variant={topN === 3 ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => onTopNChange(3)}
+                >
+                  Top 3
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant={(topK ?? topKDefault) === 5 ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setTopK(5)}
+                >
+                  Top 5
+                </Button>
+                <Button
+                  variant={(topK ?? topKDefault) === 10 ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setTopK(10)}
+                >
+                  Top 10
+                </Button>
+                <Button
+                  variant={(topK ?? topKDefault) === 15 ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setTopK(15)}
+                >
+                  Top 15
+                </Button>
+                <Button
+                  variant={(topK ?? topKDefault) === 'all' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setTopK('all')}
+                >
+                  All
+                </Button>
+              </>
+            )}
             <InsightButton onClick={handleInsightClick} disabled={isLoading || isEmpty} />
           </div>
         </div>
@@ -156,7 +230,7 @@ export function UnhealthyBarChart({
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
-                data={data}
+                data={displayData}
                 margin={{
                   top: 24,
                   right: 120,

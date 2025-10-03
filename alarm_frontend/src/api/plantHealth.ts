@@ -15,6 +15,51 @@ export function normalizePlantId(plantCode: string): string {
   return PLANT_ID_MAP[plantCode] || plantCode.toLowerCase().replace(/-/g, '');
 }
 
+// ISA 18.2 Plant-wide flood summary (PVC-I only for now)
+export async function fetchPvciIsaFloodSummary(params?: {
+  window_minutes?: number;
+  threshold?: number;
+  start_time?: string;
+  end_time?: string;
+  include_records?: boolean;
+  include_windows?: boolean;
+  include_alarm_details?: boolean;
+  top_n?: number;
+  max_windows?: number;
+}) {
+  const {
+    window_minutes = 10,
+    threshold = 10,
+    start_time,
+    end_time,
+    include_records = false,
+    include_windows = true,
+    include_alarm_details = true,
+    top_n = 10,
+    max_windows = 10,
+  } = params || {};
+
+  const url = new URL(`${API_BASE_URL}/pvcI-health/isa-flood-summary`);
+  url.searchParams.set('window_minutes', String(window_minutes));
+  url.searchParams.set('threshold', String(threshold));
+  url.searchParams.set('include_records', String(include_records));
+  url.searchParams.set('include_windows', String(include_windows));
+  url.searchParams.set('include_alarm_details', String(include_alarm_details));
+  url.searchParams.set('top_n', String(top_n));
+  url.searchParams.set('max_windows', String(max_windows));
+  if (start_time) url.searchParams.set('start_time', start_time);
+  if (end_time) url.searchParams.set('end_time', end_time);
+
+  try {
+    const res = await fetch(url.toString());
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (e) {
+    console.warn('Failed to fetch ISA flood summary:', e);
+    return null;
+  }
+}
+
 export async function fetchPlants(): Promise<Plant[]> {
   try {
     const res = await fetch(`${API_BASE_URL}/plants`);

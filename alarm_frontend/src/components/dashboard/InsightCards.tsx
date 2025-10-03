@@ -5,39 +5,72 @@ import { PlantHealthMetrics } from '@/types/dashboard';
 interface InsightCardsProps {
   metrics: PlantHealthMetrics;
   isLoading?: boolean;
+  mode?: 'perSource' | 'flood';
 }
 
-export function InsightCards({ metrics, isLoading = false }: InsightCardsProps) {
-  const cards = [
-    {
-      title: 'Healthy Sources',
-      value: `${metrics.healthy_percentage.toFixed(1)}%`,
-      description: 'Sources within normal range',
-      icon: TrendingUp,
-      trend: 'positive' as const,
-    },
-    {
-      title: 'Unhealthy Sources',
-      value: `${metrics.unhealthy_percentage.toFixed(1)}%`,
-      description: 'Sources requiring attention',
-      icon: TrendingDown,
-      trend: 'negative' as const,
-    },
-    {
-      title: 'Total Sources',
-      value: metrics.total_sources.toLocaleString(),
-      description: 'Active monitoring points',
-      icon: Database,
-      trend: 'neutral' as const,
-    },
-    {
-      title: 'Total Files',
-      value: metrics.total_files.toLocaleString(),
-      description: 'Files processed',
-      icon: FileText,
-      trend: 'neutral' as const,
-    },
-  ];
+export function InsightCards({ metrics, isLoading = false, mode = 'perSource' }: InsightCardsProps) {
+  const isFlood = mode === 'flood';
+  const cards = isFlood
+    ? [
+        {
+          title: 'ISA Health',
+          value: `${metrics.healthy_percentage.toFixed(1)}%`,
+          description: 'Plant health (ISA 18.2)',
+          icon: TrendingUp,
+          trend: 'positive' as const,
+        },
+        {
+          title: '% Time In Flood',
+          value: `${metrics.unhealthy_percentage.toFixed(1)}%`,
+          description: 'Time under flood',
+          icon: TrendingDown,
+          trend: 'negative' as const,
+        },
+        {
+          title: 'Flood Windows',
+          value: metrics.total_sources.toLocaleString(),
+          description: 'Flood intervals detected',
+          icon: Database,
+          trend: 'neutral' as const,
+        },
+        {
+          title: 'Total Alarms',
+          value: metrics.total_files.toLocaleString(),
+          description: 'Alarms in period',
+          icon: FileText,
+          trend: 'neutral' as const,
+        },
+      ]
+    : [
+        {
+          title: 'Healthy Sources',
+          value: `${metrics.healthy_percentage.toFixed(1)}%`,
+          description: 'Sources within normal range',
+          icon: TrendingUp,
+          trend: 'positive' as const,
+        },
+        {
+          title: 'Unhealthy Sources',
+          value: `${metrics.unhealthy_percentage.toFixed(1)}%`,
+          description: 'Sources requiring attention',
+          icon: TrendingDown,
+          trend: 'negative' as const,
+        },
+        {
+          title: 'Total Sources',
+          value: metrics.total_sources.toLocaleString(),
+          description: 'Active monitoring points',
+          icon: Database,
+          trend: 'neutral' as const,
+        },
+        {
+          title: 'Total Files',
+          value: metrics.total_files.toLocaleString(),
+          description: 'Files processed',
+          icon: FileText,
+          trend: 'neutral' as const,
+        },
+      ];
 
   if (isLoading) {
     return (

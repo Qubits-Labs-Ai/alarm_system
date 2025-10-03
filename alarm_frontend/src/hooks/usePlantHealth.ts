@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { fetchPlantHealth } from '@/api/plantHealth';
-import { UnhealthyBar, UnhealthyBin } from '@/types/dashboard';
+import { fetchPlantHealth, fetchPvciIsaFloodSummary } from '@/api/plantHealth';
+import { UnhealthyBar, UnhealthyBin, PlantHealthResponse } from '@/types/dashboard';
 
 function transformUnhealthyBins(
   bins: UnhealthyBin[], 
@@ -58,11 +58,35 @@ function transformUnhealthyBins(
 export function usePlantHealth(
   plantId: string = 'pvcI',
   topN: 1 | 3 = 1,
+  mode: 'perSource' | 'flood' = 'perSource',
   refetchInterval: number = 60000 // 60 seconds
 ) {
   return useQuery({
-    queryKey: ['plant-health', plantId, topN],
-    queryFn: () => fetchPlantHealth(plantId),
+    queryKey: ['plant-health', plantId, topN, mode],
+    queryFn: async (): Promise<PlantHealthResponse> => {
+      if (mode === 'flood' && plantId === 'pvcI') {
+        const res = await fetchPvciIsaFloodSummary({
+          window_minutes: 10,
+          threshold: 10,
+          include_records: false,
+          include_windows: true,
+          include_alarm_details: true,
+          top_n: 10,
+          max_windows: 10,
+        });
+        const overall = (res?.overall || {}) as any;
+        const metrics = {
+          healthy_percentage: Number(overall.isa_overall_health_pct || 0),
+          unhealthy_percentage: Number(overall.percent_time_in_flood || 0),
+          total_sources: Number(overall.flood_windows_count || 0),
+          total_files: Number(overall.total_alarms || 0),
+          last_updated: (res?.generated_at as string) || new Date().toISOString(),
+        };
+        return { metrics, unhealthy_bins: [] };
+      }
+      // Default per-source path
+      return await fetchPlantHealth(plantId);
+    },
     refetchInterval,
     refetchIntervalInBackground: true,
     staleTime: 30000, // 30 seconds
