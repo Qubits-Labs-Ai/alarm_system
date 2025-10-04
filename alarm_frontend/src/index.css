@@ -14,11 +14,12 @@
     --popover: oklch(0.98 0.008 140);
     --popover-foreground: oklch(0.15 0.02 140);
     
-    /* Primary green palette */
-    --primary: oklch(0.55 0.15 140);      /* Professional green */
+    /* Primary green palette - Using specified shades */
+    --primary: #017944;                   /* Dark green #017944 */
     --primary-foreground: oklch(0.98 0.008 140);
-    --secondary: oklch(0.75 0.08 140);    /* Light green */
+    --secondary: #09b073;                 /* Medium green #09b073 */
     --secondary-foreground: oklch(0.20 0.02 140);
+    --accent-green: #6eb43f;              /* Light green #6eb43f */
     
     /* Neutral grays with green undertones */
     --muted: oklch(0.94 0.01 140);        /* Light gray-green */
@@ -32,7 +33,7 @@
     
     /* Borders and inputs */
     --border: oklch(0.88 0.02 140);       /* Green-tinted border */
-    --input: oklch(0.96 0.01 140);        /* Input background */
+    --input: oklch(0.98 0.008 140);       /* Input background (lighter, subtle green tint) */
     --ring: oklch(0.55 0.15 140);         /* Focus ring matches primary */
     
     /* Chart colors - unified to requested shade #5aa427 (HSL ~ 96 62% 40%) */
@@ -50,7 +51,7 @@
     --chart-tooltip-bg: oklch(0.97 0.01 140);
     
     /* Success and health indicators */
-    --success: oklch(0.60 0.15 140);
+    --success: #09b073;                   /* Medium green for success */
     --success-foreground: oklch(0.98 0.008 140);
     --warning: oklch(0.70 0.15 80);
     --warning-foreground: oklch(0.15 0.02 140);
@@ -92,11 +93,12 @@
     --popover: oklch(0.14 0 0);           /* Slightly lighter than bg */
     --popover-foreground: oklch(0.94 0 0);
     
-    /* Keep green accents/buttons as-is */
-    --primary: oklch(0.68 0.12 140);      /* Bright green for dark mode */
+    /* Green accents/buttons for dark mode */
+    --primary: #09b073;                   /* Medium green for dark mode */
     --primary-foreground: oklch(0.11 0 0);
-    --secondary: oklch(0.45 0.08 140);    /* Muted green */
+    --secondary: #6eb43f;                 /* Light green for secondary */
     --secondary-foreground: oklch(0.92 0 0);
+    --accent-green: #017944;              /* Dark green accent */
     
     /* Neutral greys, no hue */
     --muted: oklch(0.22 0 0);             /* Dark grey */
@@ -128,7 +130,7 @@
     --chart-tooltip-bg: oklch(0.18 0 0);
     
     /* Success and health indicators for dark mode */
-    --success: oklch(0.70 0.12 140);
+    --success: #6eb43f;                   /* Light green for dark mode success */
     --success-foreground: oklch(0.12 0.015 140);
     --warning: oklch(0.75 0.15 80);
     --warning-foreground: oklch(0.12 0.015 140);
@@ -151,6 +153,19 @@
     --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 8px 10px -1px hsl(0 0% 0% / 0.10);
     --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
   }
+  /* Ensure autofill doesn't inject odd background colors */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  textarea:-webkit-autofill,
+  select:-webkit-autofill {
+    -webkit-text-fill-color: var(--foreground);
+    caret-color: var(--foreground);
+    box-shadow: 0 0 0px 1000px var(--input) inset;
+    -webkit-box-shadow: 0 0 0px 1000px var(--input) inset;
+    transition: background-color 9999s ease-in-out 0s;
+  }
+  ::placeholder { color: oklch(0.45 0.02 140 / 0.7); }
 }
 
 @layer base {
@@ -195,5 +210,59 @@
 
   .animate-grid-pan {
     animation: grid-pan 30s linear infinite;
+  }
+
+  /* Subtle aurora gradient sweep */
+  @keyframes aurora {
+    0% { transform: translateY(-10%) rotate(0deg) scale(1); opacity: 0.7; }
+    50% { transform: translateY(0%) rotate(180deg) scale(1.05); opacity: 0.9; }
+    100% { transform: translateY(-10%) rotate(360deg) scale(1); opacity: 0.7; }
+  }
+  .animate-aurora { animation: aurora 22s linear infinite; }
+
+  /* Floating blob motion */
+  @keyframes float {
+    0%   { transform: translateY(0px); }
+    50%  { transform: translateY(-12px); }
+    100% { transform: translateY(0px); }
+  }
+  .animate-float { animation: float 6s ease-in-out infinite; }
+
+  /* Card shake for error feedback */
+  @keyframes shake {
+    0% { transform: translateX(0); }
+    20% { transform: translateX(-6px); }
+    40% { transform: translateX(6px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(4px); }
+    100% { transform: translateX(0); }
+  }
+  .animate-shake { animation: shake 420ms ease-in-out; }
+
+  /* Button shimmer effect */
+  @keyframes btn-shine {
+    0%   { left: -120%; }
+    100% { left: 120%; }
+  }
+  .shine { position: relative; overflow: hidden; }
+  .shine::after {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0;
+    left: -120%;
+    width: 120%;
+    background: linear-gradient( to right, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%);
+    transform: skewX(-20deg);
+    animation: btn-shine 3.2s ease-in-out infinite;
+  }
+
+  /* Spotlight behind the card for focus */
+  .spotlight {
+    /* Neutral vignette for light mode */
+    background: radial-gradient(600px 300px at center, hsl(0 0% 0% / 0.10), transparent 70%);
+  }
+  .dark .spotlight {
+    /* Keep green tint in dark mode */
+    background: radial-gradient(600px 300px at center, hsl(var(--primary)/0.12), transparent 70%);
   }
 }

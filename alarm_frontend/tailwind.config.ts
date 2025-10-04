@@ -102,6 +102,9 @@ export default {
         lg: "var(--shadow-lg)",
         xl: "var(--shadow-xl)",
         '2xl': 'var(--shadow-2xl)',
+        // Matches Aceternity's input/card subtle shadow
+        // Used via class: shadow-input
+        input: '0px 2px 3px -1px rgba(0, 0, 0, 0.10), 0px 1px 0px 0px rgba(25, 28, 33, 0.02), 0px 0px 0px 1px rgba(25, 28, 33, 0.08)',
       },
       borderRadius: {
         lg: "var(--radius)",

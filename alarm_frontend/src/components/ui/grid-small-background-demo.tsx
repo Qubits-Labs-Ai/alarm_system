@@ -13,8 +13,8 @@ export default function GridSmallBackgroundDemo({ hideLabel = true, className }:
         className={cn(
           "absolute inset-0",
           "[background-size:24px_24px]",
-          "[background-image:linear-gradient(to_right,#d1d5db_1px,transparent_1px),linear-gradient(to_bottom,#d1d5db_1px,transparent_1px)]",
-          "dark:[background-image:linear-gradient(to_right,#2b2b2b_1px,transparent_1px),linear-gradient(to_bottom,#2b2b2b_1px,transparent_1px)]",
+          "[background-image:linear-gradient(to_right,hsl(var(--primary)/0.16)_1px,transparent_1px),linear-gradient(to_bottom,hsl(var(--primary)/0.16)_1px,transparent_1px)]",
+          "dark:[background-image:linear-gradient(to_right,hsl(var(--primary)/0.22)_1px,transparent_1px),linear-gradient(to_bottom,hsl(var(--primary)/0.22)_1px,transparent_1px)]",
           "animate-grid-pan",
         )}
       />
