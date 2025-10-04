@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, startTransition } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageShell } from '@/components/dashboard/PageShell';
 import { PlantSelector } from '@/components/dashboard/PlantSelector';
@@ -17,6 +17,7 @@ import { fetchPlants, fetchUnhealthySources, fetchPvciIsaFloodSummary } from '@/
 import { UnhealthyBar } from '@/types/dashboard';
 import PriorityBreakdownDonut from '@/components/PriorityBreakdownDonut';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import TopFloodWindowsChart, { TopFloodWindowRow } from '@/components/dashboard/TopFloodWindowsChart';
 
 
@@ -46,6 +47,19 @@ export default function DashboardPage() {
   // Flood-mode: Top windows dataset and control
   const [topWindows, setTopWindows] = useState<TopFloodWindowRow[]>([]);
   const [topWindowsTopK, setTopWindowsTopK] = useState<5 | 10 | 15>(10);
+  // Selected 10-min window (Plant-wide flood mode)
+  const [selectedWindow, setSelectedWindow] = useState<{
+    id: string;
+    label: string;
+    start: string;
+    end: string;
+  } | null>(null);
+  // Map of window id -> top_sources list from ISA summary for consistent per-window bars
+  const [windowTopSources, setWindowTopSources] = useState<Record<string, Array<{ source: string; count: number }>>>({});
+  // V2 slider domain and peak window reference
+  const [timePickerDomain, setTimePickerDomain] = useState<{ start: string; end: string; peakStart?: string; peakEnd?: string } | null>(null);
+  // Global include system toggle
+  const [includeSystem, setIncludeSystem] = useState<boolean>(true);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -130,11 +144,17 @@ export default function DashboardPage() {
             } as UnhealthyBar;
           });
 
-          bars.sort((a, b) => b.hits - a.hits);
-          bars = bars.slice(0, 50);
+          // We'll apply selected-window override after we build windowMap below.
 
           // Build Top Flood Windows dataset (peak 10-min windows per interval)
           const windowRows: TopFloodWindowRow[] = [];
+          const windowMap: Record<string, Array<{ source: string; count: number }>> = {};
+          // For time picker domain
+          let domainStartISO: string | null = null;
+          let domainEndISO: string | null = null;
+          let peakBestStart: string | undefined = undefined;
+          let peakBestEnd: string | undefined = undefined;
+          let peakBestCount = -1;
           for (const rec of records) {
             let peakCount: number | undefined = Number(rec?.peak_10min_count);
             let start: string | undefined = rec?.peak_window_start;
@@ -164,13 +184,75 @@ export default function DashboardPage() {
               rate_per_min: rate,
               top_sources,
             });
+            windowMap[String(start)] = top_sources;
+
+            // update domain min/max
+            if (!domainStartISO || new Date(start) < new Date(domainStartISO)) domainStartISO = start;
+            if (!domainEndISO || new Date(end) > new Date(domainEndISO)) domainEndISO = end;
+            // track global peak window
+            if (peakCount > peakBestCount) {
+              peakBestCount = peakCount;
+              peakBestStart = start;
+              peakBestEnd = end;
+            }
           }
 
           windowRows.sort((a, b) => b.flood_count - a.flood_count);
 
+          // Selected-window override using the fresh windowMap from the same response
+          if (selectedWindow) {
+            const tops = windowMap[selectedWindow.id];
+            if (Array.isArray(tops) && tops.length > 0) {
+              const filtered = tops.filter(s => {
+                const name = String(s?.source || '').trim();
+                if (!name) return false;
+                return (s?.count || 0) >= 10; // unhealthy only
+              });
+              let selBars: UnhealthyBar[] = filtered.map(s => ({
+                id: `${s.source}-${selectedWindow.start}`,
+                source: s.source,
+                hits: Number(s.count || 0),
+                threshold: 10,
+                over_by: Math.max(0, Number(s.count || 0) - 10),
+                bin_start: selectedWindow.start,
+                bin_end: selectedWindow.end,
+              }));
+              selBars = selBars.filter(b => (b?.hits ?? 0) >= 10).sort((a, b) => b.hits - a.hits).slice(0, 50);
+              bars = selBars;
+            } else {
+              // Fallback: slider-picked arbitrary window -> fetch detailed records for that exact window
+              const windowRes = await fetchUnhealthySources(selectedWindow.start, selectedWindow.end, '10T', 10, selectedPlant.id);
+              const winRecords: any[] = Array.isArray(windowRes?.records) ? windowRes.records : [];
+              const bySrc: Record<string, number> = {};
+              for (const r of winRecords) {
+                const src = String(r?.source || 'Unknown').trim();
+                const c = Number(typeof r?.flood_count === 'number' ? r.flood_count : r?.hits || 0);
+                if (c > 0) bySrc[src] = (bySrc[src] || 0) + c;
+              }
+              let selBars: UnhealthyBar[] = Object.entries(bySrc).map(([src, sum]) => ({
+                id: `${src}-${selectedWindow.start}`,
+                source: src,
+                hits: sum,
+                threshold: 10,
+                over_by: Math.max(0, sum - 10),
+                bin_start: selectedWindow.start,
+                bin_end: selectedWindow.end,
+              }));
+              selBars = selBars.filter(b => (b?.hits ?? 0) >= 10).sort((a, b) => b.hits - a.hits).slice(0, 50);
+              bars = selBars;
+            }
+          } else {
+            // No selection: keep aggregated bars, filter and cap
+            bars = bars.filter(b => (b?.hits ?? 0) >= 10).sort((a, b) => b.hits - a.hits).slice(0, 50);
+          }
+
           if (mounted) {
             setUnhealthyBarData(bars);
             setTopWindows(windowRows);
+            setWindowTopSources(windowMap);
+            if (domainStartISO && domainEndISO) {
+              setTimePickerDomain({ start: domainStartISO, end: domainEndISO, peakStart: peakBestStart, peakEnd: peakBestEnd });
+            }
           }
         } else {
           // Per-source mode (existing behavior)
@@ -249,6 +331,8 @@ export default function DashboardPage() {
             }
           }
 
+          // Keep only unhealthy sources (hits >= threshold)
+          bars = bars.filter(b => (b?.hits ?? 0) >= 10);
           // Sort global bars by hits desc and keep a reasonable cap (e.g., 50)
           bars.sort((a, b) => b.hits - a.hits);
           bars = bars.slice(0, 50);
@@ -261,7 +345,7 @@ export default function DashboardPage() {
     }
     loadBars();
     return () => { mounted = false; };
-  }, [topN, selectedPlant.id, mode]);
+  }, [topN, selectedPlant.id, mode, selectedWindow?.id, selectedWindow?.start, selectedWindow?.end]);
 
   if (authLoading) {
     return (
@@ -319,6 +403,14 @@ export default function DashboardPage() {
             disabled={plantsLoading || plants.length <= 1}
           />
           <div className="flex items-center gap-3">
+            {/* Global Include System toggle */}
+            <div className="flex items-center gap-2 pr-2">
+              <span className="text-sm text-muted-foreground">Include system</span>
+              <Switch
+                checked={includeSystem}
+                onCheckedChange={(v) => startTransition(() => setIncludeSystem(v))}
+              />
+            </div>
             <span className="text-sm text-muted-foreground">Mode</span>
             <Select value={mode} onValueChange={(v) => setMode(v as any)}>
               <SelectTrigger className="w-56">
@@ -359,25 +451,26 @@ export default function DashboardPage() {
                 isLoading={unhealthyBarsLoading}
                 plantId={selectedPlant.id}
                 mode={'perSource'}
+                includeSystem={includeSystem}
               />
 
               {/* Priority Breakdown Donut (flood_count-weighted) */}
               <PriorityBreakdownDonut />
 
               {/* New Pareto Top Offenders Chart (Bar + Line) */}
-              <ParetoTopOffendersChart />
+              <ParetoTopOffendersChart includeSystem={includeSystem} />
 
               {/* New Stacked Bar: Condition Distribution by Location */}
               <ConditionDistributionByLocation plantId={selectedPlant.id} />
 
-              <UnhealthySourcesChart />
+              <UnhealthySourcesChart includeSystem={includeSystem} />
 
               {/* New Word Cloud (priority-colored, bins-heavy score) */}
-              <UnhealthySourcesWordCloud />
+              <UnhealthySourcesWordCloud includeSystem={includeSystem} />
             </div>
             
             {/* New Simple Bar Chart */}
-            <UnhealthySourcesBarChart />
+            <UnhealthySourcesBarChart includeSystem={includeSystem} />
           </div>
         )}
 
@@ -392,6 +485,20 @@ export default function DashboardPage() {
                 isLoading={unhealthyBarsLoading}
                 plantId={selectedPlant.id}
                 mode={'flood'}
+                includeSystem={includeSystem}
+                activeWindowLabel={selectedWindow?.label}
+                onClearWindow={() => setSelectedWindow(null)}
+                activeWindowStart={selectedWindow?.start}
+                activeWindowEnd={selectedWindow?.end}
+                onApplyTimePicker={(s, e) => {
+                  setSelectedWindow({
+                    id: s,
+                    label: `${new Date(s).toLocaleString()} — ${new Date(e).toLocaleString()}`,
+                    start: s,
+                    end: e,
+                  });
+                }}
+                timePickerDomain={timePickerDomain || undefined}
               />
               <TopFloodWindowsChart
                 data={topWindows}
@@ -399,6 +506,11 @@ export default function DashboardPage() {
                 topK={topWindowsTopK}
                 onTopKChange={setTopWindowsTopK}
                 isLoading={unhealthyBarsLoading}
+                onSelectWindow={(row) => {
+                  if (!row) { setSelectedWindow(null); return; }
+                  setSelectedWindow({ id: row.id, label: row.label, start: row.start, end: row.end });
+                }}
+                selectedWindowId={selectedWindow?.id}
               />
             </div>
           </div>
@@ -422,20 +534,20 @@ export default function DashboardPage() {
               <PriorityBreakdownDonut plantId={selectedPlant.id} />
 
               {/* PVC-II: Pareto Top Offenders */}
-              <ParetoTopOffendersChart plantId={selectedPlant.id} />
+              <ParetoTopOffendersChart plantId={selectedPlant.id} includeSystem={includeSystem} />
 
               {/* PVC-II: Condition Distribution by Location */}
               <ConditionDistributionByLocation plantId={selectedPlant.id} />
 
               {/* PVC-II: Unhealthy Sources Timeline/Top Sources */}
-              <UnhealthySourcesChart plantId={selectedPlant.id} />
+              <UnhealthySourcesChart plantId={selectedPlant.id} includeSystem={includeSystem} />
 
               {/* PVC-II: Word Cloud */}
-              <UnhealthySourcesWordCloud plantId={selectedPlant.id} />
+              <UnhealthySourcesWordCloud plantId={selectedPlant.id} includeSystem={includeSystem} />
             </div>
 
             {/* PVC-II: Simple Top Sources Bar */}
-            <UnhealthySourcesBarChart plantId={selectedPlant.id} />
+            <UnhealthySourcesBarChart plantId={selectedPlant.id} includeSystem={includeSystem} />
           </div>
         )}
 

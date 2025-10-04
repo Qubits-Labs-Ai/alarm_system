@@ -15,6 +15,7 @@ import {
   Cell
 } from 'recharts';
 import { CHART_GREEN_DARK, CHART_GREEN_LIGHT, CHART_GREEN_MEDIUM, CHART_GREEN_PALE, priorityToGreen, magnitudeToGreen } from '@/theme/chartColors';
+import { Switch } from '@/components/ui/switch';
 import { useInsightModal } from '@/components/insights/useInsightModal';
 import { InsightButton } from '@/components/insights/InsightButton';
 import { fetchUnhealthySources } from '@/api/plantHealth';
@@ -50,9 +51,11 @@ interface UnhealthySourcesData {
 interface UnhealthySourcesBarChartProps {
   className?: string;
   plantId?: string;
+  // Global control: when provided, component hides its own toggle and uses this value
+  includeSystem?: boolean;
 }
 
-const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ className, plantId = 'pvcI' }) => {
+const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ className, plantId = 'pvcI', includeSystem: includeSystemProp }) => {
   const [data, setData] = useState<UnhealthySourcesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +68,14 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
   const { onOpen: openInsightModal } = useInsightModal();
   const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
+  // System/meta classification
+  const isMetaSource = (name: string) => {
+    const s = String(name || '').trim().toUpperCase();
+    if (!s) return false;
+    return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+  };
+  const [includeSystemLocal, setIncludeSystemLocal] = useState(true);
+  const includeSystem = includeSystemProp ?? includeSystemLocal;
 
   useEffect(() => {
     fetchData();
@@ -274,12 +285,16 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
       result.sort((a, b) => a.source.localeCompare(b.source));
     }
 
+    // Optionally filter out system/meta
+    if (!includeSystem) {
+      result = result.filter(r => !isMetaSource(r.source));
+    }
     // Limit to top N sources to avoid congestion
     result = result.slice(0, topLimit);
 
     console.log('Processed source data:', result);
     return result;
-  }, [data, sortBy, topLimit]);
+  }, [data, sortBy, topLimit, includeSystem]);
 
   // Open AI insight modal with the currently processed Top Sources data
   const handleInsightClick = () => {
@@ -501,6 +516,13 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
+            {/* System toggle (hidden when controlled globally) */}
+            {includeSystemProp === undefined && (
+              <div className="flex items-center gap-2 pr-2">
+                <span className="text-xs text-muted-foreground">Include system</span>
+                <Switch checked={includeSystemLocal} onCheckedChange={setIncludeSystemLocal} />
+              </div>
+            )}
             {/* Month Selector */}
             <Select value={selectedMonth} onValueChange={setSelectedMonth}>
               <SelectTrigger className="w-36">
@@ -607,12 +629,13 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
               />
               
               <Bar dataKey="totalFlood" radius={[4, 4, 0, 0]} maxBarSize={60}>
-                {processedData.map((entry, index) => (
-                  <Cell 
-                    key={`cell-${index}`} 
-                    fill={getPriorityColor(entry.priority, entry.totalFlood)}
-                  />
-                ))}
+                {processedData.map((entry, index) => {
+                  const fill = isMetaSource(entry.source) ? 'hsl(var(--muted))' : getPriorityColor(entry.priority, entry.totalFlood);
+                  const stroke = isMetaSource(entry.source) ? 'var(--border)' : undefined;
+                  return (
+                    <Cell key={`cell-${index}`} fill={fill} stroke={stroke} />
+                  );
+                })}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -620,6 +643,10 @@ const UnhealthySourcesBarChart: React.FC<UnhealthySourcesBarChartProps> = ({ cla
         
         {/* Legend and Summary */}
         <div className="mt-4 space-y-4">
+          <div className="flex items-center justify-center gap-6 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2"><span className="inline-block w-3 h-3 rounded" style={{background:'hsl(var(--muted))', border:'1px solid var(--border)'}}></span> System (meta)</div>
+            <div className="flex items-center gap-2"><span className="inline-block w-3 h-3 rounded" style={{background: CHART_GREEN_MEDIUM}}></span> Operational</div>
+          </div>
           <div className="flex items-center justify-center gap-6 text-sm">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded" style={{backgroundColor: CHART_GREEN_DARK}}></div>

@@ -65,7 +65,14 @@ function normalizeSourceName(raw: string) {
   return s;
 }
 
-const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string }> = ({ className, plantId = 'pvcI' }) => {
+// Meta/system classifier (aligned with other charts)
+const isMetaSource = (name: string) => {
+  const s = String(name || '').trim().toUpperCase();
+  if (!s) return false;
+  return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+};
+
+const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string; includeSystem?: boolean }> = ({ className, plantId = 'pvcI', includeSystem = true }) => {
   const [data, setData] = useState<UnhealthySourcesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -194,7 +201,12 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
 
   // Professional word cloud processing with proper weighting
   const { words, topStats, weightingInfo } = useMemo(() => {
-    const records: UnhealthyRecord[] = (data?.records || []) as any;
+    const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const baseRecords: UnhealthyRecord[] = (data?.records || []) as any;
+    // Apply Include System filter using normalized names
+    const records: UnhealthyRecord[] = includeSystem
+      ? baseRecords
+      : baseRecords.filter(r => !isMetaSource(normalizeSourceName(r.source)));
     const bySource = new Map<string, { 
       source: string; 
       bins: number; 
@@ -326,7 +338,8 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
     };
 
     // Debug logging to understand the data
-    console.log('Debug - Word Cloud Data:', {
+    const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+    console.log('Perf • WordCloud compute', `${Math.round(elapsed)}ms`, {
       totalRecords: records.length,
       totalSources: arr.length,
       unhealthySources: unhealthyArr.length,
@@ -347,7 +360,7 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
     });
 
     return { words: sized, topStats: stats, weightingInfo: weightInfo };
-  }, [data, binsWeight, floodWeight, topLimit, containerWidth]);
+  }, [data, binsWeight, floodWeight, topLimit, containerWidth, includeSystem]);
 
   // AI Insights: use current displayed word list to form payload
   const handleInsightClick = () => {

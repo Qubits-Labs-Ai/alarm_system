@@ -22,6 +22,7 @@ import {
   Bar
 } from 'recharts';
 import { CHART_GREEN_DARK, CHART_GREEN_LIGHT, CHART_GREEN_MEDIUM, CHART_GREEN_PALE, priorityToGreen } from '@/theme/chartColors';
+import { Switch } from '@/components/ui/switch';
 
 interface UnhealthyRecord {
   event_time: string;
@@ -48,9 +49,11 @@ interface UnhealthySourcesData {
 interface UnhealthySourcesChartProps {
   className?: string;
   plantId?: string;
+  // Global control: when provided, component hides its own toggle and uses this value
+  includeSystem?: boolean;
 }
 
-const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className, plantId = 'pvcI' }) => {
+const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className, plantId = 'pvcI', includeSystem: includeSystemProp }) => {
   const [data, setData] = useState<UnhealthySourcesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +66,15 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
   const { onOpen: openInsightModal } = useInsightModal();
   const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
+
+  // System/meta classification and toggle
+  const isMetaSource = (name: string) => {
+    const s = String(name || '').trim().toUpperCase();
+    if (!s) return false;
+    return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+  };
+  const [includeSystemLocal, setIncludeSystemLocal] = useState(true);
+  const includeSystem = includeSystemProp ?? includeSystemLocal;
 
   const handleInsightClick = () => {
     // useInsightModal.onOpen expects (data, title)
@@ -262,62 +274,79 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
     }
   };
 
-  // Filter data based on selected priority
-  const filteredRecords = data?.records.filter(record => 
-    selectedPriority === 'all' || record.priority === selectedPriority
-  ) || [];
+  // Filter data based on selected priority (memoized)
+  const filteredRecords = React.useMemo(() => {
+    const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const recs = (data?.records || [])
+      .filter(record => selectedPriority === 'all' || record.priority === selectedPriority)
+      .filter(record => includeSystem || !isMetaSource(record.source));
+    const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+    console.log('Perf • Timeline filter', `${Math.round(elapsed)}ms`, `records:${recs.length}`);
+    return recs;
+  }, [data, selectedPriority, includeSystem]);
 
-  // Prepare data for timeline scatter chart
-  const timelineData = filteredRecords.map((record, index) => {
-    const start = (record as any).peak_window_start || (record as any).event_time;
-    const end = (record as any).peak_window_end || (record as any).bin_end;
-    const flood = (record as any).flood_count ?? (record as any).hits ?? 0;
-    return {
-      x: new Date(start).getTime(),
-      y: record.source,
-      // size metric for bubble
-      flood_count: flood,
-      // keep hits for backward-compatibility in tooltips, but visuals rely on flood_count
-      hits: (record as any).hits,
-      over_by: (record as any).over_by,
-      // compute rate from flood_count to align with displayed Flood Count
-      rate_per_min: Math.round((Number(flood) / 10) * 10) / 10,
-      priority: record.priority || 'Medium',
-      description: record.description || 'No description',
-      location_tag: record.location_tag || 'Unknown',
-      condition: record.condition || 'Unknown',
-      peak_window_start: start,
-      peak_window_end: end,
-      sourceIndex: [...new Set(filteredRecords.map(r => r.source))].indexOf(record.source),
-      id: index
-    };
-  });
-
-  // Prepare data for bar chart (sources by total flood count)
-  const sourceHitsData = filteredRecords.reduce((acc, record) => {
-    const count = (record as any).flood_count ?? (record as any).hits ?? 0;
-    const existing = acc.find(item => item.source === record.source);
-    if (existing) {
-      existing.totalFlood += count;
-      existing.incidents += 1;
-      existing.maxFlood = Math.max(existing.maxFlood, count);
-    } else {
-      acc.push({
-        source: record.source,
-        totalFlood: count,
-        incidents: 1,
-        maxFlood: count,
-        avgFlood: count
-      });
+  // Prepare data for timeline scatter chart (memoized, efficient)
+  const timelineData = React.useMemo(() => {
+    const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    // Build stable index map of sources once
+    const srcIndex = new Map<string, number>();
+    let idxCounter = 0;
+    for (const r of filteredRecords) {
+      const s = r.source;
+      if (!srcIndex.has(s)) srcIndex.set(s, idxCounter++);
     }
-    return acc;
-  }, [] as Array<{source: string, totalFlood: number, incidents: number, maxFlood: number, avgFlood: number}>)
-  .map(item => ({
-    ...item,
-    avgFlood: Math.round(item.totalFlood / item.incidents * 10) / 10
-  }))
-  .sort((a, b) => b.totalFlood - a.totalFlood)
-  .slice(0, 20); // Top 20 sources
+    const arr = filteredRecords.map((record, index) => {
+      const start = (record as any).peak_window_start || (record as any).event_time;
+      const end = (record as any).peak_window_end || (record as any).bin_end;
+      const flood = (record as any).flood_count ?? (record as any).hits ?? 0;
+      return {
+        x: new Date(start).getTime(),
+        y: record.source,
+        flood_count: flood,
+        hits: (record as any).hits,
+        over_by: (record as any).over_by,
+        rate_per_min: Math.round((Number(flood) / 10) * 10) / 10,
+        priority: record.priority || 'Medium',
+        description: record.description || 'No description',
+        location_tag: record.location_tag || 'Unknown',
+        condition: record.condition || 'Unknown',
+        peak_window_start: start,
+        peak_window_end: end,
+        sourceIndex: srcIndex.get(record.source) ?? 0,
+        id: index,
+      };
+    });
+    const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+    console.log('Perf • Timeline map', `${Math.round(elapsed)}ms`, `points:${arr.length}`);
+    return arr;
+  }, [filteredRecords]);
+
+  // Prepare data for bar chart (sources by total flood count) — memoized
+  const sourceHitsData = React.useMemo(() => {
+    const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const map = new Map<string, {source: string, totalFlood: number, incidents: number, maxFlood: number}>();
+    for (const record of filteredRecords) {
+      const count = (record as any).flood_count ?? (record as any).hits ?? 0;
+      const key = record.source;
+      const ex = map.get(key);
+      if (ex) {
+        ex.totalFlood += count;
+        ex.incidents += 1;
+        ex.maxFlood = Math.max(ex.maxFlood, count);
+      } else {
+        map.set(key, { source: key, totalFlood: count, incidents: 1, maxFlood: count });
+      }
+    }
+    const arr = Array.from(map.values()).map(item => ({
+      ...item,
+      avgFlood: Math.round((item.totalFlood / item.incidents) * 10) / 10,
+    }))
+    .sort((a, b) => b.totalFlood - a.totalFlood)
+    .slice(0, 20);
+    const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+    console.log('Perf • Timeline bar aggregate', `${Math.round(elapsed)}ms`, `sources:${arr.length}`);
+    return arr;
+  }, [filteredRecords]);
 
   // Get unique priorities for filter
   const priorities = ['all', ...new Set(filteredRecords.map(r => r.priority).filter(Boolean))];
@@ -336,7 +365,10 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
           <div className="font-semibold text-foreground mb-2">{data.y}</div>
           <div className="space-y-1 text-sm text-muted-foreground">
             <div>
-              <span className="font-medium">Peak Window:</span> {new Date(data.peak_window_start || data.x).toLocaleString()} → {new Date(data.peak_window_end || data.x).toLocaleString()}
+              <span className="font-medium">Peak Window (Local):</span> {new Date(data.peak_window_start || data.x).toLocaleString()} → {new Date(data.peak_window_end || data.x).toLocaleString()}
+            </div>
+            <div>
+              <span className="font-medium">Peak Window (UTC):</span> {new Date(data.peak_window_start || data.x).toLocaleString(undefined, { timeZone: 'UTC' })} → {new Date(data.peak_window_end || data.x).toLocaleString(undefined, { timeZone: 'UTC' })}
             </div>
             <div><span className="font-medium">Flood Count:</span> {data.flood_count ?? data.hits ?? 0}</div>
             {/* Removed Hits (10-min) and Over by per UX request; retain only Flood Count */}
@@ -546,6 +578,13 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                 ))}
               </SelectContent>
             </Select>
+            {/* Include system toggle (hidden when controlled globally) */}
+            {includeSystemProp === undefined && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-muted-foreground">Include system</span>
+                <Switch checked={includeSystemLocal} onCheckedChange={setIncludeSystemLocal} />
+              </div>
+            )}
             {/* Window Mode Tabs (quick toggle) */}
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Window:</span>
@@ -602,9 +641,11 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                       <ZAxis dataKey="flood_count" range={[60, 300]} />
                       <Tooltip content={<TimelineTooltip />} />
                       <Scatter data={timelineData}>
-                        {timelineData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={getPriorityColor(entry.priority)} />
-                        ))}
+                        {timelineData.map((entry, index) => {
+                          const fill = isMetaSource(entry.y) ? 'hsl(var(--muted))' : getPriorityColor(entry.priority);
+                          const stroke = isMetaSource(entry.y) ? 'var(--border)' : undefined;
+                          return <Cell key={`cell-${index}`} fill={fill} stroke={stroke} />
+                        })}
                       </Scatter>
                     </ScatterChart>
                   ) : (
@@ -628,9 +669,11 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                       <ZAxis dataKey="flood_count" range={[60, 300]} />
                       <Tooltip content={<TimelineTooltip />} />
                       <Scatter data={timelineData}>
-                        {timelineData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={getPriorityColor(entry.priority)} />
-                        ))}
+                        {timelineData.map((entry, index) => {
+                          const fill = isMetaSource(entry.y) ? 'hsl(var(--muted))' : getPriorityColor(entry.priority);
+                          const stroke = isMetaSource(entry.y) ? 'var(--border)' : undefined;
+                          return <Cell key={`cell-${index}`} fill={fill} stroke={stroke} />
+                        })}
                       </Scatter>
                     </ScatterChart>
                   )}
@@ -667,7 +710,13 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                       labelFormatter={(label) => `Source: ${label}`}
                     />
                     <Legend />
-                    <Bar dataKey="totalFlood" fill={CHART_GREEN_DARK} name="Total Flood Count" />
+                    <Bar dataKey="totalFlood" fill={CHART_GREEN_DARK} name="Total Flood Count">
+                      {sourceHitsData.map((entry, index) => {
+                        const fill = isMetaSource(entry.source) ? 'hsl(var(--muted))' : CHART_GREEN_DARK;
+                        const stroke = isMetaSource(entry.source) ? 'var(--border)' : undefined;
+                        return <Cell key={`cell-${index}`} fill={fill} stroke={stroke} />
+                      })}
+                    </Bar>
                     <Bar dataKey="incidents" fill={CHART_GREEN_LIGHT} name="Frequency" />
                   </BarChart>
                 </ResponsiveContainer>

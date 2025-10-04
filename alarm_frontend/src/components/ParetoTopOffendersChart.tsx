@@ -55,7 +55,14 @@ interface ParetoItem {
 
 const DEFAULT_MONTH = 'all';
 
-const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string }> = ({ className, plantId = 'pvcI' }) => {
+// Meta/system classifier (keep aligned with other charts)
+const isMetaSource = (name: string) => {
+  const s = String(name || '').trim().toUpperCase();
+  if (!s) return false;
+  return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+};
+
+const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; includeSystem?: boolean }> = ({ className, plantId = 'pvcI', includeSystem = true }) => {
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
   const [records, setRecords] = React.useState<UnhealthyRecord[]>([]);
@@ -195,9 +202,12 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string }
   const paretoData: ParetoItem[] = React.useMemo(() => {
     if (!records || records.length === 0) return [];
 
+    // Apply Include System filter
+    const base = includeSystem ? records : records.filter(r => !isMetaSource(r.source));
+
     const map = new Map<string, { total: number; incidents: number; latestTs: number }>();
 
-    for (const r of records) {
+    for (const r of base) {
       const srcRaw = r.source || 'Unknown';
       let src = srcRaw;
       if (src.includes('.csv')) src = src.replace('.csv', '');
@@ -247,7 +257,7 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string }
       it.cumulativePct = +(cum / total * 100).toFixed(1);
     }
     return arr;
-  }, [records, topLimit, metricMode]);
+  }, [records, topLimit, metricMode, includeSystem]);
 
   const totalFloodCount = React.useMemo(() => paretoData.reduce((s, i) => s + i.totalFlood, 0), [paretoData]);
 
@@ -505,7 +515,8 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string }
                 label={{ value: '80% Line', position: 'right', fill: 'var(--muted-foreground)', fontSize: 11 }}
               />
 
-              <Bar dataKey="totalFlood" name={metricMode === 'exceedance' ? 'Exceedance' : 'Flood Count'} yAxisId="left" radius={[4,4,0,0]} maxBarSize={60}>
+              // Set a base fill so Legend renders the correct color (cells still override per bar)
+              <Bar dataKey="totalFlood" name={metricMode === 'exceedance' ? 'Exceedance' : 'Flood Count'} yAxisId="left" radius={[4,4,0,0]} maxBarSize={60} fill={CHART_GREEN_DARK}>
                 {paretoData.map((entry, idx) => (
                   <Cell
                     key={`bar-${idx}`}

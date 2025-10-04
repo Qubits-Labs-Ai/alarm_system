@@ -1,4 +1,4 @@
-import { LogOut, User, ChevronDown, Settings, RefreshCw } from 'lucide-react';
+import { LogOut, User, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -6,15 +6,15 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuShortcut,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/hooks/useAuth';
 import engroLogo from '@/assets/engro-logo.png';
-import { cn } from '@/lib/utils';
-import { formatDistanceToNow } from 'date-fns';
 import { ModalProvider } from '@/components/providers/ModalProvider';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { useEffect } from 'react';
 
 interface PageShellProps {
   children: React.ReactNode;
@@ -51,6 +51,27 @@ export function PageShell({
     console.log('View profile clicked');
   };
 
+  const handleOpenSettings = () => {
+    // TODO: Implement settings navigation
+    console.log('Settings clicked');
+  };
+
+  // Keyboard shortcuts: Ctrl+P (profile), Ctrl+, (settings)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && (e.key === ',')) {
+        e.preventDefault();
+        handleOpenSettings();
+      }
+      if (e.ctrlKey && (e.key.toLowerCase() === 'p')) {
+        e.preventDefault();
+        handleViewProfile();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       <ModalProvider />
@@ -86,58 +107,77 @@ export function PageShell({
               {/* Theme Toggle */}
               <ThemeToggle />
               
-              {/* Profile Dropdown */}
+              {/* Profile Dropdown - Minimal & Interactive */}
               <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button 
-                    variant="ghost" 
-                    className="flex items-center gap-3 px-3 py-2 h-auto bg-card/80 hover:bg-card border border-border/50 rounded-lg backdrop-blur-sm transition-all duration-200 hover:shadow-md"
-                  >
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          className="relative flex items-center px-1.5 py-1 h-9 w-9 bg-card/80 hover:bg-card border border-border/50 rounded-full backdrop-blur-sm transition-all duration-200 hover:shadow-md"
+                          aria-label="Account menu"
+                        >
+                          <div className="relative">
+                            <Avatar className="h-7 w-7 ring-2 ring-primary/30">
+                              <AvatarImage src="" alt={user?.name || 'Admin'} />
+                              <AvatarFallback className="bg-gradient-to-br from-primary to-secondary text-primary-foreground text-[10px] font-semibold">
+                                {getUserInitials(user?.name || 'Admin')}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-card" />
+                          </div>
+                        </Button>
+                      </DropdownMenuTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{user?.name || 'Admin'}</span>
+                        <span className="text-xs text-muted-foreground">• Administrator</span>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <DropdownMenuContent
+                  align="end"
+                  className="w-64 bg-popover/95 backdrop-blur-sm border-border/50 shadow-xl"
+                >
+                  <div className="px-2 py-2 flex items-center gap-3">
                     <Avatar className="h-8 w-8 ring-2 ring-primary/30">
                       <AvatarImage src="" alt={user?.name || 'Admin'} />
-                      <AvatarFallback className="bg-gradient-to-br from-primary to-secondary text-primary-foreground text-sm font-semibold">
+                      <AvatarFallback className="bg-gradient-to-br from-primary to-secondary text-primary-foreground text-xs font-semibold">
                         {getUserInitials(user?.name || 'Admin')}
                       </AvatarFallback>
                     </Avatar>
-                    <div className="hidden sm:flex flex-col items-start">
-                      <span className="text-sm font-semibold text-foreground">
-                        {user?.name || 'Admin'}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        Administrator
-                      </span>
+                    <div className="leading-tight">
+                      <div className="text-sm font-semibold">{user?.name || 'Admin'}</div>
+                      <div className="text-xs text-muted-foreground">Administrator</div>
                     </div>
-                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent 
-                  align="end" 
-                  className="w-56 bg-popover/95 backdrop-blur-sm border-border/50 shadow-xl"
-                >
-                  <DropdownMenuLabel className="font-semibold text-popover-foreground">
-                    My Account
-                  </DropdownMenuLabel>
+                  </div>
                   <DropdownMenuSeparator className="bg-border/50" />
-                  <DropdownMenuItem 
+                  <DropdownMenuItem
                     onClick={handleViewProfile}
-                    className="flex items-center gap-2 cursor-pointer hover:bg-accent text-popover-foreground"
+                    className="flex items-center gap-2 cursor-pointer hover:bg-accent"
                   >
                     <User className="h-4 w-4" />
-                    View Profile
+                    <span>View Profile</span>
+                    <DropdownMenuShortcut>Ctrl+P</DropdownMenuShortcut>
                   </DropdownMenuItem>
-                  <DropdownMenuItem 
-                    className="flex items-center gap-2 cursor-pointer hover:bg-accent text-popover-foreground"
+                  <DropdownMenuItem
+                    onClick={handleOpenSettings}
+                    className="flex items-center gap-2 cursor-pointer hover:bg-accent"
                   >
                     <Settings className="h-4 w-4" />
-                    Settings
+                    <span>Settings</span>
+                    <DropdownMenuShortcut>Ctrl+,</DropdownMenuShortcut>
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="bg-border/50" />
-                  <DropdownMenuItem 
+                  <DropdownMenuItem
                     onClick={handleLogout}
                     className="flex items-center gap-2 cursor-pointer text-destructive hover:bg-destructive/10"
                   >
                     <LogOut className="h-4 w-4" />
-                    Sign Out
+                    <span>Sign Out</span>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

@@ -1,4 +1,4 @@
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from 'recharts';
 import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,6 +6,9 @@ import { UnhealthyBar } from '@/types/dashboard';
 import { CHART_GREEN_MEDIUM } from '@/theme/chartColors';
 import { InsightButton } from '@/components/insights/InsightButton';
 import { useInsightModal } from '@/components/insights/useInsightModal';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import TimeBinSlider from './TimeBinSlider';
+import { Switch } from '@/components/ui/switch';
 
 interface UnhealthyBarChartProps {
   data: UnhealthyBar[];
@@ -17,6 +20,18 @@ interface UnhealthyBarChartProps {
   // Chart behavior: per-source keeps Top1/Top3 bins-per-source.
   // Flood mode crops long-tail visually with TopK buttons (Top 5/10/15/All).
   mode?: 'perSource' | 'flood';
+  // Optional: active selected 10-min window label + clear
+  activeWindowLabel?: string;
+  onClearWindow?: () => void;
+  // New: raw window ISO strings so we can show UTC alongside local
+  activeWindowStart?: string;
+  activeWindowEnd?: string;
+  // V2: manual time selection controls
+  onOpenTimePicker?: () => void; // optional external state hook
+  onApplyTimePicker?: (startIso: string, endIso: string) => void;
+  timePickerDomain?: { start: string; end: string; peakStart?: string; peakEnd?: string };
+  // Global control: when provided, chart hides its own toggle and uses this value
+  includeSystem?: boolean;
 }
 
 export function UnhealthyBarChart({ 
@@ -27,15 +42,33 @@ export function UnhealthyBarChart({
   isLoading = false,
   plantId = 'pvcI',
   mode = 'perSource',
+  activeWindowLabel,
+  onClearWindow,
+  activeWindowStart,
+  activeWindowEnd,
+  onOpenTimePicker,
+  onApplyTimePicker,
+  timePickerDomain,
+  includeSystem: includeSystemProp,
 }: UnhealthyBarChartProps) {
   const { onOpen: openInsightModal } = useInsightModal();
   const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
+
+  // Classify meta/system sources (configurable heuristic)
+  const isMetaSource = (name: string) => {
+    const s = String(name || '').trim().toUpperCase();
+    if (!s) return false;
+    return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+  };
+
+  const [includeSystemLocal, setIncludeSystemLocal] = useState(true);
+  const includeSystem = includeSystemProp ?? includeSystemLocal;
   const formatTooltip = (value: number, name: string, props: any) => {
     const { payload } = props;
     if (!payload) return null;
 
-    return [
-      <div key="tooltip" className="bg-popover text-popover-foreground p-3 rounded shadow-lg border">
+    return (
+      <div className="bg-popover text-popover-foreground p-3 rounded shadow-lg border">
         <p className="font-medium text-foreground">{payload.source}</p>
         <p className="text-sm text-muted-foreground">
           Flood count: <span className="font-medium text-foreground">{payload.hits}</span>
@@ -74,10 +107,13 @@ export function UnhealthyBarChart({
           </p>
         )}
         <p className="text-xs text-muted-foreground mt-1">
-          {new Date(payload.bin_start).toLocaleString()} - {new Date(payload.bin_end).toLocaleString()}
+          Local: {new Date(payload.bin_start).toLocaleString()} - {new Date(payload.bin_end).toLocaleString()}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          UTC: {new Date(payload.bin_start).toLocaleString(undefined, { timeZone: 'UTC' })} - {new Date(payload.bin_end).toLocaleString(undefined, { timeZone: 'UTC' })}
         </p>
       </div>
-    ];
+    );
   };
 
   // Declare all hooks BEFORE any early returns to keep hook order stable
@@ -106,21 +142,22 @@ export function UnhealthyBarChart({
     );
   }
 
-  const isEmpty = data.length === 0;
+  const baseData: UnhealthyBar[] = includeSystem ? data : data.filter(d => !isMetaSource(d.source));
+  const isEmpty = baseData.length === 0;
 
   // In flood mode, we visually crop to Top K and optionally aggregate the tail as "Others"
   // to avoid an unprofessional-looking long tail of tiny bars.
 
-  let displayData: UnhealthyBar[] = data;
+  let displayData: UnhealthyBar[] = baseData;
   if (mode === 'flood' && !isEmpty) {
     const k = topK ?? topKDefault;
     if (k !== 'all') {
-      const cropped = data.slice(0, k);
-      const rest = data.slice(k);
+      const cropped = baseData.slice(0, k);
+      const rest = baseData.slice(k);
       const restSum = rest.reduce((acc, r) => acc + Number(r.hits || r.flood_count || 0), 0);
       // Build an aggregated Others bar if tail has any weight
-      if (restSum > 0) {
-        const ref = cropped[0] || data[0];
+      if (restSum >= threshold) {
+        const ref = cropped[0] || baseData[0];
         const nowIso = new Date().toISOString();
         const others = {
           id: `others-${ref?.id || nowIso}`,
@@ -151,28 +188,47 @@ export function UnhealthyBarChart({
   return (
     <Card className="shadow-metric-card bg-dashboard-metric-card-bg">
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-lg font-semibold text-foreground">
-              Unhealthy Bar Chart
-            </CardTitle>
-            <CardDescription>
-              Sources exceeding threshold of {threshold} hits
-            </CardDescription>
-          </div>
-          <div className="flex gap-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg font-semibold text-foreground">
+                Unhealthy Bar Chart
+              </CardTitle>
+              <CardDescription>
+                Sources exceeding threshold of {threshold} hits
+              </CardDescription>
+            </div>
+            <div className="flex gap-2 items-center">
+              {mode === 'flood' && activeWindowLabel && (
+                <div className="flex items-center gap-2">
+                  <div className="text-xs px-2 py-1 rounded bg-muted text-foreground border">
+                    {/* <div>Window: {activeWindowLabel}</div> */}
+                    {activeWindowStart && activeWindowEnd && (
+                      <div className="text-[10px] text-muted-foreground">
+                        Local: {new Date(activeWindowStart).toLocaleString()} — {new Date(activeWindowEnd).toLocaleString()}<br />
+                        UTC: {new Date(activeWindowStart).toLocaleString(undefined, { timeZone: 'UTC' })} — {new Date(activeWindowEnd).toLocaleString(undefined, { timeZone: 'UTC' })}
+                      </div>
+                    )}
+                  </div>
+                  {onClearWindow && (
+                    <Button variant="outline" size="sm" onClick={onClearWindow}>Clear</Button>
+                  )}
+                </div>
+              )}
             {mode === 'perSource' ? (
               <>
+ 
                 <Button
                   variant={topN === 1 ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => onTopNChange(1)}
+                  onClick={() => {
+                    onTopNChange(1);
+                    handleInsightClick();
+                  }}
                 >
                   Top 1
                 </Button>
                 <Button
                   variant={topN === 3 ? 'default' : 'outline'}
-                  size="sm"
                   onClick={() => onTopNChange(3)}
                 >
                   Top 3
@@ -180,6 +236,35 @@ export function UnhealthyBarChart({
               </>
             ) : (
               <>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm">Select Window</Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-auto">
+                    {timePickerDomain ? (
+                      <TimeBinSlider
+                        domainStart={timePickerDomain.start}
+                        domainEnd={timePickerDomain.end}
+                        initialStart={activeWindowStart || timePickerDomain.end}
+                        windowMinutes={10}
+                        stepMinutes={1}
+                        onApply={(s, e) => onApplyTimePicker?.(s, e)}
+                        onCancel={() => { /* popover closes on blur */ }}
+                        peakWindowStart={timePickerDomain.peakStart}
+                        peakWindowEnd={timePickerDomain.peakEnd}
+                        onClear={onClearWindow}
+                      />
+                    ) : (
+                      <div className="text-xs text-muted-foreground">Time picker unavailable (no domain)</div>
+                    )}
+                  </PopoverContent>
+                </Popover>
+                {includeSystemProp === undefined && (
+                  <div className="flex items-center gap-2 pl-2 border-l">
+                    <span className="text-xs text-muted-foreground">Include system</span>
+                    <Switch checked={includeSystemLocal} onCheckedChange={setIncludeSystemLocal} />
+                  </div>
+                )}
                 <Button
                   variant={(topK ?? topKDefault) === 5 ? 'default' : 'outline'}
                   size="sm"
@@ -227,6 +312,7 @@ export function UnhealthyBarChart({
             </div>
           </div>
         ) : (
+          <>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
@@ -286,11 +372,26 @@ export function UnhealthyBarChart({
                   dataKey="hits" 
                   fill={CHART_GREEN_MEDIUM}
                   radius={[4, 4, 0, 0]}
-                  opacity={0.8}
-                />
+                  opacity={0.9}
+                >
+                  {displayData.map((d, i) => (
+                    <Cell key={`cell-${d.id || i}`} fill={isMetaSource(d.source) ? 'hsl(var(--muted))' : CHART_GREEN_MEDIUM} stroke={isMetaSource(d.source) ? 'var(--border)' : undefined} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
+          <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-3 h-3 rounded" style={{background:'hsl(var(--muted))', border:'1px solid var(--border)'}}></span> 
+              System (meta)
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-3 h-3 rounded" style={{background: CHART_GREEN_MEDIUM}}></span> 
+              Operational
+            </div>
+          </div>
+          </>
         )}
       </CardContent>
     </Card>

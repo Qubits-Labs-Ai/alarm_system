@@ -314,153 +314,154 @@ def get_pvcI_unhealthy_sources(
             os.path.dirname(__file__), "PVCI-overall-health", "pvcI-overall-health.json"
         )
 
+        served_from_cache = False
         if os.path.exists(json_file_path):
-            with open(json_file_path, "r", encoding="utf-8") as f:
-                saved_data = json.load(f)
+            try:
+                with open(json_file_path, "r", encoding="utf-8") as f:
+                    saved_data = json.load(f)
 
-            # Prefer real alarm sources from per_source.unhealthy_bin_details
-            per_source = saved_data.get("per_source") or {}
-            if isinstance(per_source, dict) and per_source:
-                # Prepare optional time filters
-                def _parse_iso(ts: str | None):
-                    if not ts:
-                        return None
-                    try:
-                        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    except Exception:
-                        return None
+                # Prefer real alarm sources from per_source.unhealthy_bin_details
+                per_source = saved_data.get("per_source") or {}
+                if isinstance(per_source, dict) and per_source:
+                    # Prepare optional time filters
+                    def _parse_iso(ts: str | None):
+                        if not ts:
+                            return None
+                        try:
+                            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        except Exception:
+                            return None
 
-                start_dt = _parse_iso(start_time)
-                end_dt = _parse_iso(end_time)
+                    start_dt = _parse_iso(start_time)
+                    end_dt = _parse_iso(end_time)
 
-                def _in_range(bstart: datetime, bend: datetime) -> bool:
-                    if start_dt and bend < start_dt:
-                        return False
-                    if end_dt and bstart > end_dt:
-                        return False
-                    return True
+                    def _in_range(bstart: datetime, bend: datetime) -> bool:
+                        # Overlap test: include bin if it intersects [start_dt, end_dt]
+                        if start_dt and bend < start_dt:
+                            return False
+                        if end_dt and bstart > end_dt:
+                            return False
+                        return True
 
-                records = []
-                # Exclude non-alarm/meta sources (e.g., REPORT, $ACTIVITY_...)
-                def _is_valid_alarm_source(name: str) -> bool:
-                    if not name:
-                        return False
-                    name = name.strip()
-                    up = name.upper()
-                    # Exclude only obvious meta like REPORT; allow $ACTIVITY_... as real sources
-                    if up == "REPORT" or "REPORT" in up:
-                        return False
-                    return True
-                for src_name, stats in per_source.items():
-                    if not _is_valid_alarm_source(str(src_name)):
-                        continue
-                    for det in (stats.get("unhealthy_bin_details") or []):
-                        bstart = _parse_iso(det.get("bin_start"))
-                        bend = _parse_iso(det.get("bin_end"))
-                        if not bstart or not bend:
+                    def _is_valid_alarm_source(name: str) -> bool:
+                        # Accept any non-empty source name, including REPORT, to reflect CSV reality
+                        return bool(name and name.strip())
+
+                    records: list[dict] = []
+                    for src_name, stats in per_source.items():
+                        if not _is_valid_alarm_source(str(src_name)):
                             continue
-                        if start_dt or end_dt:
-                            if not _in_range(bstart, bend):
+                        for det in (stats.get("unhealthy_bin_details") or []):
+                            bstart = _parse_iso(det.get("bin_start"))
+                            bend = _parse_iso(det.get("bin_end"))
+                            if not bstart or not bend:
                                 continue
+                            if start_dt or end_dt:
+                                if not _in_range(bstart, bend):
+                                    continue
 
-                        hits = int(det.get("hits", 0) or 0)
+                            hits = int(det.get("hits", 0) or 0)
+                            if hits <= 0:
+                                continue
+                            thr = int(det.get("threshold", alarm_threshold) or alarm_threshold)
+
+                            # Priority per-bin based on how much the threshold is exceeded (severity label)
+                            if hits >= thr + 15:
+                                prio_sev = "High"
+                            elif hits >= thr + 5:
+                                prio_sev = "Medium"
+                            else:
+                                prio_sev = "Low"
+
+                            record = {
+                                "event_time": bstart.isoformat(),
+                                "bin_end": bend.isoformat(),
+                                "source": str(src_name),  # real alarm tag/source
+                                "hits": hits,
+                                "threshold": thr,
+                                "over_by": int(det.get("over_by", max(0, hits - thr))),
+                                "rate_per_min": float(det.get("rate_per_min", round(hits / 10.0, 2))),
+                                # pass-through human fields when present in JSON
+                                "location_tag": det.get("location_tag"),
+                                "condition": det.get("condition", "Alarm Threshold Exceeded"),
+                                "action": det.get("action", "Monitor and Investigate"),
+                                # keep both: raw priority from JSON (if any) and computed severity label
+                                "priority": det.get("priority"),
+                                "priority_severity": prio_sev,
+                                "description": det.get("description", f"Source exceeded {thr} alarms in 10-minute window"),
+                                "value": hits,
+                                "units": "alarms",
+                                # pass-through extras when available in saved JSON
+                                "flood_count": det.get("flood_count"),
+                                "peak_window_start": det.get("peak_window_start"),
+                                "peak_window_end": det.get("peak_window_end"),
+                                "setpoint_value": det.get("setpoint_value"),
+                                "raw_units": det.get("units"),
+                            }
+                            records.append(record)
+
+                    # Sort by hits desc
+                    records.sort(key=lambda r: r["hits"], reverse=True)
+
+                    served_from_cache = True
+                    return {
+                        "count": len(records),
+                        "records": records,
+                        "isHistoricalData": True,
+                        "note": "Unhealthy sources derived from per-source details in saved JSON",
+                    }
+
+                # If per_source missing (older JSON), fall back to file-level aggregation (less accurate)
+                files_data = saved_data.get("files", []) or []
+                if files_data:
+                    records = []
+                    generated_at = saved_data.get("generated_at")
+                    try:
+                        base_time = (
+                            datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+                            if generated_at
+                            else datetime.utcnow()
+                        )
+                    except Exception:
+                        base_time = datetime.utcnow()
+
+                    for idx, file_data in enumerate(files_data):
+                        hits = int(file_data.get("unhealthy_bins", 0) or 0)
                         if hits <= 0:
                             continue
-                        thr = int(det.get("threshold", alarm_threshold) or alarm_threshold)
 
-                        # Priority per-bin based on how much the threshold is exceeded (severity label)
-                        if hits >= thr + 15:
-                            prio_sev = "High"
-                        elif hits >= thr + 5:
-                            prio_sev = "Medium"
-                        else:
-                            prio_sev = "Low"
+                        event_time = base_time + timedelta(minutes=idx * 10)
+                        source_name = str(file_data.get("filename", "")).replace(".csv", "")
 
                         record = {
-                            "event_time": bstart.isoformat(),
-                            "bin_end": bend.isoformat(),
-                            "source": str(src_name),  # real alarm tag/source
+                            "event_time": event_time.isoformat(),
+                            "bin_end": (event_time + timedelta(minutes=10)).isoformat(),
+                            "source": source_name,
                             "hits": hits,
-                            "threshold": thr,
-                            "over_by": int(det.get("over_by", max(0, hits - thr))),
-                            "rate_per_min": float(det.get("rate_per_min", round(hits / 10.0, 2))),
-                            # pass-through human fields when present in JSON
-                            "location_tag": det.get("location_tag"),
-                            "condition": det.get("condition", "Alarm Threshold Exceeded"),
-                            "action": det.get("action", "Monitor and Investigate"),
-                            # keep both: raw priority from JSON (if any) and computed severity label
-                            "priority": det.get("priority"),
-                            "priority_severity": prio_sev,
-                            "description": det.get("description", f"Source exceeded {thr} alarms in 10-minute window"),
+                            "threshold": alarm_threshold,
+                            "over_by": max(0, hits - alarm_threshold),
+                            "rate_per_min": round(hits / 10.0, 2),
+                            "location_tag": "01",
+                            "condition": "Alarm Threshold Exceeded",
+                            "action": "Monitor and Investigate",
+                            "priority": "High" if hits > 100 else ("Medium" if hits > 50 else "Low"),
+                            "description": f"Source exceeded {alarm_threshold} alarms in 10-minute window",
                             "value": hits,
                             "units": "alarms",
-                            # pass-through extras when available in saved JSON
-                            "flood_count": det.get("flood_count"),
-                            "peak_window_start": det.get("peak_window_start"),
-                            "peak_window_end": det.get("peak_window_end"),
-                            "setpoint_value": det.get("setpoint_value"),
-                            "raw_units": det.get("units"),
                         }
                         records.append(record)
 
-                # Sort by hits desc
-                records.sort(key=lambda r: r["hits"], reverse=True)
+                    records.sort(key=lambda r: r["hits"], reverse=True)
 
-                return {
-                    "count": len(records),
-                    "records": records,
-                    "isHistoricalData": True,
-                    "note": "Unhealthy sources derived from per-source details in saved JSON",
-                }
-
-            # If per_source missing (older JSON), fall back to file-level aggregation (less accurate)
-            files_data = saved_data.get("files", []) or []
-            if files_data:
-                records = []
-                generated_at = saved_data.get("generated_at")
-                try:
-                    base_time = (
-                        datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
-                        if generated_at
-                        else datetime.utcnow()
-                    )
-                except Exception:
-                    base_time = datetime.utcnow()
-
-                for idx, file_data in enumerate(files_data):
-                    hits = int(file_data.get("unhealthy_bins", 0) or 0)
-                    if hits <= 0:
-                        continue
-
-                    event_time = base_time + timedelta(minutes=idx * 10)
-                    source_name = str(file_data.get("filename", "")).replace(".csv", "")
-
-                    record = {
-                        "event_time": event_time.isoformat(),
-                        "bin_end": (event_time + timedelta(minutes=10)).isoformat(),
-                        "source": source_name,
-                        "hits": hits,
-                        "threshold": alarm_threshold,
-                        "over_by": max(0, hits - alarm_threshold),
-                        "rate_per_min": round(hits / 10.0, 2),
-                        "location_tag": "01",
-                        "condition": "Alarm Threshold Exceeded",
-                        "action": "Monitor and Investigate",
-                        "priority": "High" if hits > 100 else ("Medium" if hits > 50 else "Low"),
-                        "description": f"Source exceeded {alarm_threshold} alarms in 10-minute window",
-                        "value": hits,
-                        "units": "alarms",
+                    served_from_cache = True
+                    return {
+                        "count": len(records),
+                        "records": records,
+                        "isHistoricalData": True,
+                        "note": "Unhealthy sources synthesized from file-level stats in saved JSON",
                     }
-                    records.append(record)
-
-                records.sort(key=lambda r: r["hits"], reverse=True)
-
-                return {
-                    "count": len(records),
-                    "records": records,
-                    "isHistoricalData": True,
-                    "note": "Unhealthy sources synthesized from file-level stats in saved JSON",
-                }
+            except Exception as ex:
+                logger.warning(f"Failed to serve from saved JSON: {_sanitize_error_message(ex)}. Falling back to compute.")
 
         # 2) Fallback: compute in real-time (may be slower)
         config = HealthConfig(bin_size=bin_size, alarm_threshold=alarm_threshold)

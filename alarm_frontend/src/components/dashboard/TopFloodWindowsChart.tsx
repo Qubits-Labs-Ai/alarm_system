@@ -1,8 +1,10 @@
 import { useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Label, Cell } from 'recharts';
 import { CHART_GREEN_MEDIUM } from '@/theme/chartColors';
+import { InsightButton } from '@/components/insights/InsightButton';
+import { useInsightModal } from '@/components/insights/useInsightModal';
 
 export interface TopFloodWindowRow {
   id: string;
@@ -22,9 +24,13 @@ interface TopFloodWindowsChartProps {
   topK: 5 | 10 | 15;
   onTopKChange: (v: 5 | 10 | 15) => void;
   isLoading?: boolean;
+  // New: click-select a window and highlight it
+  onSelectWindow?: (row: TopFloodWindowRow | null) => void;
+  selectedWindowId?: string;
 }
 
-export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChange, isLoading = false }: TopFloodWindowsChartProps) {
+export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChange, isLoading = false, onSelectWindow, selectedWindowId }: TopFloodWindowsChartProps) {
+  const { onOpen: openInsightModal } = useInsightModal();
   const rows = useMemo(() => {
     const sorted = [...(data || [])].sort((a, b) => b.flood_count - a.flood_count);
     return sorted.slice(0, topK);
@@ -38,6 +44,21 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
     });
   };
 
+  const handleInsightClick = () => {
+    // Prepare concise payload for AI insight generator
+    const payload = rows.map(r => ({
+      id: r.id,
+      label: r.label,
+      start: r.start,
+      end: r.end,
+      flood_count: r.flood_count,
+      rate_per_min: r.rate_per_min,
+      top_sources: Array.isArray(r.top_sources) ? r.top_sources.slice(0, 5) : [],
+    }));
+    const title = `Top Flood Windows — PVC-I — Top ${topK} — Threshold ${threshold}`;
+    openInsightModal(payload, title);
+  };
+
   return (
     <Card className="shadow-metric-card bg-dashboard-metric-card-bg">
       <CardHeader>
@@ -46,10 +67,17 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
             <CardTitle className="text-lg font-semibold text-foreground">Top Flood Windows</CardTitle>
             <CardDescription>Peak 10-minute windows ranked by flood count</CardDescription>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
             <Button variant={topK === 5 ? 'default' : 'outline'} size="sm" onClick={() => onTopKChange(5)}>Top 5</Button>
             <Button variant={topK === 10 ? 'default' : 'outline'} size="sm" onClick={() => onTopKChange(10)}>Top 10</Button>
             <Button variant={topK === 15 ? 'default' : 'outline'} size="sm" onClick={() => onTopKChange(15)}>Top 15</Button>
+            <InsightButton onClick={handleInsightClick} disabled={isLoading || isEmpty} />
+            {selectedWindowId && onSelectWindow && (
+              <Button variant="outline" size="sm" onClick={() => onSelectWindow(null)}>Clear Selection</Button>
+            )}
+            {!selectedWindowId && (
+              <span className="text-xs text-muted-foreground hidden md:inline">Click a bar to filter</span>
+            )}
           </div>
         </div>
       </CardHeader>
@@ -88,7 +116,8 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
                           {typeof row.rate_per_min === 'number' && (
                             <div>Rate: <span className="text-foreground font-medium">{row.rate_per_min.toFixed(1)}</span> / min</div>
                           )}
-                          <div className="text-xs">{new Date(row.start).toLocaleString()} — {new Date(row.end).toLocaleString()}</div>
+                          <div className="text-xs">Local: {new Date(row.start).toLocaleString()} — {new Date(row.end).toLocaleString()}</div>
+                          <div className="text-xs">UTC: {new Date(row.start).toLocaleString(undefined, { timeZone: 'UTC' })} — {new Date(row.end).toLocaleString(undefined, { timeZone: 'UTC' })}</div>
                           {Array.isArray(row.top_sources) && row.top_sources.length > 0 && (
                             <div className="pt-2">
                               <div className="text-xs font-medium text-foreground mb-1">Top sources</div>
@@ -109,7 +138,34 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
                   cursor={{ fill: 'var(--accent)', opacity: 0.08 }}
                 />
                 <ReferenceLine y={threshold} stroke="var(--muted-foreground)" strokeDasharray="5 5" isFront label={{ value: `Threshold (${threshold})`, position: 'right', fill: 'var(--muted-foreground)', fontSize: 12 }} />
-                <Bar dataKey="flood_count" fill={CHART_GREEN_MEDIUM} radius={[4, 4, 0, 0]} opacity={0.85} />
+                <Bar 
+                  dataKey="flood_count" 
+                  fill={CHART_GREEN_MEDIUM} 
+                  radius={[4, 4, 0, 0]} 
+                  opacity={0.85}
+                  className="cursor-pointer"
+                  onClick={(_, index) => {
+                    if (!onSelectWindow) return;
+                    const row = rows[index];
+                    if (!row) return;
+                    // Toggle selection if clicking the same bar again
+                    if (selectedWindowId && row.id === selectedWindowId) {
+                      onSelectWindow(null);
+                    } else {
+                      onSelectWindow(row);
+                    }
+                  }}
+                >
+                  {rows.map((r, i) => (
+                    <Cell 
+                      key={`cell-${r.id}-${i}`} 
+                      fill={CHART_GREEN_MEDIUM}
+                      opacity={selectedWindowId ? (r.id === selectedWindowId ? 1 : 0.6) : 0.85}
+                      stroke={r.id === selectedWindowId ? 'var(--primary)' : undefined}
+                      strokeWidth={r.id === selectedWindowId ? 1 : 0}
+                    />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -118,3 +174,4 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
     </Card>
   );
 }
+

@@ -66,6 +66,19 @@ const CATEGORY_COLORS: Record<PriorityCategory, string> = {
   Other: COLOR_OTHER,
 };
 
+// Rank for tie-breaking on priority (lower is worse)
+function categoryRank(cat: PriorityCategory): number {
+  switch (cat) {
+    case 'Critical': return 0;
+    case 'High': return 1;
+    case 'Medium': return 2;
+    case 'Low': return 3;
+    case 'J-coded': return 4;
+    case 'Not Provided': return 5;
+    default: return 6; // Other
+  }
+}
+
 // Same month/window logic as UnhealthySourcesChart, defaults: Jan 2025, Peak, 1H
 function getWindowMs(tr: string) {
   switch (tr) {
@@ -91,6 +104,7 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string; plantId?: st
   const [timeRange, setTimeRange] = useState<'1h' | '6h' | '24h' | '7d' | 'all'>('all');
   const [selectedCat, setSelectedCat] = useState<PriorityCategory | null>(null);
   const [detailTab, setDetailTab] = useState<'sources' | 'incidents'>('sources');
+  const [aggregation, setAggregation] = useState<'worst' | 'sum'>('worst');
 
   // load months list once
   useEffect(() => {
@@ -223,28 +237,75 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string; plantId?: st
     };
     const recs = data?.records || [];
     let excluded = 0;
-    const processed: Array<any & { __cat: PriorityCategory; __flood: number; __ts?: number } > = [];
-    for (const r of recs) {
-      // Strict flood_count-only weighting
-      const flood = Number(r?.flood_count ?? 0);
-      if (!Number.isFinite(flood) || flood <= 0) {
-        excluded += 1;
-        continue;
+
+    // Normalize helpers
+    const normSource = (v: any) => {
+      let src = String(v || 'Unknown');
+      if (src.includes('.csv')) src = src.replace('.csv', '');
+      if (src.includes('/') || src.includes('\\')) {
+        const parts = src.split(/[\\/]/);
+        src = parts[parts.length - 1];
       }
-      const cat = normalizePriority(r?.priority, r?.priority_severity);
-      sums[cat] += flood;
+      return src;
+    };
+    const tsOf = (r: any) => {
       const ds = r?.peak_window_start || r?.event_time || r?.bin_start || r?.bin_end;
-      const ts = ds ? new Date(ds).getTime() : undefined;
-      processed.push({ ...r, __cat: cat, __flood: flood, __ts: ts });
+      return ds ? new Date(ds).getTime() : undefined;
+    };
+
+    if (aggregation === 'worst') {
+      // Per-source worst window aggregation
+      const bySource = new Map<string, any & { __cat: PriorityCategory; __flood: number; __ts?: number }>();
+      for (const r of recs) {
+        const flood = Number(r?.flood_count ?? 0);
+        if (!Number.isFinite(flood) || flood <= 0) { excluded += 1; continue; }
+        const src = normSource(r?.source);
+        const ts = tsOf(r);
+        const cat = normalizePriority(r?.priority, (r as any)?.priority_severity);
+        const current = { ...r, source: src, __cat: cat, __flood: flood, __ts: ts } as any;
+        const prev = bySource.get(src);
+        if (!prev) {
+          bySource.set(src, current);
+        } else if (current.__flood > prev.__flood) {
+          bySource.set(src, current);
+        } else if (current.__flood === prev.__flood) {
+          const cr = categoryRank(current.__cat);
+          const pr = categoryRank(prev.__cat);
+          if (cr < pr) bySource.set(src, current);
+          else if (cr === pr && (current.__ts || 0) > (prev.__ts || 0)) bySource.set(src, current);
+        }
+      }
+      const processed = Array.from(bySource.values());
+      for (const rec of processed) sums[rec.__cat] += rec.__flood;
+      const series = CATEGORY_ORDER.map((cat) => ({ name: cat, value: sums[cat], fill: CATEGORY_COLORS[cat] })).filter(s => s.value > 0);
+      const total = Object.values(sums).reduce((a, b) => a + b, 0);
+      return { series, totalFlood: total, excludedCount: excluded, processed };
+    } else {
+      // Sum per source across window
+      const bySource = new Map<string, { source: string; total: number; worstCat: PriorityCategory; last?: number }>();
+      for (const r of recs) {
+        const flood = Number(r?.flood_count ?? 0);
+        if (!Number.isFinite(flood) || flood <= 0) { excluded += 1; continue; }
+        const src = normSource(r?.source);
+        const ts = tsOf(r);
+        const cat = normalizePriority(r?.priority, (r as any)?.priority_severity);
+        const prev = bySource.get(src);
+        if (!prev) {
+          bySource.set(src, { source: src, total: flood, worstCat: cat, last: ts });
+        } else {
+          prev.total += flood;
+          // choose worst category seen
+          if (categoryRank(cat) < categoryRank(prev.worstCat)) prev.worstCat = cat;
+          if (ts && (!prev.last || ts > prev.last)) prev.last = ts;
+        }
+      }
+      const processed = Array.from(bySource.values()).map(v => ({ source: v.source, __flood: v.total, __cat: v.worstCat, __ts: v.last } as any));
+      for (const rec of processed) sums[rec.__cat] += rec.__flood;
+      const series = CATEGORY_ORDER.map((cat) => ({ name: cat, value: sums[cat], fill: CATEGORY_COLORS[cat] })).filter(s => s.value > 0);
+      const total = Object.values(sums).reduce((a, b) => a + b, 0);
+      return { series, totalFlood: total, excludedCount: excluded, processed };
     }
-    const series = CATEGORY_ORDER.map((cat) => ({
-      name: cat,
-      value: sums[cat],
-      fill: CATEGORY_COLORS[cat],
-    })).filter(s => s.value > 0);
-    const total = Object.values(sums).reduce((a, b) => a + b, 0);
-    return { series, totalFlood: total, excludedCount: excluded, processed };
-  }, [data]);
+  }, [data, aggregation]);
 
   // Derived for selected category
   const selectedRecords = useMemo(() => {
@@ -325,7 +386,9 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string; plantId?: st
                 Priority Breakdown
               </CardTitle>
               <CardDescription>
-                Donut weighted by flood count • Center shows total alarms in window
+                {aggregation === 'worst'
+                  ? 'Per-source worst window (flood_count) • Center shows sum of worst-window floods'
+                  : 'Per-source sum of floods across window (flood_count) • Center shows sum across sources'}
               </CardDescription>
             </div>
           <div className="flex flex-wrap items-center gap-2 sm:gap-3 justify-end">
@@ -361,6 +424,16 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string; plantId?: st
                 <SelectItem value="24h">24H</SelectItem>
                 <SelectItem value="7d">7D</SelectItem>
                 <SelectItem value="all">All</SelectItem>
+              </SelectContent>
+            </Select>
+            {/* Aggregation selector */}
+            <Select value={aggregation} onValueChange={(v) => setAggregation(v as any)}>
+              <SelectTrigger className="w-44">
+                <SelectValue placeholder="Aggregation" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="worst">Worst Window</SelectItem>
+                <SelectItem value="sum">Sum per Source</SelectItem>
               </SelectContent>
             </Select>
             <InsightButton onClick={handleInsightClick} disabled={loading || (selectedCat ? selectedRecords.length === 0 : processed.length === 0)} />
@@ -427,7 +500,9 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string; plantId?: st
             <div className="space-y-5">
               <div className="text-sm text-muted-foreground bg-accent p-3 rounded-lg flex items-center gap-2">
                 <Filter className="h-4 w-4" />
-                Weighted by flood_count only; strict raw DCS priority codes (no severity fallback)
+                {aggregation === 'worst'
+                  ? 'Aggregated per source by worst window • Weighted by flood_count only • Strict raw DCS priority codes (no severity fallback)'
+                  : 'Aggregated per source by sum across window • Weighted by flood_count only • Strict raw DCS priority codes (no severity fallback)'}
               </div>
               <div className="text-xs text-muted-foreground">
                 Excluded {excludedCount?.toLocaleString?.() || 0} records without a positive flood_count
