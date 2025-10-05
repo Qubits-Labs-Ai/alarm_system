@@ -4,6 +4,10 @@
 
 /* Professional Plant Health Dashboard Design System - Green & Neutral Theme */
 
+html {
+  scroll-behavior: smooth;
+}
+
 @layer base {
   :root {
     /* Light Mode - Greens and Light Neutrals */

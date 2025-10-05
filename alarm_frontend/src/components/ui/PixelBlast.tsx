@@ -27,6 +27,7 @@ type PixelBlastProps = {
   transparent?: boolean;
   edgeFade?: number;
   noiseAmount?: number;
+  lineCount?: number;
 };
 
 const createTouchTexture = () => {
@@ -180,6 +181,7 @@ uniform float uRippleSpeed;
 uniform float uRippleThickness;
 uniform float uRippleIntensity;
 uniform float uEdgeFade;
+uniform float uLineCount;
 
 uniform int   uShapeType;
 const int SHAPE_SQUARE   = 0;
@@ -228,7 +230,15 @@ float vnoise(vec3 p){
   return mix(y0, y1, w.z) * 2.0 - 1.0;
 }
 
-float fbm2(vec2 uv, float t){
+float fbm2(vec2 uv, float t) {
+  if (uLineCount > 0.0) {
+    uv.x += uv.y;
+    float f = 0.0;
+    uv = fract(uv * uLineCount) - 0.5;
+    f += smoothstep(0.2, 0.21, abs(uv.x));
+    f += sin(uv.x * 10.0 + t) * 0.1;
+    return f;
+  }
   vec3 p = vec3(uv * uScale, t);
   float amp = 1.0;
   float freq = 1.0;
@@ -348,7 +358,8 @@ const PixelBlast: React.FC<PixelBlastProps> = ({
   speed = 0.5,
   transparent = true,
   edgeFade = 0.5,
-  noiseAmount = 0
+  noiseAmount = 0,
+  lineCount = 0
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const visibilityRef = useRef({ visible: true });
@@ -444,7 +455,8 @@ const PixelBlast: React.FC<PixelBlastProps> = ({
         uRippleSpeed: { value: rippleSpeed },
         uRippleThickness: { value: rippleThickness },
         uRippleIntensity: { value: rippleIntensityScale },
-        uEdgeFade: { value: edgeFade }
+        uEdgeFade: { value: edgeFade },
+      uLineCount: { value: lineCount }
       };
       const scene = new THREE.Scene();
       const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -603,6 +615,7 @@ const PixelBlast: React.FC<PixelBlastProps> = ({
       t.uniforms.uRippleThickness.value = rippleThickness;
       t.uniforms.uRippleSpeed.value = rippleSpeed;
       t.uniforms.uEdgeFade.value = edgeFade;
+      t.uniforms.uLineCount.value = lineCount;
       if (transparent) t.renderer.setClearAlpha(0);
       else t.renderer.setClearColor(0x000000, 1);
       if (t.liquidEffect) {
@@ -647,7 +660,8 @@ const PixelBlast: React.FC<PixelBlastProps> = ({
     autoPauseOffscreen,
     variant,
     color,
-    speed
+    speed,
+    lineCount
   ]);
 
   return (

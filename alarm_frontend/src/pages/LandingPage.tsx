@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { usePlantHealth } from '@/hooks/usePlantHealth';
 import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
 import engroLogo from '@/assets/engro-logo.png';
+import AnimatedChartDisplay from '@/components/landing/AnimatedChartDisplay';
 
 // Motion-aware component for animations
 const MotionDiv = ({ children, delay = 0 }: { children: React.ReactNode, delay?: number }) => (
@@ -77,9 +78,9 @@ const LandingPage = () => {
             </div>
           </div>
           <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
-            <a href="#features" className="hover:text-foreground transition-colors">Features</a>
-            <a href="#snapshot" className="hover:text-foreground transition-colors">Live Snapshot</a>
-            <a href="#benefits" className="hover:text-foreground transition-colors">Benefits</a>
+            <a href="#features" onClick={(e) => { e.preventDefault(); document.querySelector('#features')?.scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-foreground transition-colors">Features</a>
+            <a href="#snapshot" onClick={(e) => { e.preventDefault(); document.querySelector('#snapshot')?.scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-foreground transition-colors">Live Snapshot</a>
+            <a href="#benefits" onClick={(e) => { e.preventDefault(); document.querySelector('#benefits')?.scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-foreground transition-colors">Benefits</a>
           </nav>
           <div className="flex items-center gap-3">
             <ThemeToggle />
@@ -90,11 +91,11 @@ const LandingPage = () => {
         </div>
       </header>
 
-      <main className="relative z-10">
+      <main className="relative z-10 ">
         {/* Hero Section */}
-        <section className="relative min-h-[85vh] md:min-h-[calc(100svh-72px)] overflow-hidden">
+        <section className="relative h-screen flex items-center justify-center overflow-hidden ">
           {/* Interactive background */}
-          <div className="absolute inset-0 z-0">
+          <div className="absolute h-screen overflow-hidden inset-0 z-0">
             <PixelBlast
               className="absolute inset-0"
               variant="circle"
@@ -116,12 +117,23 @@ const LandingPage = () => {
               transparent
               noiseAmount={0.06}
             />
+            <PixelBlast
+              className="absolute inset-0"
+              variant="square"
+              pixelSize={1}
+              color="#888888"
+              patternScale={1}
+              patternDensity={0.2} // Lower density for subtlety
+              speed={0.1}
+              lineCount={2.0} // Render 2 diagonal lines
+              transparent
+            />
             {/* Subtle gradient vignette for readability */}
             <div className="absolute inset-0 bg-gradient-to-b from-background/40 via-background/10 to-background/60" />
           </div>
           {/* Content */}
-          <div className="container mx-auto px-6 h-full relative z-10">
-            <div className="h-full flex flex-col items-center justify-center text-center py-24">
+          <div className="container mx-auto px-6 relative z-10">
+            <div className="flex flex-col items-center text-center">
               <MotionDiv>
                 <Badge variant="outline" className="mb-6 border-primary/30 bg-primary/10 text-primary py-1 px-4 backdrop-blur-sm">
                   <Sparkles className="h-4 w-4 mr-2 text-primary" />
@@ -129,7 +141,7 @@ const LandingPage = () => {
                 </Badge>
               </MotionDiv>
               <MotionDiv delay={150}>
-                <h1 className="text-4xl md:text-6xl lg:text-7xl font-extrabold mb-6 bg-clip-text text-transparent bg-gradient-to-r from-foreground to-muted-foreground leading-tight">
+                <h1 className="text-4xl md:text-6xl lg:text-7xl font-extrabold pb-6 mb-6 bg-clip-text text-transparent bg-gradient-to-r from-foreground to-muted-foreground leading-tight">
                   Transform Alarm Data into Actionable Intelligence
                 </h1>
               </MotionDiv>
@@ -254,11 +266,7 @@ const LandingPage = () => {
                 <div className="grid lg:grid-cols-2 gap-16 items-center">
                     <div className="relative">
                         <MotionDiv>
-                            <img 
-                                src="https://images.unsplash.com/photo-1551288049-bebda4e38f71?q=80&w=2070&auto=format&fit=crop" 
-                                alt="Dashboard analytics" 
-                                className="rounded-xl shadow-2xl shadow-primary/10 border-2 border-border"
-                            />
+                           <AnimatedChartDisplay />
                         </MotionDiv>
                     </div>
                     <div>
