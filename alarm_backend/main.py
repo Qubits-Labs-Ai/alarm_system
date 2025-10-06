@@ -7,7 +7,7 @@ from pvcI_health_monitor import (
     HealthConfig,
 )
 from pvcI_health_monitor import compute_pvcI_unhealthy_sources
-from isa18_flood_monitor import compute_isa18_flood_summary
+from isa18_flood_monitor import compute_isa18_flood_summary, get_window_source_details
 from fastapi.responses import ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from config import PVCI_FOLDER, PVCII_FOLDER
@@ -543,6 +543,29 @@ def regenerate_pvcI_health_cache(
     except Exception as e:
         logger.error(f"Error regenerating health cache: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to regenerate cache: {str(e)}")
+
+
+# New: ISA event-based per-source counts for any 10-min window
+@app.get("/pvcI-health/window-source-details", response_class=ORJSONResponse)
+def pvcI_window_source_details(
+    start_time: str,
+    end_time: str,
+    top_n: int | None = 100,
+):
+    """Return per-source/location/condition counts within the provided time window.
+
+    This uses raw ISA event rows and aligns with Top Flood Windows/Unhealthy Bar Chart numbers.
+    """
+    try:
+        if not start_time or not end_time:
+            raise HTTPException(status_code=400, detail="start_time and end_time are required ISO strings")
+        result = get_window_source_details(PVCI_FOLDER, start_time, end_time, top_n=top_n)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"window-source-details error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # -------------------- AI Insights Endpoint --------------------
@@ -1273,6 +1296,10 @@ def get_pvci_isa_flood_summary(
             except Exception:
                 saved_data = None
 
+        # If caller explicitly asks for raw, return the saved JSON as-is (when available)
+        if raw and isinstance(saved_data, dict):
+            return saved_data
+
         def _params_match(saved: dict, cur: dict) -> bool:
             try:
                 sp = saved.get("params") or {}
@@ -1294,8 +1321,6 @@ def get_pvci_isa_flood_summary(
                 return False
 
         if isinstance(saved_data, dict) and _params_match(saved_data, current_params):
-            if raw:
-                return saved_data
             return saved_data
 
         # Compute fresh

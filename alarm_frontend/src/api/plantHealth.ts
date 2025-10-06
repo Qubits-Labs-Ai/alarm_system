@@ -12,6 +12,25 @@ function now() {
   return Date.now();
 }
 
+// ISA event-based per-source/location/condition counts for a given time window (PVC-I)
+export async function fetchPvciWindowSourceDetails(
+  startTime: string,
+  endTime: string,
+  topN: number = 100
+) {
+  try {
+    const url = new URL(`${API_BASE_URL}/pvcI-health/window-source-details`);
+    url.searchParams.set('start_time', startTime);
+    url.searchParams.set('end_time', endTime);
+    if (topN) url.searchParams.set('top_n', String(topN));
+    // Window-specific queries should not be cached too long; 5 minutes is fine
+    return await fetchWithCache(url.toString(), 5 * 60 * 1000);
+  } catch (e) {
+    console.warn('Failed to fetch window source details:', e);
+    return { top_sources: [], top_location_tags: [], per_source_detailed: [] };
+  }
+}
+
 function getStorageKey(key: string) {
   return `${STORAGE_PREFIX}${key}`;
 }
@@ -123,6 +142,7 @@ export async function fetchPvciIsaFloodSummary(params?: {
   include_alarm_details?: boolean;
   top_n?: number;
   max_windows?: number;
+  raw?: boolean;
 }) {
   const {
     window_minutes = 10,
@@ -134,6 +154,7 @@ export async function fetchPvciIsaFloodSummary(params?: {
     include_alarm_details = true,
     top_n = 10,
     max_windows = 10,
+    raw = true,
   } = params || {};
 
   const url = new URL(`${API_BASE_URL}/pvcI-health/isa-flood-summary`);
@@ -146,6 +167,7 @@ export async function fetchPvciIsaFloodSummary(params?: {
   url.searchParams.set('max_windows', String(max_windows));
   if (start_time) url.searchParams.set('start_time', start_time);
   if (end_time) url.searchParams.set('end_time', end_time);
+  if (raw) url.searchParams.set('raw', 'true');
 
   try {
     // ISA summary changes infrequently; cache for 30 minutes

@@ -22,7 +22,7 @@ import {
   CHART_WARNING,
   getGreenPalette,
 } from '@/theme/chartColors';
-import { fetchUnhealthySources, fetchPvciIsaFloodSummary } from '@/api/plantHealth';
+import { fetchUnhealthySources, fetchPvciIsaFloodSummary, fetchPvciWindowSourceDetails } from '@/api/plantHealth';
 import { InsightButton } from '@/components/insights/InsightButton';
 import { useInsightModal } from '@/components/insights/useInsightModal';
 
@@ -138,7 +138,57 @@ const ConditionDistributionByLocationPlantWide: React.FC<Props> = ({
       const win = await resolveWindow();
       let res: any = null;
       if (win?.start && win?.end) {
-        res = await fetchUnhealthySources(win.start, win.end, '10T', 10, plantId);
+        // Use ISA event-based counts for exact window to align with Top Bars
+        const details = await fetchPvciWindowSourceDetails(win.start, win.end, 500);
+        const detailed: Array<{ source: string; location_tag?: string; condition?: string; count: number }>
+          = Array.isArray(details?.per_source_detailed) ? details.per_source_detailed : [];
+        // Transform to records resembling unhealthy endpoint for downstream aggregation
+        let recs: UnhealthyRecord[] = detailed.map((d) => ({
+          event_time: win.start,
+          bin_end: win.end,
+          source: String(d.source || 'Unknown'),
+          hits: Number(d.count || 0),
+          threshold: 10,
+          over_by: Math.max(0, Number(d.count || 0) - 10),
+          rate_per_min: Number(d.count || 0) / 10,
+          location_tag: d.location_tag,
+          condition: d.condition || 'Not Provided',
+          flood_count: Number(d.count || 0),
+        }));
+
+        // IncludeSystem filter
+        if (!includeSystem) recs = recs.filter(r => !isMetaSource(r.source));
+        // Unhealthy only rule
+        recs = recs.filter(r => Number((r as any).flood_count ?? r.hits ?? 0) >= 10);
+
+        // Enrich missing location tags using unhealthy-sources (JSON-backed) for same window
+        if (recs.some(r => !r.location_tag)) {
+          try {
+            const enrichRes = await fetchUnhealthySources(win.start, win.end, '10T', 10, plantId);
+            const enrichList: any[] = Array.isArray(enrichRes?.records) ? enrichRes.records : [];
+            const srcToLoc = new Map<string, string>();
+            for (const r of enrichList) {
+              const src = String(r?.source || '').trim();
+              const loc = String(r?.location_tag || '').trim();
+              if (src && loc && loc.toLowerCase() !== 'not provided') {
+                if (!srcToLoc.has(src)) srcToLoc.set(src, loc);
+              }
+            }
+            recs = recs.map(it => (
+              !it.location_tag || it.location_tag.trim() === '' || it.location_tag.toLowerCase() === 'not provided'
+                ? { ...it, location_tag: srcToLoc.get(String(it.source)) || it.location_tag }
+                : it
+            ));
+          } catch (e) {
+            // best-effort enrichment only; ignore errors
+          }
+        }
+
+        if (myReq === reqRef.current) {
+          setRecords(recs);
+          setActiveWindow(win || null);
+        }
+        return; // done
       } else {
         // Absolute fallback: load all cached records then we will still aggregate (rare path)
         res = await fetchUnhealthySources(undefined, undefined, '10T', 10, plantId);
@@ -301,17 +351,30 @@ const ConditionDistributionByLocationPlantWide: React.FC<Props> = ({
 
   const handleInsightClick = () => {
     try {
-      const payload = (chartData || []).map((row: any) => {
-        const conditions = (conditionKeys || []).filter(k => typeof row[k] === 'number' && row[k] > 0).map((k) => ({
-          condition: k,
-          count: row[k],
-          top_sources: (row.__byCondTopSources?.[k] || []).slice(0, 5),
-        }));
-        return {
-          location: row.location,
-          total: row.total,
-          conditions,
-        };
+      // Send one record per visible bar segment so backend sees `source` + `flood_count`
+      const payload: Array<{
+        source: string;
+        location_tag: string;
+        condition: string;
+        flood_count: number;
+        total_at_location?: number;
+        top_sources?: Array<{ name: string; count: number }>;
+      }> = [];
+
+      (chartData || []).forEach((row: any) => {
+        (conditionKeys || []).forEach((k: string) => {
+          const v = row[k];
+          if (typeof v === 'number' && v > 0) {
+            payload.push({
+              source: String(row.location),
+              location_tag: String(row.location),
+              condition: k,
+              flood_count: v,
+              total_at_location: row.total,
+              top_sources: (row.__byCondTopSources?.[k] || []).slice(0, 5),
+            });
+          }
+        });
       });
       const titleParts = [
         'PVC-I — Condition Distribution by Location',
@@ -481,6 +544,8 @@ const ConditionDistributionByLocationPlantWide: React.FC<Props> = ({
           <ul className="text-sm text-muted-foreground list-disc ml-5">
             <li>Bars rank locations by unhealthy flood count within the selected 10‑minute window.</li>
             <li>Stacks are ISA‑18.2 conditions; use legend to focus on specific patterns.</li>
+            <li>Legend/stack labels (e.g., <span className="text-foreground">Not Provided</span>, CHANGE, PVLOW) are <span className="text-foreground font-medium">condition</span> names.</li>
+            <li><span className="text-foreground">Unknown Location</span> appears when events have no Location Tag in this window.</li>
             <li>System/meta tags are excluded when the dashboard toggle is off.</li>
           </ul>
         </div>

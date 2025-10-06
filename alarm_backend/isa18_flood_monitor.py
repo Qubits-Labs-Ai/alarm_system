@@ -76,18 +76,66 @@ def _read_event_times_for_file(file_path: str) -> List[datetime]:
 
 
 def _read_rows_for_file(file_path: str) -> pd.DataFrame:
-    """Read minimal columns needed for operator assignment and time series."""
+    """Read lightweight columns needed for assignment and window aggregations.
+
+    Columns ensured:
+      - Event Time (UTC-aware datetime)
+      - Location Tag (string)
+      - Source (string)
+      - Condition (string; optional in CSV, synthesized when missing)
+    """
     df = read_csv_smart(file_path, DEFAULT_CONFIG)
     if df is None or df.empty:
-        return pd.DataFrame(columns=["Event Time", "Location Tag", "Source"])
+        return pd.DataFrame(columns=["Event Time", "Location Tag", "Source", "Condition"])
     # Ensure columns exist
-    for col in ("Event Time", "Location Tag", "Source"):
+    for col in ("Event Time", "Location Tag", "Source", "Condition"):
         if col not in df.columns:
             df[col] = ""
     # Normalize types
-    out = df[["Event Time", "Location Tag", "Source"]].copy()
+    out = df[["Event Time", "Location Tag", "Source", "Condition"]].copy()
     out["Event Time"] = pd.to_datetime(out["Event Time"], errors="coerce", utc=True)
     out = out.dropna(subset=["Event Time"])  # keep only valid timestamps
+    # Normalize text columns to strings
+    for c in ("Location Tag", "Source", "Condition"):
+        out[c] = out[c].astype(str)
+
+    # Heuristic: infer missing/blank Condition from Source/Location tokens
+    try:
+        def _infer_cond(row) -> str:
+            cond = (row.get("Condition") or "").strip()
+            if cond:
+                return cond
+            src = str(row.get("Source") or "").upper()
+            loc = str(row.get("Location Tag") or "").upper()
+            # Direct patterns from common plant tags
+            if "PVLOW" in src or "PV_LOW" in src or "PV-LOW" in src:
+                return "PVLOW"
+            if "PVHIGH" in src or "PV_HIGH" in src or "PV-HIGH" in src:
+                return "PVHIGH"
+            if src.startswith("REPORT") or "CHANGE" in src:
+                return "CHANGE"
+            if "RECIPE" in src:
+                # Most JSONs refer to recipe related as RecipeRemoval
+                return "RecipeRemoval"
+            if src.startswith("EVENT") or "EVENT_" in src:
+                return "EVENT"
+            if src.startswith("OP_") or src.startswith("OP-"):
+                return "OPERATION"
+            # Fallbacks using location tag patterns
+            if "PVLOW" in loc:
+                return "PVLOW"
+            if "PVHIGH" in loc:
+                return "PVHIGH"
+            return ""  # unknown
+
+        # Apply row-wise; acceptable as we only process a few columns
+        inferred = out.apply(_infer_cond, axis=1)
+        # Only replace blanks
+        mask_blank = out["Condition"].str.strip() == ""
+        out.loc[mask_blank, "Condition"] = inferred[mask_blank]
+    except Exception:
+        # Best-effort only; leave as-is on any error
+        pass
     return out
 
 
@@ -435,6 +483,8 @@ def _aggregate_alarm_details_for_range(
     try:
         src_counts: Dict[str, int] = {}
         tag_counts: Dict[str, int] = {}
+        # Detailed per-row aggregation: (source, location_tag, condition) -> count
+        triple_counts: Dict[tuple, int] = {}
         sample: List[Dict[str, Any]] = []
 
         for fp in files:
@@ -444,7 +494,7 @@ def _aggregate_alarm_details_for_range(
             # Filter by time range
             ts = df["Event Time"]
             mask = (ts >= start_dt) & (ts <= end_dt)
-            sub = df.loc[mask, ["Event Time", "Location Tag", "Source"]]
+            sub = df.loc[mask, ["Event Time", "Location Tag", "Source", "Condition"]]
             if sub.empty:
                 continue
 
@@ -454,6 +504,14 @@ def _aggregate_alarm_details_for_range(
                 src_counts[val] = src_counts.get(val, 0) + int(cnt)
             for val, cnt in sub["Location Tag"].astype(str).value_counts().items():
                 tag_counts[val] = tag_counts.get(val, 0) + int(cnt)
+
+            # Per-row triple aggregation for detailed view
+            for _, r in sub.iterrows():
+                s = str(r.get("Source", "") or "")
+                lt = str(r.get("Location Tag", "") or "")
+                cond = str(r.get("Condition", "") or "")
+                key = (s, lt, cond)
+                triple_counts[key] = triple_counts.get(key, 0) + 1
 
             if include_sample and sample_max and sample_max > 0 and len(sample) < sample_max:
                 # Append up to sample_max items
@@ -487,6 +545,19 @@ def _aggregate_alarm_details_for_range(
             "top_sources": top_sources,
             "top_location_tags": top_tags,
         }
+        # Attach detailed per-source/location/condition counts for consumers that need exact window stats
+        if triple_counts:
+            per_source_detailed = [
+                {
+                    "source": k[0],
+                    "location_tag": k[1],
+                    "condition": k[2] if (k[2] or "").strip() else None,
+                    "count": int(v),
+                }
+                for k, v in triple_counts.items()
+            ]
+            per_source_detailed.sort(key=lambda x: (-x["count"], x["source"]))
+            out["per_source_detailed"] = per_source_detailed
         if include_sample and sample:
             out["events_sample"] = sample
         return out
@@ -754,4 +825,59 @@ def compute_isa18_flood_summary(
             },
             "by_day": [],
             "errors": [str(e)],
+        }
+
+
+# Public helper: return per-source/location/condition counts for an arbitrary window
+def get_window_source_details(
+    folder_path: str,
+    start_time: str,
+    end_time: str,
+    *,
+    top_n: int | None = None,
+    include_sample: bool = False,
+    sample_max: int = 0,
+) -> Dict[str, Any]:
+    """Return ISA event-based counts within [start_time, end_time].
+
+    Response shape:
+      {
+        start: ISO,
+        end: ISO,
+        top_sources: [{ source, count }...],
+        top_location_tags: [{ location_tag, count }...],
+        per_source_detailed: [ { source, location_tag, condition, count } ... ]
+      }
+    """
+    try:
+        sdt = _parse_user_iso(start_time)
+        edt = _parse_user_iso(end_time)
+        if not sdt or not edt:
+            raise ValueError("Invalid start_time or end_time")
+        if edt < sdt:
+            sdt, edt = edt, sdt
+
+        files = _list_csv_files(folder_path)
+        out = _aggregate_alarm_details_for_range(
+            files,
+            sdt,
+            edt,
+            top_n=top_n if isinstance(top_n, int) else 10,
+            include_sample=include_sample,
+            sample_max=sample_max,
+        )
+        return {
+            "start": _to_utc_iso(sdt),
+            "end": _to_utc_iso(edt),
+            **out,
+        }
+    except Exception as e:
+        logger.error(f"window-source-details failed: {e}")
+        return {
+            "start": _to_utc_iso(_parse_user_iso(start_time)),
+            "end": _to_utc_iso(_parse_user_iso(end_time)),
+            "top_sources": [],
+            "top_location_tags": [],
+            "per_source_detailed": [],
+            "error": str(e),
         }
