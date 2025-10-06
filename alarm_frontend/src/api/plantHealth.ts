@@ -2,6 +2,103 @@ import { PlantHealthResponse, Plant } from '@/types/dashboard';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
+// Simple request cache: in-memory + localStorage with TTL and in-flight de-duplication
+type CacheEntry<T = any> = { ts: number; data: T };
+const memCache = new Map<string, CacheEntry>();
+const inflight = new Map<string, Promise<any>>();
+const STORAGE_PREFIX = 'ams.apiCache.v1:';
+
+function now() {
+  return Date.now();
+}
+
+function getStorageKey(key: string) {
+  return `${STORAGE_PREFIX}${key}`;
+}
+
+function readLocal<T>(key: string): CacheEntry<T> | null {
+  try {
+    const raw = localStorage.getItem(getStorageKey(key));
+    if (!raw) return null;
+    return JSON.parse(raw) as CacheEntry<T>;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocal<T>(key: string, value: CacheEntry<T>) {
+  try {
+    localStorage.setItem(getStorageKey(key), JSON.stringify(value));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+async function fetchWithCache<T = any>(url: string, ttlMs = 15 * 60 * 1000): Promise<T> {
+  const key = url;
+
+  // Serve from memory cache if fresh
+  const m = memCache.get(key);
+  if (m && now() - m.ts < ttlMs) {
+    return m.data as T;
+  }
+
+  // Serve from localStorage if fresh
+  const s = readLocal<T>(key);
+  if (s && now() - s.ts < ttlMs) {
+    memCache.set(key, s);
+    return s.data as T;
+  }
+
+  // De-duplicate concurrent requests
+  if (inflight.has(key)) {
+    return inflight.get(key)! as Promise<T>;
+  }
+
+  const p = (async () => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as T;
+    const entry: CacheEntry<T> = { ts: now(), data };
+    memCache.set(key, entry);
+    writeLocal<T>(key, entry);
+    return data;
+  })().finally(() => inflight.delete(key));
+
+  inflight.set(key, p);
+  return p;
+}
+
+/**
+ * Clears the in-memory and localStorage API cache. Optionally clears only
+ * entries whose keys start with the provided prefix (URL prefix).
+ */
+export function clearApiCache(prefix?: string) {
+  // memory
+  if (!prefix) {
+    memCache.clear();
+  } else {
+    for (const k of Array.from(memCache.keys())) {
+      if (k.startsWith(prefix)) memCache.delete(k);
+    }
+  }
+  // localStorage
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      const isOurKey = k.startsWith(STORAGE_PREFIX);
+      if (!isOurKey) continue;
+      if (!prefix) keysToRemove.push(k);
+      else if (k.replace(STORAGE_PREFIX, '').startsWith(prefix)) keysToRemove.push(k);
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    // ignore
+  }
+}
+
 // Map backend plant_code (e.g., "PVC-I") to frontend plant id used by health endpoints (e.g., "pvcI")
 const PLANT_ID_MAP: Record<string, string> = {
   'PVC-I': 'pvcI',
@@ -51,9 +148,8 @@ export async function fetchPvciIsaFloodSummary(params?: {
   if (end_time) url.searchParams.set('end_time', end_time);
 
   try {
-    const res = await fetch(url.toString());
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    // ISA summary changes infrequently; cache for 30 minutes
+    return await fetchWithCache(url.toString(), 30 * 60 * 1000);
   } catch (e) {
     console.warn('Failed to fetch ISA flood summary:', e);
     return null;
@@ -62,11 +158,7 @@ export async function fetchPvciIsaFloodSummary(params?: {
 
 export async function fetchPlants(): Promise<Plant[]> {
   try {
-    const res = await fetch(`${API_BASE_URL}/plants`);
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-    const data = await res.json();
+    const data = await fetchWithCache(`${API_BASE_URL}/plants`, 60 * 60 * 1000);
     const items: Plant[] = (data?.plants || []).map((p: any) => {
       const id = normalizePlantId(p.plant_code);
       // Mark all plants as active since we now have mock data for all
@@ -103,11 +195,9 @@ export async function fetchUnhealthySources(
     if (startTime) url.searchParams.set('start_time', startTime);
     if (endTime) url.searchParams.set('end_time', endTime);
 
-    const response = await fetch(url.toString());
-    if (!response.ok) {
-      return { count: 0, records: [] };
-    }
-    return await response.json();
+    // Filtered datasets can still be cached briefly; keep 15 minutes default
+    const data = await fetchWithCache(url.toString(), 15 * 60 * 1000);
+    return data;
   } catch (error) {
     console.warn('Unhealthy sources request failed:', error);
     return { count: 0, records: [] };
@@ -125,12 +215,8 @@ export async function fetchPlantHealth(
   url.searchParams.set('alarm_threshold', alarmThreshold.toString());
 
   try {
-    const response = await fetch(url.toString());
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const data = await response.json();
+    // Backend already serves pre-saved JSON; cache for 30 minutes
+    const data = await fetchWithCache(url.toString(), 30 * 60 * 1000);
     const overall = data.overall || {};
     const totals = overall.totals || {};
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,7 @@ import {
 } from 'recharts';
 import { CHART_GREEN_DARK, CHART_GREEN_LIGHT, CHART_GREEN_MEDIUM, CHART_GREEN_PALE, priorityToGreen } from '@/theme/chartColors';
 import { Switch } from '@/components/ui/switch';
+import { fetchUnhealthySources as fetchAPI } from '@/api/plantHealth';
 
 interface UnhealthyRecord {
   event_time: string;
@@ -59,13 +60,15 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
   const [error, setError] = useState<string | null>(null);
   const [chartType, setChartType] = useState<'timeline' | 'bar'>('timeline');
   const [selectedPriority, setSelectedPriority] = useState<string>('all');
-  const [timeRange, setTimeRange] = useState<string>('1h');
+  const [timeRange, setTimeRange] = useState<string>('all');
   const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('horizontal'); // horizontal: X=time, Y=source; vertical: X=source, Y=time
   const [selectedMonth, setSelectedMonth] = useState<string>('all'); // default All; supports 'all' or 'YYYY-MM'
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
   const { onOpen: openInsightModal } = useInsightModal();
   const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
+  // Guard to apply only latest fetch results (prevents stale clears)
+  const reqRef = useRef(0);
 
   // System/meta classification and toggle
   const isMetaSource = (name: string) => {
@@ -83,8 +86,8 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
   };
 
   useEffect(() => {
-    fetchUnhealthySources();
-  }, [timeRange, selectedMonth, windowMode, plantId]);
+    loadData();
+  }, [timeRange, selectedMonth, windowMode, plantId, availableMonths.length]);
 
   // Load months list once on mount (derive from full dataset)
   useEffect(() => {
@@ -111,8 +114,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
 
   const loadAvailableMonths = async () => {
     try {
-      const { fetchUnhealthySources } = await import('../api/plantHealth');
-      const res = await fetchUnhealthySources(undefined, undefined, '10T', 10, plantId); // no filters → full historical dataset
+      const res = await fetchAPI(undefined, undefined, '10T', 10, plantId); // no filters → full historical dataset
       const records: any[] = res?.records || [];
       const monthMap = new Map<string, { start: Date; end: Date }>();
       for (const r of records) {
@@ -138,11 +140,11 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
     }
   };
 
-  const fetchUnhealthySources = async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
       setError(null);
-      const { fetchUnhealthySources: fetchAPI } = await import('../api/plantHealth');
+      const myReq = ++reqRef.current;
 
       const windowMs = getWindowMs(timeRange);
 
@@ -151,7 +153,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
         if (timeRange === 'all') {
           console.log('Fetching entire dataset (All months, full range)');
           result = await fetchAPI(undefined, undefined, '10T', 10, plantId);
-          setData(result);
+          if (myReq === reqRef.current) setData(result);
           if (result && result.count === 0) console.log('No unhealthy sources found in entire dataset');
           return;
         }
@@ -160,7 +162,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
         const fullResult = await fetchAPI(undefined, undefined, '10T', 10, plantId);
         if (!fullResult || fullResult.count === 0) {
           result = fullResult;
-          setData(result);
+          if (myReq === reqRef.current) setData(result);
           if (result && result.count === 0) console.log('No unhealthy sources found in entire dataset');
           return;
         }
@@ -453,7 +455,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                   <SelectItem value="all">All</SelectItem>
                 </SelectContent>
               </Select>
-              <Button variant="outline" size="sm" onClick={fetchUnhealthySources}>
+              <Button variant="outline" size="sm" onClick={loadData}>
                 <Clock className="h-4 w-4 mr-1" />
                 Refresh
               </Button>
@@ -473,7 +475,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
               <Button variant="outline" onClick={() => setTimeRange('7d')}>
                 Try 7 Days
               </Button>
-              <Button variant="outline" onClick={fetchUnhealthySources}>
+              <Button variant="outline" onClick={loadData}>
                 Refresh Data
               </Button>
             </div>
@@ -490,7 +492,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
           <div className="text-center text-destructive">
             <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
             <p>{error}</p>
-            <Button onClick={fetchUnhealthySources} className="mt-2" variant="outline">
+            <Button onClick={loadData} className="mt-2" variant="outline">
               Retry
             </Button>
           </div>
@@ -551,7 +553,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
               </SelectContent>
             </Select>
                         <InsightButton onClick={handleInsightClick} disabled={loading || filteredRecords.length === 0} />
-            <Button variant="outline" size="sm" onClick={fetchUnhealthySources}>
+            <Button variant="outline" size="sm" onClick={loadData}>
               <Clock className="h-4 w-4 mr-1" />
               Refresh
             </Button>
@@ -640,7 +642,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                       />
                       <ZAxis dataKey="flood_count" range={[60, 300]} />
                       <Tooltip content={<TimelineTooltip />} />
-                      <Scatter data={timelineData}>
+                      <Scatter data={timelineData} isAnimationActive={false}>
                         {timelineData.map((entry, index) => {
                           const fill = isMetaSource(entry.y) ? 'hsl(var(--muted))' : getPriorityColor(entry.priority);
                           const stroke = isMetaSource(entry.y) ? 'var(--border)' : undefined;
@@ -668,7 +670,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                       />
                       <ZAxis dataKey="flood_count" range={[60, 300]} />
                       <Tooltip content={<TimelineTooltip />} />
-                      <Scatter data={timelineData}>
+                      <Scatter data={timelineData} isAnimationActive={false}>
                         {timelineData.map((entry, index) => {
                           const fill = isMetaSource(entry.y) ? 'hsl(var(--muted))' : getPriorityColor(entry.priority);
                           const stroke = isMetaSource(entry.y) ? 'var(--border)' : undefined;

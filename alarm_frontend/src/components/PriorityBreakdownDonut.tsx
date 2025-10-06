@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { fetchUnhealthySources as fetchAPI } from '@/api/plantHealth';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -25,17 +26,14 @@ const COLOR_UNKNOWN = 'hsl(var(--muted-foreground))';
 const COLOR_JCODED = 'hsl(var(--chart-3))'; // distinct accent for J-coded
 const COLOR_OTHER = 'hsl(var(--chart-4))';  // for any other raw codes
 
-// API
-async function fetchUnhealthy(
+// API wrapper
+const fetchUnhealthy = (
   startTime: string | undefined,
   endTime: string | undefined,
   binSize: string,
   alarmThreshold: number,
   plantId: string
-): Promise<{ count: number; records: any[] }> {
-  const { fetchUnhealthySources } = await import('@/api/plantHealth');
-  return fetchUnhealthySources(startTime, endTime, binSize, alarmThreshold, plantId);
-}
+) => fetchAPI(startTime, endTime, binSize, alarmThreshold, plantId);
 
 // Helpers
 export type PriorityCategory = 'Critical' | 'High' | 'Medium' | 'Low' | 'J-coded' | 'Not Provided' | 'Other';
@@ -484,6 +482,7 @@ export const PriorityBreakdownDonut: React.FC<{ className?: string; plantId?: st
                     minAngle={3}
                     startAngle={90}
                     endAngle={-270}
+                    isAnimationActive={false}
                   >
                     {series.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.fill} />

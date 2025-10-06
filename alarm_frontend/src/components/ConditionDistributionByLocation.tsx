@@ -1,4 +1,5 @@
 import React from 'react';
+import { useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -65,6 +66,7 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
   const [records, setRecords] = React.useState<UnhealthyRecord[]>([]);
+  const reqRef = useRef(0);
   const { onOpen: openInsightModal } = useInsightModal();
   const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
 
@@ -78,13 +80,23 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
   const [highlightVeryHigh, setHighlightVeryHigh] = React.useState<'on' | 'off'>('on');
 
   React.useEffect(() => {
+    // Reload month options when plant changes
+    setAvailableMonths([]);
+    setSelectedMonth(DEFAULT_MONTH);
     loadAvailableMonths();
-  }, []);
+  }, [plantId]);
 
   React.useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMonth, timeRange, windowMode]);
+  }, [selectedMonth, timeRange, windowMode, plantId, availableMonths.length]);
+
+  // Keep behavior consistent with other charts: if Month = All, default Time = All
+  React.useEffect(() => {
+    if (selectedMonth === 'all' && timeRange !== 'all') {
+      setTimeRange('all');
+    }
+  }, [selectedMonth]);
 
   const getWindowMs = (tr: string) => {
     switch (tr) {
@@ -136,6 +148,7 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
     try {
       setLoading(true);
       setError(null);
+      const myReq = ++reqRef.current;
 
       const windowMs = getWindowMs(timeRange);
       let result: any = null;
@@ -195,7 +208,7 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
       }
 
       const recs: UnhealthyRecord[] = Array.isArray(result?.records) ? result.records : [];
-      setRecords(recs);
+      if (myReq === reqRef.current) setRecords(recs);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load condition distribution data';
       setError(msg);
@@ -551,7 +564,7 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
               <Legend content={renderLegend as any} />
 
               {conditionKeys.map((key) => (
-                <Bar key={key} dataKey={key} stackId="a" name={key} radius={[0, 0, 0, 0]} fill={colorByCondition.get(key) || CHART_GREEN_PRIMARY}>
+                <Bar key={key} dataKey={key} stackId="a" name={key} radius={[0, 0, 0, 0]} fill={colorByCondition.get(key) || CHART_GREEN_PRIMARY} isAnimationActive={false}>
                   {chartData.map((entry: any, index: number) => {
                     const val = entry[key] || 0;
                     const base = colorByCondition.get(key) || CHART_GREEN_PRIMARY;

@@ -51,6 +51,8 @@ interface ParetoItem {
   sharePct: number; // individual share of total
   cumulativePct: number; // cumulative share
   latestTs: number;
+  topSources?: Array<{ name: string; count: number }>; // only in plant-wide mode
+  distinctSources?: number; // how many unique sources contributed (plant-wide)
 }
 
 const DEFAULT_MONTH = 'all';
@@ -62,7 +64,7 @@ const isMetaSource = (name: string) => {
   return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
 };
 
-const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; includeSystem?: boolean }> = ({ className, plantId = 'pvcI', includeSystem = true }) => {
+const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; includeSystem?: boolean; mode?: 'perSource' | 'flood' }> = ({ className, plantId = 'pvcI', includeSystem = true, mode = 'perSource' }) => {
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
   const [records, setRecords] = React.useState<UnhealthyRecord[]>([]);
@@ -76,6 +78,10 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
   const [windowMode, setWindowMode] = React.useState<'recent' | 'peak'>('peak');
   const [topLimit, setTopLimit] = React.useState<number>(10); // Top 10
   const [metricMode, setMetricMode] = React.useState<'flood' | 'exceedance'>('flood');
+  // Derived: plant-wide mode only when global mode is 'flood' for PVC-I
+  const isPlantWide = mode === 'flood' && plantId === 'pvcI';
+  // Drill-down: when set, show per-source Pareto for this location only
+  const [drillLocation, setDrillLocation] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     loadAvailableMonths();
@@ -198,22 +204,44 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
     }
   }
 
+  // Helpers for plant-wide grouping
+  const normalizeLocation = (loc?: string): string => {
+    const s = String(loc ?? '').trim();
+    if (!s) return 'Unknown Location';
+    const lower = s.toLowerCase();
+    if (lower === 'unknown' || lower === 'not provided' || lower === 'n/a' || lower === 'na') return 'Unknown Location';
+    return s;
+  };
+
+  // We keep grouping fixed to Location for plant-wide mode (no in-chart toggle)
+
   // Group and compute Pareto for selected metric
   const paretoData: ParetoItem[] = React.useMemo(() => {
     if (!records || records.length === 0) return [];
 
     // Apply Include System filter
-    const base = includeSystem ? records : records.filter(r => !isMetaSource(r.source));
+    let base = includeSystem ? records : records.filter(r => !isMetaSource(r.source));
+    // If drilling, filter to selected location
+    if (drillLocation) {
+      base = base.filter(r => normalizeLocation((r as any).location_tag) === drillLocation);
+    }
 
-    const map = new Map<string, { total: number; incidents: number; latestTs: number }>();
+    const map = new Map<string, { total: number; incidents: number; latestTs: number; bySource?: Map<string, number> }>();
 
     for (const r of base) {
-      const srcRaw = r.source || 'Unknown';
-      let src = srcRaw;
-      if (src.includes('.csv')) src = src.replace('.csv', '');
-      if (src.includes('/') || src.includes('\\')) {
-        const parts = src.split(/[\\/]/);
-        src = parts[parts.length - 1];
+      // Determine grouping key based on global mode
+      let key: string;
+      if (isPlantWide && !drillLocation) {
+        key = normalizeLocation((r as any).location_tag);
+      } else {
+        const srcRaw = r.source || 'Unknown';
+        let src = srcRaw;
+        if (src.includes('.csv')) src = src.replace('.csv', '');
+        if (src.includes('/') || src.includes('\\')) {
+          const parts = src.split(/[\\/]/);
+          src = parts[parts.length - 1];
+        }
+        key = src;
       }
 
       const count = (r.flood_count ?? r.hits ?? 0) as number;
@@ -222,42 +250,80 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
 
       // Choose metric per mode
       const contribution = metricMode === 'exceedance' ? exceed : count;
-      // For exceedance mode, skip non-unhealthy windows
+      // Skip non-unhealthy windows per rules
+      // In plant-wide (location) aggregation, we keep record-level thresholding to avoid noise.
+      // In drill (per-source) view, we aggregate first and later filter sources with total >= threshold.
       if (metricMode === 'exceedance' && contribution <= 0) continue;
+      if (metricMode === 'flood' && (isPlantWide && !drillLocation) && count < threshold) continue;
 
-      const ts = new Date(r.peak_window_start || r.event_time || r.bin_end).getTime();
+      const ts = new Date(r.peak_window_start || r.event_time || (r as any).bin_end).getTime();
 
-      const existing = map.get(src);
+      const existing = map.get(key);
       if (existing) {
         existing.total += contribution;
-        // Count incidents: in flood mode count all windows; in exceedance mode only if contribution > 0
         if (metricMode === 'flood' || contribution > 0) existing.incidents += 1;
         existing.latestTs = Math.max(existing.latestTs, ts);
       } else {
-        map.set(src, { total: contribution, incidents: (metricMode === 'flood' || contribution > 0) ? 1 : 0, latestTs: ts });
+        map.set(key, { total: contribution, incidents: (metricMode === 'flood' || contribution > 0) ? 1 : 0, latestTs: ts, bySource: (isPlantWide || drillLocation) ? new Map() : undefined });
+      }
+      // Track contributing sources for plant-wide or drill views
+      if (isPlantWide || drillLocation) {
+        const grp = map.get(key)!;
+        const srcNameRaw = String(r.source || 'Unknown');
+        // Normalize same as per-source keying
+        let srcName = srcNameRaw;
+        if (srcName.includes('.csv')) srcName = srcName.replace('.csv', '');
+        if (srcName.includes('/') || srcName.includes('\\')) {
+          const parts = srcName.split(/[\\/]/);
+          srcName = parts[parts.length - 1];
+        }
+        const prev = grp.bySource?.get(srcName) ?? 0;
+        grp.bySource?.set(srcName, prev + contribution);
       }
     }
 
-    // Convert, sort and cap top N
-    const arr = Array.from(map.entries()).map(([source, v]) => ({
-      source,
-      totalFlood: v.total,
-      incidents: v.incidents,
-      sharePct: 0,
-      cumulativePct: 0,
-      latestTs: v.latestTs,
-    })).sort((a, b) => b.totalFlood - a.totalFlood)
-      .slice(0, topLimit);
+    // Convert and sort all groups
+    let all = Array.from(map.entries()).map(([source, v]) => {
+      // Build top sources list (Top 3) and distinct count
+      let topSources: Array<{ name: string; count: number }> | undefined = undefined;
+      let distinctSources: number | undefined = undefined;
+      if ((isPlantWide || drillLocation) && v.bySource && v.bySource.size > 0) {
+        const sorted = Array.from(v.bySource.entries()).sort((a, b) => b[1] - a[1]);
+        topSources = sorted.slice(0, 3).map(([name, count]) => ({ name, count }));
+        distinctSources = sorted.length;
+      }
+      return {
+        source,
+        totalFlood: v.total,
+        incidents: v.incidents,
+        sharePct: 0,
+        cumulativePct: 0,
+        latestTs: v.latestTs,
+        topSources,
+        distinctSources,
+      } as ParetoItem;
+    }).sort((a, b) => b.totalFlood - a.totalFlood);
 
-    const total = arr.reduce((s, i) => s + i.totalFlood, 0) || 1;
+    // In drill (per-source) view, apply unhealthy filter on the aggregated source totals
+    if (drillLocation) {
+      all = all.filter(i => i.totalFlood >= 10);
+    }
+
+    // Split into top N and remainder; build an Others bucket if remainder sum ≥ 10
+    const top = all.slice(0, topLimit);
+    const remainder = all.slice(topLimit);
+    const othersSum = remainder.reduce((s, i) => s + i.totalFlood, 0);
+    const withOthers = othersSum >= 10 ? [...top, { source: 'Others', totalFlood: othersSum, incidents: remainder.reduce((s, i) => s + i.incidents, 0), sharePct: 0, cumulativePct: 0, latestTs: remainder.reduce((m, i) => Math.max(m, i.latestTs), 0) } as ParetoItem] : top;
+
+    const total = (withOthers.reduce((s, i) => s + i.totalFlood, 0)) || 1;
     let cum = 0;
-    for (const it of arr) {
+    for (const it of withOthers) {
       it.sharePct = +(it.totalFlood / total * 100).toFixed(1);
       cum += it.totalFlood;
       it.cumulativePct = +(cum / total * 100).toFixed(1);
     }
-    return arr;
-  }, [records, topLimit, metricMode, includeSystem]);
+    return withOthers;
+  }, [records, topLimit, metricMode, includeSystem, isPlantWide, drillLocation]);
 
   const totalFloodCount = React.useMemo(() => paretoData.reduce((s, i) => s + i.totalFlood, 0), [paretoData]);
 
@@ -283,8 +349,9 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
     const p = info?.payload as ParetoItem;
     if (!p) return null;
     if (dataKey === 'totalFlood') {
+      const showTop = Boolean(isPlantWide && !drillLocation && p.topSources && p.topSources.length > 0 && p.source !== 'Others');
       return [
-        <div key="flood" className="bg-popover text-popover-foreground p-3 rounded border shadow-lg min-w-[200px]">
+        <div key="flood" className="bg-popover text-popover-foreground p-3 rounded border shadow-lg min-w-[240px] max-w-[360px]">
           <div className="font-semibold text-foreground mb-1">{p.source}</div>
           <div className="text-sm text-muted-foreground space-y-1">
             <div>{metricMode === 'exceedance' ? 'Exceedance (over threshold)' : 'Flood count'}: <span className="text-foreground font-medium">{p.totalFlood.toLocaleString()}</span></div>
@@ -292,6 +359,36 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
             <div>Cumulative: <span className="text-foreground font-medium">{p.cumulativePct}%</span></div>
             <div>Frequency: <span className="text-foreground font-medium">{p.incidents}</span></div>
             <div>Latest: <span className="text-foreground font-medium">{new Date(p.latestTs).toLocaleString()}</span></div>
+            {showTop && (
+              <div className="pt-2 border-t mt-2">
+                <div className="font-medium text-foreground mb-1">Top sources</div>
+                <ul className="space-y-1">
+                  {p.topSources!.map((s, i) => (
+                    <li key={i} className="flex items-center justify-between">
+                      <span className="truncate max-w-[220px]" title={s.name}>{s.name}</span>
+                      <span className="text-foreground font-medium ml-3">{s.count.toLocaleString()}</span>
+                    </li>
+                  ))}
+                </ul>
+                {typeof p.distinctSources === 'number' && p.topSources && p.distinctSources > p.topSources.length && (
+                  <div className="text-xs text-muted-foreground mt-1">+{p.distinctSources - p.topSources.length} more</div>
+                )}
+                <div className="mt-2 flex justify-end">
+                  <button
+                    className="text-xs px-2 py-1 rounded border hover:bg-accent"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const list = (p.topSources || []).map((s, i) => `${i + 1}. ${s.name} (${s.count})`).join('\n');
+                      const extra = typeof p.distinctSources === 'number' && p.topSources && p.distinctSources > p.topSources.length
+                        ? `\n+${p.distinctSources - p.topSources.length} more` : '';
+                      const text = `Location: ${p.source}\nTop sources (Top 3)\n${list}${extra}`;
+                      try { navigator.clipboard?.writeText(text); } catch {}
+                    }}
+                    title="Copy top sources"
+                  >Copy</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ];
@@ -343,9 +440,18 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
                 <LineChartIcon className="h-5 w-5 text-primary" />
                 Top Offenders • Pareto Analysis
               </CardTitle>
-              <CardDescription>No data in the selected window</CardDescription>
+              <CardDescription>
+                {drillLocation
+                  ? <>No unhealthy sources (≥10) in <span className="font-medium text-foreground">{drillLocation}</span> for the selected window</>
+                  : 'No data in the selected window'}
+              </CardDescription>
             </div>
             <div className="flex items-center gap-2">
+              {drillLocation && (
+                <Button variant="secondary" size="sm" onClick={() => setDrillLocation(null)} title="Clear drill-down">
+                  Clear • {drillLocation}
+                </Button>
+              )}
               <Select value={selectedMonth} onValueChange={setSelectedMonth}>
                 <SelectTrigger className="w-36">
                   <SelectValue placeholder="Month" />
@@ -398,10 +504,19 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
               Top Offenders • Pareto Analysis
             </CardTitle>
             <CardDescription>
-              Top {paretoData.length} sources by {metricMode === 'exceedance' ? 'unhealthy exceedance' : 'flood count'} • Total {metricMode === 'exceedance' ? 'Exceedance' : 'Flood'}: {totalFloodCount.toLocaleString()}
+              {drillLocation ? (
+                <>Per‑source in <span className="font-medium text-foreground">{drillLocation}</span> • Top {paretoData.length} sources by {metricMode === 'exceedance' ? 'unhealthy exceedance' : 'flood count'} • Total {metricMode === 'exceedance' ? 'Exceedance' : 'Flood'}: {totalFloodCount.toLocaleString()}</>
+              ) : (
+                <>Top {paretoData.length} {isPlantWide ? 'locations' : 'sources'} by {metricMode === 'exceedance' ? 'unhealthy exceedance' : 'flood count'} • Total {metricMode === 'exceedance' ? 'Exceedance' : 'Flood'}: {totalFloodCount.toLocaleString()}</>
+              )}
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
+            {drillLocation && (
+              <Button variant="secondary" size="sm" onClick={() => setDrillLocation(null)} title="Clear drill-down">
+                Clear • {drillLocation}
+              </Button>
+            )}
             <Select value={selectedMonth} onValueChange={setSelectedMonth}>
               <SelectTrigger className="w-36">
                 <SelectValue placeholder="Month" />
@@ -522,6 +637,13 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
                     key={`bar-${idx}`}
                     fill={idx <= vitalFewIndex ? CHART_GREEN_DARK : CHART_GREEN_LIGHT}
                     opacity={idx <= vitalFewIndex ? 0.95 : 0.7}
+                    onClick={() => {
+                      // Drill only from plant-wide view (not already drilled) and non-Others bars
+                      if (isPlantWide && !drillLocation && entry.source !== 'Others') {
+                        setDrillLocation(entry.source);
+                      }
+                    }}
+                    style={{ cursor: isPlantWide && !drillLocation && entry.source !== 'Others' ? 'pointer' as const : 'default' as const }}
                   />
                 ))}
               </Bar>

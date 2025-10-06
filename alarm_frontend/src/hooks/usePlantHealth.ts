@@ -59,10 +59,12 @@ export function usePlantHealth(
   plantId: string = 'pvcI',
   topN: 1 | 3 = 1,
   mode: 'perSource' | 'flood' = 'perSource',
-  refetchInterval: number = 60000 // 60 seconds
+  // disable periodic refetches; manual refresh via UI
+  refetchInterval: false | number = false
 ) {
   return useQuery({
-    queryKey: ['plant-health', plantId, topN, mode],
+    // Avoid refetching when toggling Top N; transform locally instead
+    queryKey: ['plant-health', plantId, mode],
     queryFn: async (): Promise<PlantHealthResponse> => {
       if (mode === 'flood' && plantId === 'pvcI') {
         const res = await fetchPvciIsaFloodSummary({
@@ -88,8 +90,9 @@ export function usePlantHealth(
       return await fetchPlantHealth(plantId);
     },
     refetchInterval,
-    refetchIntervalInBackground: true,
-    staleTime: 30000, // 30 seconds
+    refetchIntervalInBackground: !!refetchInterval,
+    // Leverage global defaults for staleTime; keep explicit long freshness here too
+    staleTime: 15 * 60 * 1000,
     select: (data) => ({
       ...data,
       unhealthyBars: transformUnhealthyBins(data.unhealthy_bins, topN),

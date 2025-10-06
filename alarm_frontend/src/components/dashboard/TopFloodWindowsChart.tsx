@@ -27,14 +27,47 @@ interface TopFloodWindowsChartProps {
   // New: click-select a window and highlight it
   onSelectWindow?: (row: TopFloodWindowRow | null) => void;
   selectedWindowId?: string;
+  // Respect global include-system toggle
+  includeSystem?: boolean;
 }
 
-export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChange, isLoading = false, onSelectWindow, selectedWindowId }: TopFloodWindowsChartProps) {
+export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChange, isLoading = false, onSelectWindow, selectedWindowId, includeSystem = true }: TopFloodWindowsChartProps) {
   const { onOpen: openInsightModal } = useInsightModal();
   const rows = useMemo(() => {
     const sorted = [...(data || [])].sort((a, b) => b.flood_count - a.flood_count);
     return sorted.slice(0, topK);
   }, [data, topK]);
+
+  // Identify meta/system sources (must be declared before use)
+  const isMetaSource = (name: string) => {
+    const s = String(name || '').trim().toUpperCase();
+    if (!s) return false;
+    return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+  };
+
+  // Compute visible counts per row based on includeSystem toggle
+  const displayRows = useMemo(() => {
+    type RowEx = TopFloodWindowRow & { flood_visible: number; rate_visible?: number };
+    return rows.map<RowEx>((r) => {
+      const tsAll = Array.isArray(r.top_sources) ? r.top_sources : [];
+      const sysSum = includeSystem ? 0 : tsAll.filter(s => isMetaSource(s.source)).reduce((acc, s) => acc + Number(s.count || 0), 0);
+      const total = Number(r.flood_count || 0);
+      const visible = Math.max(0, total - sysSum);
+      const rateVisible = typeof r.rate_per_min === 'number' && total > 0
+        ? (r.rate_per_min * (visible / total))
+        : r.rate_per_min;
+      return { ...r, flood_visible: visible, rate_visible: rateVisible };
+    });
+  }, [rows, includeSystem]);
+
+  // Colors for top 3 sources in each bar: highest -> orange, medium -> dark green, lowest -> light green
+  const COLORS = {
+    top: '#ce9200',
+    medium: '#3f741b',
+    low: '#59a527',
+  } as const;
+
+  
 
   const isEmpty = !rows || rows.length === 0;
   const formatShort = (s?: string, fallback?: string) => {
@@ -89,7 +122,38 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
         ) : (
           <div className="h-96">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={rows} margin={{ top: 24, right: 24, bottom: 24, left: 24 }}>
+              <BarChart data={displayRows} margin={{ top: 24, right: 24, bottom: 24, left: 24 }}>
+                {/* Per-bar gradients to visualize top 3 sources contribution within each bar */}
+                <defs>
+                  {displayRows.map((r) => {
+                    const tsAll = Array.isArray(r.top_sources)
+                      ? [...r.top_sources].sort((a, b) => b.count - a.count)
+                      : [];
+                    // Apply includeSystem toggle and unhealthy-only filter (count >= 10)
+                    const ts = (includeSystem ? tsAll : tsAll.filter(s => !isMetaSource(s.source)))
+                      .filter(s => Number(s.count || 0) >= 10);
+                    const c1 = ts[0]?.count ?? 0; // highest
+                    const c2 = ts[1]?.count ?? 0; // middle
+                    const c3 = ts[2]?.count ?? 0; // lowest of the shown top 3
+                    const totalVisible = Math.max(1, Number((r as any).flood_visible ?? r.flood_count ?? 0));
+                    const others = Math.max(0, totalVisible - (c1 + c2 + c3));
+                    const pctLowEnd = ((others + c3) / totalVisible) * 100; // bottom section end
+                    const pctMedEnd = ((others + c3 + c2) / totalVisible) * 100; // middle section end
+                    return (
+                      <linearGradient key={`grad-${r.id}`} id={`tfw-grad-${r.id}`} x1="0" y1="1" x2="0" y2="0">
+                        {/* Bottom: lowest + others */}
+                        <stop offset="0%" stopColor={COLORS.low} />
+                        <stop offset={`${pctLowEnd}%`} stopColor={COLORS.low} />
+                        {/* Middle: medium */}
+                        <stop offset={`${pctLowEnd}%`} stopColor={COLORS.medium} />
+                        <stop offset={`${pctMedEnd}%`} stopColor={COLORS.medium} />
+                        {/* Top: highest */}
+                        <stop offset={`${pctMedEnd}%`} stopColor={COLORS.top} />
+                        <stop offset="100%" stopColor={COLORS.top} />
+                      </linearGradient>
+                    );
+                  })}
+                </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" opacity={0.3} />
                 <XAxis
                   type="category"
@@ -106,28 +170,58 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
                 <Tooltip
                   content={({ active, payload }) => {
                     if (!active || !payload || payload.length === 0) return null;
-                    const row = payload[0]?.payload as TopFloodWindowRow;
+                    const row = payload[0]?.payload as TopFloodWindowRow & { flood_visible?: number; rate_visible?: number };
                     if (!row) return null;
+                    const visibleFlood = includeSystem ? row.flood_count : (row.flood_visible ?? row.flood_count);
+                    const visibleRate = includeSystem ? row.rate_per_min : (row.rate_visible ?? row.rate_per_min);
+
+                    // Prepare filtered top sources for display (>= 10) with includeSystem respected
+                    const tsAll = Array.isArray(row.top_sources) ? [...row.top_sources] : [];
+                    const tsFiltered = tsAll
+                      .sort((a, b) => b.count - a.count)
+                      .filter(s => (includeSystem || !isMetaSource(s.source)) && Number(s.count || 0) >= 10);
+                    const shown = tsFiltered.slice(0, 3);
+                    const sumShown = shown.reduce((acc, s) => acc + Number(s.count || 0), 0);
+                    const othersCount = Math.max(0, Number(visibleFlood || 0) - sumShown);
+                    const showOthers = othersCount >= 10;
                     return (
                       <div className="bg-popover text-popover-foreground p-3 rounded border shadow-lg min-w-[260px]">
                         <div className="font-semibold text-foreground mb-1">{row.label}</div>
                         <div className="text-sm text-muted-foreground space-y-1">
-                          <div>Flood count: <span className="text-foreground font-medium">{row.flood_count.toLocaleString()}</span></div>
-                          {typeof row.rate_per_min === 'number' && (
-                            <div>Rate: <span className="text-foreground font-medium">{row.rate_per_min.toFixed(1)}</span> / min</div>
+                          <div>Flood count: <span className="text-foreground font-medium">{Number(visibleFlood || 0).toLocaleString()}</span></div>
+                          {typeof visibleRate === 'number' && (
+                            <div>Rate: <span className="text-foreground font-medium">{Number(visibleRate).toFixed(1)}</span> / min</div>
                           )}
                           <div className="text-xs">Local: {new Date(row.start).toLocaleString()} — {new Date(row.end).toLocaleString()}</div>
                           <div className="text-xs">UTC: {new Date(row.start).toLocaleString(undefined, { timeZone: 'UTC' })} — {new Date(row.end).toLocaleString(undefined, { timeZone: 'UTC' })}</div>
-                          {Array.isArray(row.top_sources) && row.top_sources.length > 0 && (
+                          {(shown.length > 0 || showOthers) && (
                             <div className="pt-2">
-                              <div className="text-xs font-medium text-foreground mb-1">Top sources</div>
+                              <div className="text-xs font-medium text-foreground mb-1">Top sources (≥ 10)</div>
                               <ul className="text-xs space-y-0.5">
-                                {row.top_sources.slice(0, 3).map((s, i) => (
+                                {shown.map((s, i) => (
                                   <li key={i} className="flex justify-between gap-2">
-                                    <span className="truncate max-w-[180px]" title={s.source}>{s.source}</span>
+                                    <span className="truncate max-w-[180px] flex items-center gap-2" title={s.source}>
+                                      <span
+                                        className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                        style={{ backgroundColor: i === 0 ? COLORS.top : i === 1 ? COLORS.medium : COLORS.low }}
+                                      />
+                                      <span className="truncate">{s.source}</span>
+                                    </span>
                                     <span className="text-foreground font-medium">{s.count}</span>
                                   </li>
                                 ))}
+                                {showOthers && (
+                                  <li className="flex justify-between gap-2">
+                                    <span className="truncate max-w-[180px] flex items-center gap-2" title="Others">
+                                      <span
+                                        className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                        style={{ backgroundColor: COLORS.low }}
+                                      />
+                                      <span className="truncate">Others</span>
+                                    </span>
+                                    <span className="text-foreground font-medium">{othersCount}</span>
+                                  </li>
+                                )}
                               </ul>
                             </div>
                           )}
@@ -139,14 +233,14 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
                 />
                 <ReferenceLine y={threshold} stroke="var(--muted-foreground)" strokeDasharray="5 5" isFront label={{ value: `Threshold (${threshold})`, position: 'right', fill: 'var(--muted-foreground)', fontSize: 12 }} />
                 <Bar 
-                  dataKey="flood_count" 
+                  dataKey="flood_visible" 
                   fill={CHART_GREEN_MEDIUM} 
                   radius={[4, 4, 0, 0]} 
                   opacity={0.85}
                   className="cursor-pointer"
                   onClick={(_, index) => {
-                    if (!onSelectWindow) return;
-                    const row = rows[index];
+                     if (!onSelectWindow) return;
+                    const row = displayRows[index];
                     if (!row) return;
                     // Toggle selection if clicking the same bar again
                     if (selectedWindowId && row.id === selectedWindowId) {
@@ -156,10 +250,10 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
                     }
                   }}
                 >
-                  {rows.map((r, i) => (
+                  {displayRows.map((r, i) => (
                     <Cell 
                       key={`cell-${r.id}-${i}`} 
-                      fill={CHART_GREEN_MEDIUM}
+                      fill={Array.isArray(r.top_sources) && r.top_sources.length > 0 ? `url(#tfw-grad-${r.id})` : CHART_GREEN_MEDIUM}
                       opacity={selectedWindowId ? (r.id === selectedWindowId ? 1 : 0.6) : 0.85}
                       stroke={r.id === selectedWindowId ? 'var(--primary)' : undefined}
                       strokeWidth={r.id === selectedWindowId ? 1 : 0}

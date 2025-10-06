@@ -32,6 +32,10 @@ interface UnhealthyBarChartProps {
   timePickerDomain?: { start: string; end: string; peakStart?: string; peakEnd?: string };
   // Global control: when provided, chart hides its own toggle and uses this value
   includeSystem?: boolean;
+  // Optional: provide precomputed unhealthy windows (e.g., Top Flood Windows) for quick-pick
+  unhealthyWindows?: Array<{ start: string; end: string; label?: string }>;
+  // Optional: async validator to check if a selected window is unhealthy
+  validateWindow?: (startIso: string, endIso: string) => Promise<boolean>;
 }
 
 export function UnhealthyBarChart({ 
@@ -50,6 +54,8 @@ export function UnhealthyBarChart({
   onApplyTimePicker,
   timePickerDomain,
   includeSystem: includeSystemProp,
+  unhealthyWindows,
+  validateWindow,
 }: UnhealthyBarChartProps) {
   const { onOpen: openInsightModal } = useInsightModal();
   const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
@@ -253,6 +259,8 @@ export function UnhealthyBarChart({
                         peakWindowStart={timePickerDomain.peakStart}
                         peakWindowEnd={timePickerDomain.peakEnd}
                         onClear={onClearWindow}
+                        unhealthyWindows={unhealthyWindows}
+                        validateWindow={validateWindow}
                       />
                     ) : (
                       <div className="text-xs text-muted-foreground">Time picker unavailable (no domain)</div>

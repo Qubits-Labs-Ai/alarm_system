@@ -1,4 +1,4 @@
-import { useState, useEffect, startTransition } from 'react';
+import { useState, useEffect, startTransition, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageShell } from '@/components/dashboard/PageShell';
 import { PlantSelector } from '@/components/dashboard/PlantSelector';
@@ -10,10 +10,11 @@ import UnhealthySourcesWordCloud from '@/components/UnhealthySourcesWordCloud';
 import UnhealthySourcesBarChart from '@/components/UnhealthySourcesBarChart';
 import ParetoTopOffendersChart from '@/components/ParetoTopOffendersChart';
 import ConditionDistributionByLocation from '@/components/ConditionDistributionByLocation';
+import ConditionDistributionByLocationPlantWide from '@/components/ConditionDistributionByLocationPlantWide';
 import { useAuth } from '@/hooks/useAuth';
 import { usePlantHealth } from '@/hooks/usePlantHealth';
 import { Plant } from '@/types/dashboard';
-import { fetchPlants, fetchUnhealthySources, fetchPvciIsaFloodSummary } from '@/api/plantHealth';
+import { fetchPlants, fetchUnhealthySources, fetchPvciIsaFloodSummary, clearApiCache } from '@/api/plantHealth';
 import { UnhealthyBar } from '@/types/dashboard';
 import PriorityBreakdownDonut from '@/components/PriorityBreakdownDonut';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -60,6 +61,36 @@ export default function DashboardPage() {
   const [timePickerDomain, setTimePickerDomain] = useState<{ start: string; end: string; peakStart?: string; peakEnd?: string } | null>(null);
   // Global include system toggle
   const [includeSystem, setIncludeSystem] = useState<boolean>(true);
+  // Disable Include System toggle for PVC-II (not supported yet)
+  const isIncludeSystemDisabled = selectedPlant.id === 'pvcII';
+
+  // Force mode to 'perSource' for plants that don't support flood mode (e.g., PVC-II)
+  useEffect(() => {
+    if (selectedPlant.id !== 'pvcI' && mode !== 'perSource') {
+      setMode('perSource');
+    }
+  }, [selectedPlant.id, mode]);
+
+  // Validate if a given 10-minute window has any unhealthy records (respect Include System)
+  const validateWindowHasUnhealthy = useCallback(async (startIso: string, endIso: string): Promise<boolean> => {
+    try {
+      const res = await fetchUnhealthySources(startIso, endIso, '10T', 10, selectedPlant.id);
+      const recs: any[] = Array.isArray(res?.records) ? res.records : [];
+      // Align meta/system filtering with other charts
+      const isMetaSource = (name: string) => {
+        const s = String(name || '').trim().toUpperCase();
+        if (!s) return false;
+        return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+      };
+      const base = includeSystem ? recs : recs.filter(r => !isMetaSource(r.source));
+      // Unhealthy rule
+      const unhealthy = base.some(r => Number((r as any).flood_count ?? r.hits ?? 0) >= 10);
+      return unhealthy;
+    } catch {
+      // On any error, do not block apply
+      return true;
+    }
+  }, [includeSystem, selectedPlant.id]);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -363,6 +394,8 @@ export default function DashboardPage() {
   }
 
   const handleRefresh = () => {
+    // Clear API cache so fresh data is pulled on demand
+    clearApiCache();
     refetch();
   };
 
@@ -403,16 +436,21 @@ export default function DashboardPage() {
             disabled={plantsLoading || plants.length <= 1}
           />
           <div className="flex items-center gap-3">
-            {/* Global Include System toggle */}
-            <div className="flex items-center gap-2 pr-2">
+            {/* Global Include System toggle (PVC-II disabled) */}
+            <div
+              className={`flex items-center gap-2 pr-2 ${isIncludeSystemDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title={isIncludeSystemDisabled ? 'Unavailable for PVC-II (coming soon)' : undefined}
+            >
               <span className="text-sm text-muted-foreground">Include system</span>
               <Switch
                 checked={includeSystem}
                 onCheckedChange={(v) => startTransition(() => setIncludeSystem(v))}
+                disabled={isIncludeSystemDisabled}
+                aria-disabled={isIncludeSystemDisabled}
               />
             </div>
             <span className="text-sm text-muted-foreground">Mode</span>
-            <Select value={mode} onValueChange={(v) => setMode(v as any)}>
+            <Select value={mode} onValueChange={(v) => setMode(v as any)} disabled={selectedPlant.id !== 'pvcI'}>
               <SelectTrigger className="w-56">
                 <SelectValue />
               </SelectTrigger>
@@ -499,6 +537,8 @@ export default function DashboardPage() {
                   });
                 }}
                 timePickerDomain={timePickerDomain || undefined}
+                unhealthyWindows={(topWindows || []).map(w => ({ start: w.start, end: w.end, label: w.label }))}
+                validateWindow={validateWindowHasUnhealthy}
               />
               <TopFloodWindowsChart
                 data={topWindows}
@@ -506,11 +546,26 @@ export default function DashboardPage() {
                 topK={topWindowsTopK}
                 onTopKChange={setTopWindowsTopK}
                 isLoading={unhealthyBarsLoading}
+                includeSystem={includeSystem}
                 onSelectWindow={(row) => {
                   if (!row) { setSelectedWindow(null); return; }
                   setSelectedWindow({ id: row.id, label: row.label, start: row.start, end: row.end });
                 }}
                 selectedWindowId={selectedWindow?.id}
+              />
+
+              {/* PVC-I Plant-wide Pareto (locations aggregated) */}
+              <ParetoTopOffendersChart
+                plantId={selectedPlant.id}
+                includeSystem={includeSystem}
+                mode={'flood'}
+              />
+
+              {/* PVC-I Plant-wide: Condition Distribution by Location (stacked by ISA condition) */}
+              <ConditionDistributionByLocationPlantWide
+                plantId={selectedPlant.id}
+                includeSystem={includeSystem}
+                selectedWindow={selectedWindow}
               />
             </div>
           </div>
@@ -528,6 +583,7 @@ export default function DashboardPage() {
                 isLoading={unhealthyBarsLoading}
                 plantId={selectedPlant.id}
                 mode={'perSource'}
+                includeSystem={includeSystem}
               />
 
               {/* PVC-II: Priority Breakdown Donut */}
