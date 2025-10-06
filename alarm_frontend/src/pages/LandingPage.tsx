@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowRight, ShieldCheck, BarChart3, CheckCircle, TrendingUp, AlertTriangle, Activity, Sparkles, ChevronDown } from 'lucide-react';
+import { ArrowRight, ShieldCheck, BarChart3, CheckCircle, TrendingUp, AlertTriangle, Activity, Sparkles, ChevronDown, MapPin, Phone, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ui/theme-toggle';
 import PixelBlast from '@/components/ui/PixelBlast';
@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { usePlantHealth } from '@/hooks/usePlantHealth';
 import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
 import engroLogo from '@/assets/engro-logo.png';
+import qbitLogo from '@/assets/qbit-logo.png';
 import AnimatedChartDisplay from '@/components/landing/AnimatedChartDisplay';
 
 // Motion-aware component for animations
@@ -22,7 +23,7 @@ const MotionDiv = ({ children, delay = 0 }: { children: React.ReactNode, delay?:
 
 const LandingPage = () => {
   const [topN, setTopN] = useState<1 | 3>(1);
-  const { data, isLoading } = usePlantHealth('pvcI', topN, 60000);
+  const { data, isLoading } = usePlantHealth('pvcI', topN, 'perSource', 60000);
   const metrics = data?.metrics;
 
   const features = [
@@ -69,6 +70,15 @@ const LandingPage = () => {
         <div className="container mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <img src={engroLogo} alt="Engro Logo" className="h-8 w-auto" />
+             {/* Builder brand */}
+             <div className="hidden sm:flex items-center gap-2 border-l border-border pl-4">
+              
+              <img
+                src={qbitLogo}
+                alt="Qbit Dynamics"
+                className="h-6 w-auto opacity-90 invert dark:invert-0"
+              />
+            </div>
             <div className="hidden sm:flex items-center gap-3 border-l border-border pl-4">
               <ShieldCheck className="h-6 w-6 text-primary" />
               <div>
@@ -76,6 +86,7 @@ const LandingPage = () => {
                 <p className="text-xs text-muted-foreground">Powered by Engro Digital</p>
               </div>
             </div>
+           
           </div>
           <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
             <a href="#features" onClick={(e) => { e.preventDefault(); document.querySelector('#features')?.scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-foreground transition-colors">Features</a>
@@ -315,17 +326,59 @@ const LandingPage = () => {
         </section>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-border bg-background/50">
-        <div className="container mx-auto px-6 py-8">
-          <div className="flex flex-col md:flex-row items-center justify-between text-center md:text-left">
-            <div className="flex items-center gap-3 mb-4 md:mb-0">
-              <ShieldCheck className="h-5 w-5 text-primary" />
-              <p className="font-semibold text-foreground">Alarm Health Monitoring Platform</p>
+      {/* Footer - Minimal, Professional */}
+      <footer className="border-t border-border/60 bg-background">
+        <div className="container mx-auto px-6 py-12">
+          {/* Top: Brand + compact contact */}
+          <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
+            <div className="flex items-start gap-3">
+              <img src={engroLogo} alt="Engro Logo" className="h-7 w-auto rounded-sm" />
+              <div className="leading-tight">
+                <div className="font-semibold text-foreground">Alarm Management System</div>
+                <p className="text-sm text-muted-foreground mt-0.5">AI-powered safety analytics by Engro Digital</p>
+              </div>
             </div>
-            <div className="text-sm text-muted-foreground">
-              <p>© {new Date().getFullYear()} Engro Digital. All rights reserved.</p>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-primary" />
+                <span>Karachi, PK</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Phone className="h-4 w-4 text-primary" />
+                <a href="tel:+9221111411411" className="hover:text-foreground">+92 21 111 411 411</a>
+              </div>
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-primary" />
+                <span>Mon–Fri · 9am–5pm (PST)</span>
+              </div>
             </div>
+          </div>
+
+          {/* Divider */}
+          <div className="my-8 border-t border-border" />
+
+          {/* Bottom bar */}
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between text-sm text-muted-foreground">
+            <div className="flex items-center flex-wrap gap-x-2 gap-y-1">
+              <span>© {new Date().getFullYear()} Engro Polymer & Chemicals</span>
+              <span className="hidden md:inline">•</span>
+              <span className="md:ml-2">All rights reserved</span>
+            </div>
+            <nav className="flex items-center gap-6">
+              <a href="#" className="hover:text-foreground">Privacy</a>
+              <a href="#" className="hover:text-foreground">Disclaimer</a>
+              <a href="#" className="hover:text-foreground">Sitemap</a>
+            </nav>
+          </div>
+
+          {/* Builder credit (subtle) */}
+          <div className="mt-6 flex items-center justify-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Built by</span>
+            <img
+              src={qbitLogo}
+              alt="Qbit Dynamics"
+              className="h-6 w-auto opacity-80 invert dark:invert-0"
+            />
           </div>
         </div>
       </footer>
