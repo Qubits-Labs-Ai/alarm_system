@@ -83,7 +83,7 @@ const LandingPage = () => {
               <ShieldCheck className="h-6 w-6 text-primary" />
               <div>
                 <h1 className="font-bold text-foreground">Alarm Management System</h1>
-                <p className="text-xs text-muted-foreground">Powered by Engro Digital</p>
+                <p className="text-xs text-muted-foreground">Powered by Qbit Dynamics</p>
               </div>
             </div>
            
@@ -326,28 +326,30 @@ const LandingPage = () => {
         </section>
       </main>
 
-      {/* Footer - Minimal, Professional */}
-      <footer className="border-t border-border/60 bg-background">
+      {/* Footer - Minimal, Dynamic */}
+      <footer className="relative border-t border-border/60 bg-background/80 backdrop-blur-sm">
+        {/* Animated highlight bar */}
+        <div className="footer-bar absolute top-0 inset-x-0" />
         <div className="container mx-auto px-6 py-12">
-          {/* Top: Brand + compact contact */}
+          {/* Top: Brand + compact contact (interactive chips) */}
           <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
-            <div className="flex items-start gap-3">
-              <img src={engroLogo} alt="Engro Logo" className="h-7 w-auto rounded-sm" />
+            <div className="flex items-start gap-3 hover-lift">
+              <img src={engroLogo} alt="Engro Logo" className="h-7 w-auto rounded-sm brand-fade" />
               <div className="leading-tight">
                 <div className="font-semibold text-foreground">Alarm Management System</div>
-                <p className="text-sm text-muted-foreground mt-0.5">AI-powered safety analytics by Engro Digital</p>
+                <p className="text-sm text-muted-foreground mt-0.5">AI-powered AMS by Qbit Dynamics</p>
               </div>
             </div>
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 text-sm text-muted-foreground">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 text-sm text-muted-foreground">
+              <div className="chip hover-lift flex items-center gap-2">
                 <MapPin className="h-4 w-4 text-primary" />
                 <span>Karachi, PK</span>
               </div>
-              <div className="flex items-center gap-2">
+              <a className="chip hover-lift flex items-center gap-2" href="tel:+9221111411411" aria-label="Call support">
                 <Phone className="h-4 w-4 text-primary" />
-                <a href="tel:+9221111411411" className="hover:text-foreground">+92 21 111 411 411</a>
-              </div>
-              <div className="flex items-center gap-2">
+                <span className="text-foreground/90">+92 21 111 411 411</span>
+              </a>
+              <div className="chip hover-lift flex items-center gap-2">
                 <Clock className="h-4 w-4 text-primary" />
                 <span>Mon–Fri · 9am–5pm (PST)</span>
               </div>
@@ -355,7 +357,7 @@ const LandingPage = () => {
           </div>
 
           {/* Divider */}
-          <div className="my-8 border-t border-border" />
+          <div className="my-8 border-t border-border/60" />
 
           {/* Bottom bar */}
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between text-sm text-muted-foreground">
@@ -365,9 +367,9 @@ const LandingPage = () => {
               <span className="md:ml-2">All rights reserved</span>
             </div>
             <nav className="flex items-center gap-6">
-              <a href="#" className="hover:text-foreground">Privacy</a>
-              <a href="#" className="hover:text-foreground">Disclaimer</a>
-              <a href="#" className="hover:text-foreground">Sitemap</a>
+              <a href="#" className="link-underline hover:text-foreground">Privacy</a>
+              <a href="#" className="link-underline hover:text-foreground">Disclaimer</a>
+              <a href="#" className="link-underline hover:text-foreground">Sitemap</a>
             </nav>
           </div>
 
@@ -377,7 +379,7 @@ const LandingPage = () => {
             <img
               src={qbitLogo}
               alt="Qbit Dynamics"
-              className="h-6 w-auto opacity-80 invert dark:invert-0"
+              className="h-6 w-auto brand-fade invert dark:invert-0"
             />
           </div>
         </div>

@@ -55,10 +55,10 @@ const charts = [
         <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
         <XAxis dataKey="name" tick={{ fill: colors.mutedForeground, fontSize: 12 }} axisLine={false} tickLine={false} />
         <YAxis yAxisId="left" tick={{ fill: colors.mutedForeground, fontSize: 12 }} axisLine={false} tickLine={false} />
-        <YAxis yAxisId="right" orientation="right" tick={{ fill: '#c17802', fontSize: 12 }} tickFormatter={(tick) => `${tick}%`} domain={[0, 100]} axisLine={false} tickLine={false} />
+        <YAxis yAxisId="right" orientation="right" tick={{ fill: 'var(--warning)', fontSize: 12 }} tickFormatter={(tick) => `${tick}%`} domain={[0, 100]} axisLine={false} tickLine={false} />
         <Tooltip content={<CustomTooltip />} cursor={{ fill: colors.tooltipCursor }} />
         <Bar yAxisId="left" dataKey="count" fill={colors.primary} />
-        <Line yAxisId="right" type="monotone" dataKey="cumulative" stroke="#c17802" strokeWidth={2} dot={{ r: 4 }} />
+        <Line yAxisId="right" type="monotone" dataKey="cumulative" stroke="var(--warning)" strokeWidth={2} dot={{ r: 4 }} />
       </ComposedChart>
     ),
   },
@@ -66,12 +66,12 @@ const charts = [
     id: 'donut',
     data: generateDonutData(),
     component: (data: any[], colors: any) => {
-      // Define a reliable, hardcoded color map to ensure correct rendering.
+      // Use theme tokens to stay consistent in light/dark modes
       const donutColorMap: { [key: string]: string } = {
-        Critical: '#c17802', // Bright Red
-        High: '#13b325',     // Bright Green
-        Medium: '#00bc52',   // Lime Green
-        Low: '#008343',      // Olive Green
+        Critical: 'var(--destructive)',
+        High: 'var(--warning)',
+        Medium: 'hsl(var(--chart-3))',
+        Low: 'hsl(var(--chart-2))',
       };
 
       return (

@@ -32,7 +32,7 @@ export default function DashboardPage() {
   const [plants, setPlants] = useState<Plant[]>([]);
   const [plantsLoading, setPlantsLoading] = useState<boolean>(true);
   const [topN, setTopN] = useState<1 | 3>(1);
-  const [mode, setMode] = useState<'perSource' | 'flood'>('perSource');
+  const [mode, setMode] = useState<'perSource' | 'flood'>('flood');
   
   const { 
     data, 
@@ -554,6 +554,14 @@ export default function DashboardPage() {
                 selectedWindowId={selectedWindow?.id}
               />
 
+              {/* PVC-I Plant-wide: Unhealthy Sources Timeline (ISA 18.2) */}
+              <UnhealthySourcesChart
+                plantId={selectedPlant.id}
+                includeSystem={includeSystem}
+                mode={'flood'}
+                selectedWindow={selectedWindow}
+              />
+
               {/* PVC-I Plant-wide Pareto (locations aggregated) */}
               <ParetoTopOffendersChart
                 plantId={selectedPlant.id}
@@ -566,6 +574,18 @@ export default function DashboardPage() {
                 plantId={selectedPlant.id}
                 includeSystem={includeSystem}
                 selectedWindow={selectedWindow}
+                timePickerDomain={timePickerDomain || undefined}
+                onApplyTimePicker={(s, e) => {
+                  setSelectedWindow({
+                    id: s,
+                    label: `${new Date(s).toLocaleString()} — ${new Date(e).toLocaleString()}`,
+                    start: s,
+                    end: e,
+                  });
+                }}
+                onClearWindow={() => setSelectedWindow(null)}
+                unhealthyWindows={(topWindows || []).map(w => ({ start: w.start, end: w.end, label: w.label }))}
+                validateWindow={validateWindowHasUnhealthy}
               />
             </div>
           </div>

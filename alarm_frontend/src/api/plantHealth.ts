@@ -53,7 +53,7 @@ function writeLocal<T>(key: string, value: CacheEntry<T>) {
   }
 }
 
-async function fetchWithCache<T = any>(url: string, ttlMs = 15 * 60 * 1000): Promise<T> {
+async function fetchWithCache<T = any>(url: string, ttlMs = 15 * 60 * 1000, timeoutMs?: number): Promise<T> {
   const key = url;
 
   // Serve from memory cache if fresh
@@ -75,13 +75,22 @@ async function fetchWithCache<T = any>(url: string, ttlMs = 15 * 60 * 1000): Pro
   }
 
   const p = (async () => {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = (await res.json()) as T;
-    const entry: CacheEntry<T> = { ts: now(), data };
-    memCache.set(key, entry);
-    writeLocal<T>(key, entry);
-    return data;
+    const controller = new AbortController();
+    let timeoutId: any = null;
+    try {
+      if (timeoutMs && timeoutMs > 0) {
+        timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      }
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as T;
+      const entry: CacheEntry<T> = { ts: now(), data };
+      memCache.set(key, entry);
+      writeLocal<T>(key, entry);
+      return data;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
   })().finally(() => inflight.delete(key));
 
   inflight.set(key, p);
@@ -143,6 +152,7 @@ export async function fetchPvciIsaFloodSummary(params?: {
   top_n?: number;
   max_windows?: number;
   raw?: boolean;
+  timeout_ms?: number;
 }) {
   const {
     window_minutes = 10,
@@ -155,6 +165,7 @@ export async function fetchPvciIsaFloodSummary(params?: {
     top_n = 10,
     max_windows = 10,
     raw = true,
+    timeout_ms,
   } = params || {};
 
   const url = new URL(`${API_BASE_URL}/pvcI-health/isa-flood-summary`);
@@ -171,7 +182,7 @@ export async function fetchPvciIsaFloodSummary(params?: {
 
   try {
     // ISA summary changes infrequently; cache for 30 minutes
-    return await fetchWithCache(url.toString(), 30 * 60 * 1000);
+    return await fetchWithCache(url.toString(), 30 * 60 * 1000, timeout_ms);
   } catch (e) {
     console.warn('Failed to fetch ISA flood summary:', e);
     return null;

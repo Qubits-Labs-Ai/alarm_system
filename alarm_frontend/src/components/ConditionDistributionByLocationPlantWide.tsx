@@ -25,6 +25,8 @@ import {
 import { fetchUnhealthySources, fetchPvciIsaFloodSummary, fetchPvciWindowSourceDetails } from '@/api/plantHealth';
 import { InsightButton } from '@/components/insights/InsightButton';
 import { useInsightModal } from '@/components/insights/useInsightModal';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import TimeBinSlider from '@/components/dashboard/TimeBinSlider';
 
 // Types aligned with other charts
 interface UnhealthyRecord {
@@ -53,6 +55,11 @@ interface Props {
   includeSystem?: boolean;
   selectedWindow?: SelectedWindowRef | null;
   topLocations?: number; // default 10
+  onApplyTimePicker?: (startIso: string, endIso: string) => void;
+  onClearWindow?: () => void;
+  timePickerDomain?: { start: string; end: string; peakStart?: string; peakEnd?: string };
+  unhealthyWindows?: Array<{ start: string; end: string; label?: string }>;
+  validateWindow?: (startIso: string, endIso: string) => Promise<boolean>;
 }
 
 const CONDITION_LIMIT = 10;
@@ -88,6 +95,11 @@ const ConditionDistributionByLocationPlantWide: React.FC<Props> = ({
   includeSystem = true,
   selectedWindow,
   topLocations = 10,
+  onApplyTimePicker,
+  onClearWindow,
+  timePickerDomain,
+  unhealthyWindows,
+  validateWindow,
 }) => {
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -433,6 +445,31 @@ const ConditionDistributionByLocationPlantWide: React.FC<Props> = ({
               <CardDescription>No unhealthy activity in the selected 10‑minute window.</CardDescription>
             </div>
             <div className="flex items-center gap-2">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" title="Select a 10‑minute time window">10‑min Window</Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-auto">
+                  {timePickerDomain ? (
+                    <TimeBinSlider
+                      domainStart={timePickerDomain.start}
+                      domainEnd={timePickerDomain.end}
+                      initialStart={activeWindow?.start || timePickerDomain.end}
+                      windowMinutes={10}
+                      stepMinutes={1}
+                      onApply={(s, e) => onApplyTimePicker?.(s, e)}
+                      onCancel={() => {}}
+                      peakWindowStart={timePickerDomain.peakStart}
+                      peakWindowEnd={timePickerDomain.peakEnd}
+                      onClear={onClearWindow}
+                      unhealthyWindows={unhealthyWindows}
+                      validateWindow={validateWindow}
+                    />
+                  ) : (
+                    <div className="text-xs text-muted-foreground">Time picker unavailable (no domain)</div>
+                  )}
+                </PopoverContent>
+              </Popover>
               <Select value={highlightVeryHigh} onValueChange={(v) => setHighlightVeryHigh(v as any)}>
                 <SelectTrigger className="w-36">
                   <SelectValue placeholder="Highlight" />
@@ -475,42 +512,67 @@ const ConditionDistributionByLocationPlantWide: React.FC<Props> = ({
               Top {Math.min(topN, (chartData || []).length)} locations in the selected 10‑min window{activeWindow?.label ? ` • ${activeWindow.label}` : ''}
             </CardDescription>
           </div>
-          <div className="flex items-center gap-2">
-            <Select value={highlightVeryHigh} onValueChange={(v) => setHighlightVeryHigh(v as any)}>
-              <SelectTrigger className="w-36">
-                <SelectValue placeholder="Highlight" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="on">Highlight: On</SelectItem>
-                <SelectItem value="off">Highlight: Off</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={String(topN)} onValueChange={(v) => v && setTopN(parseInt(v))}>
-              <SelectTrigger className="w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="5">Top 5</SelectItem>
-                <SelectItem value="10">Top 10</SelectItem>
-                <SelectItem value="20">Top 20</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={sortBy} onValueChange={(v) => setSortBy(v as any)}>
-              <SelectTrigger className="w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="total">By Total</SelectItem>
-                <SelectItem value="alphabetical">A–Z</SelectItem>
-              </SelectContent>
-            </Select>
-            <InsightButton onClick={handleInsightClick} disabled={loading || (chartData?.length ?? 0) === 0} />
-            <Button variant="outline" size="sm" onClick={fetchData}>
-              <RefreshCw className="h-4 w-4" />
-            </Button>
-          </div>
+        <div className="flex items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" title="Select a 10‑minute time window">10‑min Window</Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-auto">
+              {timePickerDomain ? (
+                <TimeBinSlider
+                  domainStart={timePickerDomain.start}
+                  domainEnd={timePickerDomain.end}
+                  initialStart={activeWindow?.start || timePickerDomain.end}
+                  windowMinutes={10}
+                  stepMinutes={1}
+                  onApply={(s, e) => onApplyTimePicker?.(s, e)}
+                  onCancel={() => {}}
+                  peakWindowStart={timePickerDomain.peakStart}
+                  peakWindowEnd={timePickerDomain.peakEnd}
+                  onClear={onClearWindow}
+                  unhealthyWindows={unhealthyWindows}
+                  validateWindow={validateWindow}
+                />
+              ) : (
+                <div className="text-xs text-muted-foreground">Time picker unavailable (no domain)</div>
+              )}
+            </PopoverContent>
+          </Popover>
+          <Select value={highlightVeryHigh} onValueChange={(v) => setHighlightVeryHigh(v as any)}>
+            <SelectTrigger className="w-36">
+              <SelectValue placeholder="Highlight" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="on">Highlight: On</SelectItem>
+              <SelectItem value="off">Highlight: Off</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={String(topN)} onValueChange={(v) => v && setTopN(parseInt(v))}>
+            <SelectTrigger className="w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="5">Top 5</SelectItem>
+              <SelectItem value="10">Top 10</SelectItem>
+              <SelectItem value="20">Top 20</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={sortBy} onValueChange={(v) => setSortBy(v as any)}>
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="total">By Total</SelectItem>
+              <SelectItem value="alphabetical">A–Z</SelectItem>
+            </SelectContent>
+          </Select>
+          <InsightButton onClick={handleInsightClick} disabled={loading || (chartData?.length ?? 0) === 0} />
+          <Button variant="outline" size="sm" onClick={fetchData}>
+            <RefreshCw className="h-4 w-4" />
+          </Button>
         </div>
-      </CardHeader>
+      </div>
+    </CardHeader>
       <CardContent>
         <div className="h-[500px]">
           <ResponsiveContainer width="100%" height="100%">

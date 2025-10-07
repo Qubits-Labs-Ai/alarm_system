@@ -243,10 +243,10 @@ export function UnhealthyBarChart({
             ) : (
               <>
                 <Popover>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" size="sm">Select Window</Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-auto">
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" title="Select a 10‑minute time window for the unhealthy bar chart">10‑min Window</Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-auto">
                     {timePickerDomain ? (
                       <TimeBinSlider
                         domainStart={timePickerDomain.start}

@@ -23,7 +23,7 @@ import {
 } from 'recharts';
 import { CHART_GREEN_DARK, CHART_GREEN_LIGHT, CHART_GREEN_MEDIUM, CHART_GREEN_PALE, priorityToGreen } from '@/theme/chartColors';
 import { Switch } from '@/components/ui/switch';
-import { fetchUnhealthySources as fetchAPI } from '@/api/plantHealth';
+import { fetchUnhealthySources as fetchAPI, fetchPvciIsaFloodSummary, fetchPvciWindowSourceDetails } from '@/api/plantHealth';
 
 interface UnhealthyRecord {
   event_time: string;
@@ -40,6 +40,7 @@ interface UnhealthyRecord {
   description?: string;
   value?: number;
   units?: string;
+  flood_count?: number;
 }
 
 interface UnhealthySourcesData {
@@ -47,14 +48,25 @@ interface UnhealthySourcesData {
   records: UnhealthyRecord[];
 }
 
+interface SelectedWindowRef {
+  id: string;
+  start: string;
+  end: string;
+  label?: string;
+}
+
 interface UnhealthySourcesChartProps {
   className?: string;
   plantId?: string;
   // Global control: when provided, component hides its own toggle and uses this value
   includeSystem?: boolean;
+  // New: render plant-wide ISA mode (PVC-I only)
+  mode?: 'perSource' | 'flood';
+  // Optional selected 10-min window for flood mode (aligns with TopFloodWindows/UnhealthyBarChart)
+  selectedWindow?: SelectedWindowRef | null;
 }
 
-const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className, plantId = 'pvcI', includeSystem: includeSystemProp }) => {
+const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className, plantId = 'pvcI', includeSystem: includeSystemProp, mode = 'perSource', selectedWindow = null }) => {
   const [data, setData] = useState<UnhealthySourcesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +77,8 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
   const [selectedMonth, setSelectedMonth] = useState<string>('all'); // default All; supports 'all' or 'YYYY-MM'
   const [availableMonths, setAvailableMonths] = useState<Array<{ value: string; label: string; start: Date; end: Date }>>([]);
   const [windowMode, setWindowMode] = useState<'recent' | 'peak'>('peak');
+  // Optional explicit domain for X axis (ms since epoch). When null, use dataMin/dataMax
+  const [xDomain, setXDomain] = useState<[number, number] | null>(null);
   const { onOpen: openInsightModal } = useInsightModal();
   const plantLabel = plantId === 'pvcI' ? 'PVC-I' : (plantId === 'pvcII' ? 'PVC-II' : plantId.toUpperCase());
   // Guard to apply only latest fetch results (prevents stale clears)
@@ -87,12 +101,12 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
 
   useEffect(() => {
     loadData();
-  }, [timeRange, selectedMonth, windowMode, plantId, availableMonths.length]);
+  }, [timeRange, selectedMonth, windowMode, plantId, availableMonths.length, mode, selectedWindow?.id, selectedWindow?.start, selectedWindow?.end]);
 
   // Load months list once on mount (derive from full dataset)
   useEffect(() => {
     loadAvailableMonths();
-  }, [plantId]);
+  }, [plantId, mode]);
 
   // When user selects All months, default the timeRange to 'all' so everything shows
   useEffect(() => {
@@ -114,27 +128,68 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
 
   const loadAvailableMonths = async () => {
     try {
-      const res = await fetchAPI(undefined, undefined, '10T', 10, plantId); // no filters → full historical dataset
-      const records: any[] = res?.records || [];
-      const monthMap = new Map<string, { start: Date; end: Date }>();
-      for (const r of records) {
-        const ds = (r as any).peak_window_start || (r as any).event_time || (r as any).bin_start || (r as any).bin_end;
-        if (!ds) continue;
-        const d = new Date(ds);
-        const value = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-        if (!monthMap.has(value)) {
-          const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0));
-          const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0, 0));
-          monthMap.set(value, { start, end });
+      if (mode === 'flood' && plantId === 'pvcI') {
+        const res: any = await fetchPvciIsaFloodSummary({ include_records: true, include_windows: true, include_alarm_details: false, top_n: 10, max_windows: 180, timeout_ms: 12000 });
+        const monthMap = new Map<string, { start: Date; end: Date }>();
+        // Prefer by_day for robust month coverage
+        const byDay: any[] = Array.isArray(res?.by_day) ? res.by_day : [];
+        if (byDay.length > 0) {
+          for (const row of byDay) {
+            const ds = row?.date ? `${row.date}T00:00:00Z` : undefined;
+            if (!ds) continue;
+            const d = new Date(ds);
+            const value = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+            if (!monthMap.has(value)) {
+              const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0));
+              const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0, 0));
+              monthMap.set(value, { start, end });
+            }
+          }
+        } else {
+          // Fallback to records/windows if by_day missing
+          const list: any[] = Array.isArray(res?.records) ? res.records : [];
+          for (const r of list) {
+            const ds = r?.peak_window_start || r?.windows?.[0]?.window_start || r?.start;
+            if (!ds) continue;
+            const d = new Date(ds);
+            const value = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+            if (!monthMap.has(value)) {
+              const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0));
+              const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0, 0));
+              monthMap.set(value, { start, end });
+            }
+          }
         }
+        const items = Array.from(monthMap.entries()).map(([value, range]) => ({
+          value,
+          label: new Date(`${value}-01T00:00:00Z`).toLocaleString(undefined, { month: 'short', year: 'numeric' }),
+          start: range.start,
+          end: range.end,
+        })).sort((a, b) => a.start.getTime() - b.start.getTime());
+        setAvailableMonths(items);
+      } else {
+        const res = await fetchAPI(undefined, undefined, '10T', 10, plantId); // no filters → full historical dataset
+        const records: any[] = res?.records || [];
+        const monthMap = new Map<string, { start: Date; end: Date }>();
+        for (const r of records) {
+          const ds = (r as any).peak_window_start || (r as any).event_time || (r as any).bin_start || (r as any).bin_end;
+          if (!ds) continue;
+          const d = new Date(ds);
+          const value = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+          if (!monthMap.has(value)) {
+            const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0));
+            const end = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0, 0));
+            monthMap.set(value, { start, end });
+          }
+        }
+        const items = Array.from(monthMap.entries()).map(([value, range]) => ({
+          value,
+          label: new Date(`${value}-01T00:00:00Z`).toLocaleString(undefined, { month: 'short', year: 'numeric' }),
+          start: range.start,
+          end: range.end,
+        })).sort((a, b) => a.start.getTime() - b.start.getTime());
+        setAvailableMonths(items);
       }
-      const items = Array.from(monthMap.entries()).map(([value, range]) => ({
-        value,
-        label: new Date(`${value}-01T00:00:00Z`).toLocaleString(undefined, { month: 'short', year: 'numeric' }),
-        start: range.start,
-        end: range.end,
-      })).sort((a, b) => a.start.getTime() - b.start.getTime());
-      setAvailableMonths(items);
     } catch (e) {
       console.warn('Failed to load available months', e);
     }
@@ -148,6 +203,174 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
 
       const windowMs = getWindowMs(timeRange);
 
+      // Flood mode (PVC-I ISA 18.2 plant-wide)
+      if (mode === 'flood' && plantId === 'pvcI') {
+        // If a specific window is selected, use precise per-window details
+        if (selectedWindow?.start && selectedWindow?.end) {
+          const details: any = await fetchPvciWindowSourceDetails(selectedWindow.start, selectedWindow.end, 500);
+          const psd: any[] = Array.isArray(details?.per_source_detailed) ? details.per_source_detailed : [];
+          let recs = psd.map(d => ({
+            event_time: selectedWindow.start,
+            bin_end: selectedWindow.end,
+            source: String(d.source || 'Unknown'),
+            hits: Number(d.count || 0),
+            threshold: 10,
+            over_by: Math.max(0, Number(d.count || 0) - 10),
+            rate_per_min: Number(d.count || 0) / 10,
+            location_tag: d.location_tag,
+            condition: d.condition || 'Not Provided',
+            flood_count: Number(d.count || 0),
+            priority: (Number(d.count || 0) >= 25 ? 'High' : Number(d.count || 0) >= 15 ? 'Medium' : 'Low'),
+            peak_window_start: selectedWindow.start,
+            peak_window_end: selectedWindow.end,
+          }));
+          // IncludeSystem filter
+          const isMetaSourceName = (name: string) => {
+            const s = String(name || '').trim().toUpperCase();
+            return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+          };
+          if (!includeSystem) recs = recs.filter(r => !isMetaSourceName(r.source));
+          // Unhealthy only
+          recs = recs.filter(r => Number((r as any).flood_count ?? r.hits ?? 0) >= 10);
+          const result = { count: recs.length, records: recs };
+          if (myReq === reqRef.current) setData(result);
+          // Set domain to the selected window
+          setXDomain([new Date(selectedWindow.start).getTime(), new Date(selectedWindow.end).getTime()]);
+          return;
+        }
+
+        // No selected window: use ISA summary to plot top sources at each flood window
+        // Handle Month/Time Range anchoring similar to per-source
+        const deriveAndFetch = async (startIso?: string, endIso?: string) => {
+          // If we are fetching a whole month (timeRange === 'all'), allow more windows so later dates appear
+          const maxWindows = (startIso && endIso && timeRange === 'all') ? 1000 : 60;
+          const res: any = await fetchPvciIsaFloodSummary({ include_records: true, include_windows: true, include_alarm_details: true, top_n: 10, max_windows: maxWindows, start_time: startIso, end_time: endIso, timeout_ms: 12000 });
+          const list: any[] = Array.isArray(res?.records) ? res.records : [];
+          const points: any[] = [];
+          for (const r of list) {
+            const pws = r?.peak_window_start || r?.windows?.[0]?.window_start;
+            const pwe = r?.peak_window_end || r?.windows?.[0]?.window_end;
+            // Try multiple shapes for top sources
+            const tops: any[] = Array.isArray(r?.peak_window_details?.top_sources)
+              ? r.peak_window_details.top_sources
+              : (Array.isArray(r?.top_sources) ? r.top_sources : []);
+            for (const t of tops) {
+              const c = Number(t?.count || 0);
+              if (!c) continue;
+              points.push({
+                event_time: pws,
+                bin_end: pwe,
+                source: String(t?.source || 'Unknown'),
+                hits: c,
+                threshold: 10,
+                over_by: Math.max(0, c - 10),
+                rate_per_min: c / 10,
+                location_tag: undefined,
+                condition: undefined,
+                flood_count: c,
+                priority: (c >= 25 ? 'High' : c >= 15 ? 'Medium' : 'Low'),
+                peak_window_start: pws,
+                peak_window_end: pwe,
+              });
+            }
+          }
+          // IncludeSystem and unhealthy-only
+          const isMetaSourceName = (name: string) => {
+            const s = String(name || '').trim().toUpperCase();
+            return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+          };
+          let filtered = (includeSystem ? points : points.filter(p => !isMetaSourceName(p.source))).filter(p => (p.flood_count ?? p.hits ?? 0) >= 10);
+          // Guard: ensure we only keep points within requested time range when provided
+          if (startIso && endIso) {
+            const startMs = new Date(startIso).getTime();
+            const endMs = new Date(endIso).getTime();
+            filtered = filtered.filter(p => {
+              const ts = new Date(p.peak_window_start || p.event_time || p.bin_end || p.peak_window_end).getTime();
+              return ts >= startMs && ts <= endMs;
+            });
+          }
+          // When a bounded range is provided, set explicit domain
+          if (startIso && endIso) setXDomain([new Date(startIso).getTime(), new Date(endIso).getTime()]);
+          else setXDomain(null);
+          return { count: filtered.length, records: filtered };
+        };
+
+        let result: any = null;
+        if (selectedMonth === 'all') {
+          if (timeRange === 'all') {
+            result = await deriveAndFetch(undefined, undefined);
+          } else {
+            // Determine anchor within full dataset
+            const full = await fetchPvciIsaFloodSummary({ include_records: true, include_windows: true, include_alarm_details: false, top_n: 10, max_windows: 120, timeout_ms: 12000 });
+            const list: any[] = Array.isArray(full?.records) ? full.records : [];
+            if (!list || list.length === 0) {
+              // Nothing in full dataset (unlikely) — clear results and reset domain
+              const empty = { count: 0, records: [] as any[] };
+              if (myReq === reqRef.current) setData(empty);
+              setXDomain(null);
+              return;
+            }
+            const getTs = (r: any) => new Date(r?.peak_window_start || r?.windows?.[0]?.window_start || r?.start || 0).getTime();
+            const getPeak = (r: any) => Number(r?.peak_10min_count || 0);
+            const minTs = list.reduce((m, r) => Math.min(m, getTs(r) || Infinity), Infinity);
+            const maxTs = list.reduce((m, r) => Math.max(m, getTs(r) || 0), 0);
+            let anchorTs: number;
+            if (windowMode === 'peak') {
+              let best = list[0];
+              for (const rec of list) { if (getPeak(rec) > getPeak(best)) best = rec; }
+              anchorTs = getTs(best) || maxTs;
+            } else {
+              anchorTs = list.reduce((m, r) => Math.max(m, getTs(r)), 0) || maxTs;
+            }
+            const datasetStart = new Date(minTs === Infinity ? maxTs - windowMs : minTs);
+            const datasetEnd = new Date(maxTs || Date.now());
+            const anchorEnd = new Date(Math.min(anchorTs, datasetEnd.getTime()));
+            const anchorStart = new Date(Math.max(datasetStart.getTime(), anchorEnd.getTime() - windowMs));
+            result = await deriveAndFetch(anchorStart.toISOString(), anchorEnd.toISOString());
+          }
+        } else {
+          const month = availableMonths.find(m => m.value === selectedMonth);
+          const monthStart = month?.start || new Date(`${selectedMonth}-01T00:00:00Z`);
+          const monthEnd = month?.end || new Date(new Date(`${selectedMonth}-01T00:00:00Z`).getTime() + 32 * 24 * 60 * 60 * 1000);
+          if (timeRange === 'all') {
+            result = await deriveAndFetch(monthStart.toISOString(), monthEnd.toISOString());
+            // Full month range domain for context
+            setXDomain([monthStart.getTime(), monthEnd.getTime()]);
+          } else {
+            const full = await fetchPvciIsaFloodSummary({ include_records: true, include_windows: true, include_alarm_details: false, top_n: 10, max_windows: 120, start_time: monthStart.toISOString(), end_time: monthEnd.toISOString(), timeout_ms: 12000 });
+            const list: any[] = Array.isArray(full?.records) ? full.records : [];
+            if (!list || list.length === 0) {
+              // No plant-wide floods in this month; clear points and clamp domain to the month
+              const empty = { count: 0, records: [] as any[] };
+              if (myReq === reqRef.current) setData(empty);
+              setXDomain([monthStart.getTime(), monthEnd.getTime()]);
+              return;
+            }
+            const getTs = (r: any) => new Date(r?.peak_window_start || r?.windows?.[0]?.window_start || r?.start || 0).getTime();
+            const getPeak = (r: any) => Number(r?.peak_10min_count || 0);
+            let anchorTs: number;
+            if (windowMode === 'peak') {
+              let best = list[0];
+              for (const rec of list) { if (getPeak(rec) > getPeak(best)) best = rec; }
+              anchorTs = getTs(best) || monthEnd.getTime();
+            } else {
+              anchorTs = list.reduce((m, r) => Math.max(m, getTs(r)), 0) || monthEnd.getTime();
+            }
+            let anchorEnd = new Date(Math.min(anchorTs, monthEnd.getTime()));
+            let anchorStart = new Date(Math.max(monthStart.getTime(), anchorEnd.getTime() - windowMs));
+            if (anchorStart.getTime() + windowMs > monthEnd.getTime()) {
+              anchorStart = new Date(Math.max(monthStart.getTime(), monthEnd.getTime() - windowMs));
+              anchorEnd = new Date(Math.min(monthEnd.getTime(), anchorStart.getTime() + windowMs));
+            }
+            result = await deriveAndFetch(anchorStart.toISOString(), anchorEnd.toISOString());
+          }
+        }
+        if (myReq === reqRef.current) setData(result);
+        // Done flood mode
+        return;
+      }
+
+      // Per-source (existing behavior)
       let result: any = null;
       if (selectedMonth === 'all') {
         if (timeRange === 'all') {
@@ -155,9 +378,9 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
           result = await fetchAPI(undefined, undefined, '10T', 10, plantId);
           if (myReq === reqRef.current) setData(result);
           if (result && result.count === 0) console.log('No unhealthy sources found in entire dataset');
+          setXDomain(null);
           return;
         }
-        // Fetch full dataset to determine global anchor window across all months
         console.log('Fetching full dataset (All months, unbounded) to derive window');
         const fullResult = await fetchAPI(undefined, undefined, '10T', 10, plantId);
         if (!fullResult || fullResult.count === 0) {
@@ -194,28 +417,26 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
 
         console.log(`Derived global window (${windowMode}) ${anchorStart.toISOString()} → ${anchorEnd.toISOString()}`);
         result = await fetchAPI(anchorStart.toISOString(), anchorEnd.toISOString(), '10T', 10, plantId);
+        setXDomain([anchorStart.getTime(), anchorEnd.getTime()]);
       } else {
-        // Find month boundaries (UTC) from availableMonths or compute
         const month = availableMonths.find(m => m.value === selectedMonth);
         const monthStart = month?.start || new Date(`${selectedMonth}-01T00:00:00Z`);
         const monthEnd = month?.end || new Date(new Date(`${selectedMonth}-01T00:00:00Z`).getTime() + 32 * 24 * 60 * 60 * 1000);
 
-        // If timeRange is 'all', fetch full month directly
         if (timeRange === 'all') {
           console.log(`Fetching full month ${selectedMonth} dataset`);
           result = await fetchAPI(monthStart.toISOString(), monthEnd.toISOString(), '10T', 10, plantId);
           setData(result);
+          setXDomain([monthStart.getTime(), monthEnd.getTime()]);
           return;
         }
 
-        // First fetch the whole month to determine anchor time
         console.log(`Fetching month dataset ${selectedMonth}: ${monthStart.toISOString()} → ${monthEnd.toISOString()}`);
         const monthResult = await fetchAPI(monthStart.toISOString(), monthEnd.toISOString(), '10T', 10, plantId);
 
         if (!monthResult || monthResult.count === 0) {
           result = monthResult;
           setData(result);
-          // Log and exit early
           if (result && result.count === 0) {
             console.log('No unhealthy sources found for selected month');
           }
@@ -242,7 +463,6 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
 
         let anchorEnd = new Date(Math.min(anchorTs, monthEnd.getTime()));
         let anchorStart = new Date(Math.max(monthStart.getTime(), anchorEnd.getTime() - windowMs));
-        // Adjust if overflow
         if (anchorStart.getTime() + windowMs > monthEnd.getTime()) {
           anchorStart = new Date(Math.max(monthStart.getTime(), monthEnd.getTime() - windowMs));
           anchorEnd = new Date(Math.min(monthEnd.getTime(), anchorStart.getTime() + windowMs));
@@ -250,22 +470,19 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
 
         console.log(`Derived window (${windowMode}) ${anchorStart.toISOString()} → ${anchorEnd.toISOString()}`);
         result = await fetchAPI(anchorStart.toISOString(), anchorEnd.toISOString(), '10T', 10, plantId);
+        setXDomain([anchorStart.getTime(), anchorEnd.getTime()]);
       }
       setData(result);
-      
-      // Log the result for debugging
+
       if (result && result.count === 0) {
         console.log('No unhealthy sources found in the selected time range');
       } else if (result && result.count > 0) {
         console.log(`Found ${result.count} unhealthy sources`);
       }
-      
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch unhealthy sources data';
       setError(errorMessage);
       console.error('Error fetching unhealthy sources:', err);
-      
-      // Try to provide more helpful error information
       if (errorMessage.includes('404')) {
         setError('Unhealthy sources endpoint not found. Please check if the backend server is running.');
       } else if (errorMessage.includes('500')) {
@@ -628,7 +845,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                       <XAxis
                         type="number"
                         dataKey="x"
-                        domain={['dataMin', 'dataMax']}
+                        domain={xDomain ? [xDomain[0], xDomain[1]] as any : ['dataMin', 'dataMax']}
                         tickFormatter={(value) => new Date(value).toLocaleString()}
                         angle={-30}
                         textAnchor="end"
@@ -664,7 +881,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
                       <YAxis
                         type="number"
                         dataKey="x"
-                        domain={['dataMin', 'dataMax']}
+                        domain={xDomain ? [xDomain[0], xDomain[1]] as any : ['dataMin', 'dataMax']}
                         tickFormatter={(value) => new Date(value).toLocaleString()}
                         width={150}
                       />
