@@ -20,6 +20,8 @@ import PriorityBreakdownDonut from '@/components/PriorityBreakdownDonut';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import TopFloodWindowsChart, { TopFloodWindowRow } from '@/components/dashboard/TopFloodWindowsChart';
+import { Button } from '@/components/ui/button';
+import { Bot } from 'lucide-react';
 
 
 // Default plant used before API loads
@@ -427,14 +429,26 @@ export default function DashboardPage() {
       lastUpdated={data?.metrics.last_updated}
     >
       <div className="space-y-6">
-        {/* Plant Selector */}
+        {/* Plant Selector + Agent (PVC-I only) */}
         <div className="flex items-center justify-between">
-          <PlantSelector
-            plants={plants}
-            selectedPlant={selectedPlant}
-            onPlantChange={handlePlantChange}
-            disabled={plantsLoading || plants.length <= 1}
-          />
+          <div className="flex items-center gap-3">
+            <PlantSelector
+              plants={plants}
+              selectedPlant={selectedPlant}
+              onPlantChange={handlePlantChange}
+              disabled={plantsLoading || plants.length <= 1}
+            />
+            {selectedPlant.id === 'pvcI' && (
+              <Button
+                size="sm"
+                className="gap-2"
+                onClick={() => navigate(`/${selectedPlant.id.toLowerCase()}/agent`)}
+                title="Chat with the PVC-I Agent"
+              >
+                <Bot className="h-4 w-4" /> Agent
+              </Button>
+            )}
+          </div>
           <div className="flex items-center gap-3">
             {/* Global Include System toggle (PVC-II disabled) */}
             <div

@@ -67,6 +67,10 @@ try:
 except Exception:
     openai_client = None
 
+# Import and mount agent router AFTER env is loaded so agent sees OPENAI_API_KEY
+from agent.router import router as agent_router  # noqa: E402
+app.include_router(agent_router, prefix="/agent")
+
 INSIGHT_CACHE: Dict[str, Dict[str, Any]] = {}
 # Define the ALARM_DATA_DIR path
 BASE_DIR = os.path.dirname(__file__)
