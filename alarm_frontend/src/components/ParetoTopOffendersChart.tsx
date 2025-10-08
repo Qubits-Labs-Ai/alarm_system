@@ -580,7 +580,7 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={paretoData}
-              margin={{ top: 20, right: 40, left: 60, bottom: 100 }}
+              margin={{ top: 20, right: 20, left: 60, bottom: 100 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
               <XAxis 
@@ -594,15 +594,17 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
               />
               <YAxis 
                 yAxisId="left"
-                label={{ value: metricMode === 'exceedance' ? 'Exceedance (over threshold)' : 'Flood Count', angle: -90, position: 'insideLeft', offset: 10 }}
+                label={{ value: metricMode === 'exceedance' ? 'Exceedance (over threshold)' : 'Flood Count', angle: -90, position: 'left', offset: 0 }}
                 tick={{ fontSize: 12 }}
+                tickMargin={8}
               />
               <YAxis 
                 yAxisId="right"
                 orientation="right"
                 domain={[0, 100]}
                 tickFormatter={(v) => `${v}%`}
-                label={{ value: 'Cumulative %', angle: 90, position: 'insideRight', offset: 10 }}
+                label={{ value: 'Cumulative %', angle: 90, position: 'right', offset: 0 }}
+                tickMargin={8}
               />
               <Tooltip 
                 formatter={formatTooltip as any}

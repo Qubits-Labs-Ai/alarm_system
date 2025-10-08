@@ -564,9 +564,9 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
         </div>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Main Word Cloud - now fully responsive */}
-          <div className="lg:col-span-3 rounded-lg border-2 shadow-lg bg-card overflow-hidden relative aspect-video">
+          <div className="lg:col-span-8 rounded-lg border-2 shadow-lg bg-card overflow-hidden relative aspect-video">
             <div ref={containerRef} className="absolute top-0 left-0 w-full h-full p-4">
               {measured && containerWidth > 0 && (
                 <TooltipProvider>
@@ -591,8 +591,8 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
             </div>
           </div>
           
-          {/* Professional Controls & Stats */}
-          <div className="lg:col-span-1 space-y-4">
+          {/* Professional Controls & Stats (right column) */}
+          <div className="lg:col-span-4 space-y-4">
             {/* Weighting Controls */}
             <Card className="shadow-md">
               <CardHeader className="pb-3">
@@ -686,7 +686,10 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
                 </div>
               </CardContent>
             </Card>
-
+          </div>
+          
+          {/* Bottom Info: Definitions + Severity Scale placed under the cloud to prevent overflow */}
+          <div className="lg:col-span-12 grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Definitions */}
             <Card className="shadow-md">
               <CardHeader className="pb-3">
@@ -704,8 +707,8 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
                 </div>
               </CardContent>
             </Card>
-
-            {/* Color Legend */}
+            
+            {/* Severity Scale */}
             <Card className="shadow-md">
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm">Severity Scale</CardTitle>
@@ -736,6 +739,7 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
               </CardContent>
             </Card>
           </div>
+          
         </div>
       </CardContent>
     </Card>

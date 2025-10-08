@@ -198,7 +198,29 @@ class AgentLLM:
 
         # Fast-path for common 'compare' intent to improve reliability and avoid multi-tool errors
         ql = q.lower()
-        has_source_terms = any(t in ql for t in ["per-source", "per source", "source", "sources", "tags", "location", "condition"])
+        # Treat 'alarm' as synonymous with 'source' for per-source intent
+        has_source_terms = any(
+            t in ql
+            for t in [
+                "per-source",
+                "per source",
+                "source",
+                "sources",
+                "alarm",
+                "alarms",
+                "alarm source",
+                "alarm sources",
+                "tags",
+                "tag",
+                "tagnames",
+                "tag name",
+                "location",
+                "condition",
+            ]
+        )
+        # Extra cues for "which appears most" style questions
+        has_ranking_terms = any(t in ql for t in ["top", "most", "max", "highest", "peak", "zyada"])  # roman-Urdu: zyada
+        has_unhealthy_terms = any(t in ql for t in ["unhealthy", "flood"]) 
         has_plant_terms = any(t in ql for t in [
             "isa", "plant-wide", "plant wide", "10-minute", "10 min", "10min", "window", "windows", "flood window", "percent time in flood"
         ])
@@ -242,6 +264,70 @@ class AgentLLM:
                     "answer": "Not available in current data.",
                     "citations": cmp_data.get("citations", []),
                     "used_tools": ["compare_health_metrics"],
+                    "meta": {
+                        "model": AGENT_MODEL,
+                        "temperature": TEMPERATURE,
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "finish_reason": f"error:{type(e).__name__}",
+                    },
+                }
+
+        # General per-source fast-path: if user mentions alarm/source but not plant-wide terms,
+        # default to top unhealthy sources to avoid ISA snapshot fallback on short queries like "alarm".
+        if has_source_terms and not has_plant_terms:
+            try:
+                top_n = int(payload.top_n or 10)
+                top_data = tool_unhealthy_sources_top(top_n=top_n, sort_by="total_hits", windows_per_source=2) or {"data": []}
+                by_loc = tool_unhealthy_breakdown(by="location", top_n=10) or {"data": []}
+                by_cond = tool_unhealthy_breakdown(by="condition", top_n=10) or {"data": []}
+                citations = []
+                for csrc in (top_data.get("citations") or []) + (by_loc.get("citations") or []) + (by_cond.get("citations") or []):
+                    try:
+                        citations.append({
+                            "source": csrc.get("source"),
+                            "key": csrc.get("key"),
+                            "note": csrc.get("note"),
+                        })
+                    except Exception:
+                        pass
+
+                one_call_messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Using only the provided JSON, list the sources contributing most to unhealthiness (concise).\n"
+                            "Include a brief overview and 5-8 key sources with inline numbers (no tables).\n"
+                            "JSON top_sources: " + json.dumps(top_data.get("data", []), ensure_ascii=False) + "\n"
+                            "JSON by_location: " + json.dumps(by_loc.get("data", []), ensure_ascii=False) + "\n"
+                            "JSON by_condition: " + json.dumps(by_cond.get("data", []), ensure_ascii=False)
+                        ),
+                    },
+                ]
+                resp = self.client.chat.completions.create(
+                    model=AGENT_MODEL,
+                    messages=one_call_messages,
+                    temperature=TEMPERATURE,
+                )
+                choice = resp.choices[0]
+                content = (choice.message.content or "").strip()
+                return {
+                    "answer": content or "Not available in current data.",
+                    "citations": citations,
+                    "used_tools": ["unhealthy_sources_top", "unhealthy_breakdown"],
+                    "meta": {
+                        "model": AGENT_MODEL,
+                        "temperature": TEMPERATURE,
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "finish_reason": getattr(choice, "finish_reason", None),
+                        "mode": "single_call_per_source_default",
+                    },
+                }
+            except Exception as e:
+                return {
+                    "answer": "Not available in current data.",
+                    "citations": [],
+                    "used_tools": ["unhealthy_sources_top", "unhealthy_breakdown"],
                     "meta": {
                         "model": AGENT_MODEL,
                         "temperature": TEMPERATURE,
@@ -368,8 +454,8 @@ class AgentLLM:
                     },
                 }
 
-        # Fast-path for "which sources are making the plant unhealthy" style queries
-        if ("unhealthy" in ql or "flood" in ql) and ("source" in ql or "sources" in ql or "top" in ql):
+        # Fast-path for per-source queries asking about top/most or unhealthy/flood drivers
+        if has_source_terms and (has_unhealthy_terms or has_ranking_terms):
             try:
                 top_n = int(payload.top_n or 10)
                 top_data = tool_unhealthy_sources_top(top_n=top_n, sort_by="total_hits", windows_per_source=2) or {"data": []}
