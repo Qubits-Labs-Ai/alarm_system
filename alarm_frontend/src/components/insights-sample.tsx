@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE_URL } from '@/api/config';
+
 import { Card, CardContent, CardHeader, Typography, Box, Tabs, Tab, Chip, LinearProgress, Alert, Button, Accordion, AccordionSummary, AccordionDetails } from '@mui/material';
 import { TrendingUp, Warning, CheckCircle, ExpandMore, Analytics } from '@mui/icons-material';
 
@@ -8,16 +10,15 @@ const AlarmInsightsPanel = ({ chartData, sourceId }) => {
   const [activeTab, setActiveTab] = useState(0);
 
   const generateInsights = async () => {
-    setLoading(true);
     try {
-      // Call your backend API to generate insights
-      const response = await fetch('/api/generate-insights', {
+      // Call backend API using env-configured base (sample endpoint)
+      const response = await fetch(`${API_BASE_URL}/generate-insights`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           data: chartData,
-          selectedSource: sourceId 
-        })
+          selectedSource: sourceId,
+        }),
       });
       const insightsData = await response.json();
       setInsights(insightsData);

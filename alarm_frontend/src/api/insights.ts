@@ -1,3 +1,5 @@
+import { API_BASE_URL } from './config';
+
 /**
  * Fetches an AI-generated insight for a given chart from the backend.
  * @param chartTitle The title of the chart.
@@ -24,12 +26,10 @@ export const getInsight = async (
   chartData: any,
   options?: { regenerate?: boolean }
 ): Promise<InsightResponse> => {
-  // Vite uses import.meta.env; fall back to localhost:8000
-  const API_URL = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:8000';
   const regenerate = options?.regenerate ? 'true' : 'false';
 
   try {
-    const response = await fetch(`${API_URL}/insights?regenerate=${regenerate}`, {
+    const response = await fetch(`${API_BASE_URL}/insights?regenerate=${regenerate}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

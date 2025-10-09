@@ -1,6 +1,5 @@
-import { PlantHealthResponse, Plant } from '@/types/dashboard';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+ import { PlantHealthResponse, Plant } from '@/types/dashboard';
+ import { API_BASE_URL } from './config';
 
 // Simple request cache: in-memory + localStorage with TTL and in-flight de-duplication
 type CacheEntry<T = any> = { ts: number; data: T };

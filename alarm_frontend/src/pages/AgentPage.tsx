@@ -8,6 +8,7 @@ import { Sparkles, ArrowLeft, Copy, ThumbsUp, ThumbsDown, Share2, RotateCcw, Mor
 import { TextGenerateEffect } from "@/components/ui/text-generate-effect";
 import ReactMarkdown from "react-markdown";
 import { PlaceholdersAndVanishInput } from "@/components/ui/placeholders-and-vanish-input";
+import { API_BASE_URL } from "@/api/config";
 
 type ChatRole = "assistant" | "user";
 type ChatMessage = { id: string; role: ChatRole; content: string; pending?: boolean; animate?: boolean };
@@ -108,39 +109,18 @@ Bas ek line me apni need likhen; main short, cited jawab dunga.`;
   const askAgent = async (query: string, pendingId: string) => {
     setLoading(true);
     try {
-      const envBase = (import.meta as any)?.env?.VITE_API_URL as string | undefined;
-      const API_BASES = [
-        envBase || "",
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-      ].filter(Boolean) as string[];
-
-      let lastErr: any = null;
-      for (const base of API_BASES) {
-        try {
-          const res = await fetch(`${base}/agent/pvci/ask`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query }),
-          });
-          if (!res.ok) {
-            const errText = await res.text().catch(() => "");
-            lastErr = new Error(errText || `HTTP ${res.status}`);
-            continue;
-          }
-          const data = await res.json().catch(() => ({}));
-          const content: string = (data?.answer || "").trim() || "Not available in current data.";
-          setMessages((m) => m.map((mm) => (mm.id === pendingId ? { ...mm, content, pending: false, animate: true } : mm)));
-          lastErr = null;
-          break;
-        } catch (inner) {
-          lastErr = inner;
-          continue;
-        }
+      const res = await fetch(`${API_BASE_URL}/agent/pvci/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        throw new Error(errText || `HTTP ${res.status}`);
       }
-      if (lastErr) throw lastErr;
+      const data = await res.json().catch(() => ({}));
+      const content: string = (data?.answer || "").trim() || "Not available in current data.";
+      setMessages((m) => m.map((mm) => (mm.id === pendingId ? { ...mm, content, pending: false, animate: true } : mm)));
     } catch (e: any) {
       const msg = (e?.message || String(e) || "Request failed").slice(0, 500);
       setMessages((m) => m.map((mm) => (mm.id === pendingId ? { ...mm, content: `Error contacting agent API. ${msg}`, pending: false, animate: false } : mm)));
