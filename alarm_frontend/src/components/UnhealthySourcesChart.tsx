@@ -64,9 +64,11 @@ interface UnhealthySourcesChartProps {
   mode?: 'perSource' | 'flood';
   // Optional selected 10-min window for flood mode (aligns with TopFloodWindows/UnhealthyBarChart)
   selectedWindow?: SelectedWindowRef | null;
+  // Optional applied global date/time range (ISA-18 flood mode)
+  appliedRange?: { startTime?: string; endTime?: string };
 }
 
-const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className, plantId = 'pvcI', includeSystem: includeSystemProp, mode = 'perSource', selectedWindow = null }) => {
+const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className, plantId = 'pvcI', includeSystem: includeSystemProp, mode = 'perSource', selectedWindow = null, appliedRange }) => {
   const [data, setData] = useState<UnhealthySourcesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -99,9 +101,11 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
     openInsightModal(filteredRecords, title);
   };
 
+  const isExternallyRanged = Boolean(appliedRange?.startTime || appliedRange?.endTime);
+
   useEffect(() => {
     loadData();
-  }, [timeRange, selectedMonth, windowMode, plantId, availableMonths.length, mode, selectedWindow?.id, selectedWindow?.start, selectedWindow?.end]);
+  }, [timeRange, selectedMonth, windowMode, plantId, availableMonths.length, mode, selectedWindow?.id, selectedWindow?.start, selectedWindow?.end, appliedRange?.startTime, appliedRange?.endTime]);
 
   // Load months list once on mount (derive from full dataset)
   useEffect(() => {
@@ -296,6 +300,12 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
         };
 
         let result: any = null;
+        // If a global applied range is present, use it directly
+        if (appliedRange?.startTime || appliedRange?.endTime) {
+          result = await deriveAndFetch(appliedRange?.startTime, appliedRange?.endTime);
+          if (myReq === reqRef.current) setData(result);
+          return;
+        }
         if (selectedMonth === 'all') {
           if (timeRange === 'all') {
             result = await deriveAndFetch(undefined, undefined);
@@ -638,40 +648,44 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
-              {/* Month Selector */}
-              <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Month" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  {availableMonths.map(m => (
-                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {/* Window Mode */}
-              <Select value={windowMode} onValueChange={(v) => setWindowMode(v as any)}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Window" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="recent">Most Recent</SelectItem>
-                  <SelectItem value="peak">Peak Activity</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={timeRange} onValueChange={setTimeRange}>
-                <SelectTrigger className="w-24">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1h">1H</SelectItem>
-                  <SelectItem value="6h">6H</SelectItem>
-                  <SelectItem value="24h">24H</SelectItem>
-                  <SelectItem value="7d">7D</SelectItem>
-                  <SelectItem value="all">All</SelectItem>
-                </SelectContent>
-              </Select>
+              {!isExternallyRanged && (
+                <>
+                  {/* Month Selector */}
+                  <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+                    <SelectTrigger className="w-36">
+                      <SelectValue placeholder="Month" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      {availableMonths.map(m => (
+                        <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {/* Window Mode */}
+                  <Select value={windowMode} onValueChange={(v) => setWindowMode(v as any)}>
+                    <SelectTrigger className="w-36">
+                      <SelectValue placeholder="Window" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="recent">Most Recent</SelectItem>
+                      <SelectItem value="peak">Peak Activity</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={timeRange} onValueChange={setTimeRange}>
+                    <SelectTrigger className="w-24">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1h">1H</SelectItem>
+                      <SelectItem value="6h">6H</SelectItem>
+                      <SelectItem value="24h">24H</SelectItem>
+                      <SelectItem value="7d">7D</SelectItem>
+                      <SelectItem value="all">All</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </>
+              )}
               <Button variant="outline" size="sm" onClick={loadData}>
                 <Clock className="h-4 w-4 mr-1" />
                 Refresh

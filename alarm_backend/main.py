@@ -308,6 +308,8 @@ def get_pvcI_unhealthy_sources(
     alarm_threshold: int = 10,
     max_workers: int = 4,
     per_file_timeout: int | None = 30,
+    aggregate: bool = False,
+    limit: int | None = None,
 ):
     """
     Get detailed unhealthy source bins with full metadata for plotting.
@@ -352,6 +354,7 @@ def get_pvcI_unhealthy_sources(
                         return bool(name and name.strip())
 
                     records: list[dict] = []
+                    agg_by_source: dict[str, int] = {} if aggregate else None  # type: ignore
                     for src_name, stats in per_source.items():
                         if not _is_valid_alarm_source(str(src_name)):
                             continue
@@ -377,43 +380,70 @@ def get_pvcI_unhealthy_sources(
                             else:
                                 prio_sev = "Low"
 
-                            record = {
-                                "event_time": bstart.isoformat(),
-                                "bin_end": bend.isoformat(),
-                                "source": str(src_name),  # real alarm tag/source
-                                "hits": hits,
-                                "threshold": thr,
-                                "over_by": int(det.get("over_by", max(0, hits - thr))),
-                                "rate_per_min": float(det.get("rate_per_min", round(hits / 10.0, 2))),
-                                # pass-through human fields when present in JSON
-                                "location_tag": det.get("location_tag"),
-                                "condition": det.get("condition", "Alarm Threshold Exceeded"),
-                                "action": det.get("action", "Monitor and Investigate"),
-                                # keep both: raw priority from JSON (if any) and computed severity label
-                                "priority": det.get("priority"),
-                                "priority_severity": prio_sev,
-                                "description": det.get("description", f"Source exceeded {thr} alarms in 10-minute window"),
-                                "value": hits,
-                                "units": "alarms",
-                                # pass-through extras when available in saved JSON
-                                "flood_count": det.get("flood_count"),
-                                "peak_window_start": det.get("peak_window_start"),
-                                "peak_window_end": det.get("peak_window_end"),
-                                "setpoint_value": det.get("setpoint_value"),
-                                "raw_units": det.get("units"),
-                            }
-                            records.append(record)
+                            if aggregate:
+                                src_key = str(src_name)
+                                agg_by_source[src_key] = agg_by_source.get(src_key, 0) + hits  # type: ignore
+                            else:
+                                record = {
+                                    "event_time": bstart.isoformat(),
+                                    "bin_end": bend.isoformat(),
+                                    "source": str(src_name),  # real alarm tag/source
+                                    "hits": hits,
+                                    "threshold": thr,
+                                    "over_by": int(det.get("over_by", max(0, hits - thr))),
+                                    "rate_per_min": float(det.get("rate_per_min", round(hits / 10.0, 2))),
+                                    # pass-through human fields when present in JSON
+                                    "location_tag": det.get("location_tag"),
+                                    "condition": det.get("condition", "Alarm Threshold Exceeded"),
+                                    "action": det.get("action", "Monitor and Investigate"),
+                                    # keep both: raw priority from JSON (if any) and computed severity label
+                                    "priority": det.get("priority"),
+                                    "priority_severity": prio_sev,
+                                    "description": det.get("description", f"Source exceeded {thr} alarms in 10-minute window"),
+                                    "value": hits,
+                                    "units": "alarms",
+                                    # pass-through extras when available in saved JSON
+                                    "flood_count": det.get("flood_count"),
+                                    "peak_window_start": det.get("peak_window_start"),
+                                    "peak_window_end": det.get("peak_window_end"),
+                                    "setpoint_value": det.get("setpoint_value"),
+                                    "raw_units": det.get("units"),
+                                }
+                                records.append(record)
 
-                    # Sort by hits desc
-                    records.sort(key=lambda r: r["hits"], reverse=True)
+                    if aggregate:
+                        # Build aggregated list sorted by total hits per source
+                        items = sorted(({"source": k, "hits": int(v)} for k, v in agg_by_source.items()), key=lambda x: x["hits"], reverse=True)  # type: ignore
+                        if isinstance(limit, int) and limit > 0:
+                            items = items[:limit]
+                        served_from_cache = True
+                        return {
+                            "count": len(items),
+                            "records": [
+                                {
+                                    "event_time": start_time,
+                                    "bin_end": end_time,
+                                    "source": it["source"],
+                                    "hits": it["hits"],
+                                    "threshold": alarm_threshold,
+                                    "over_by": max(0, int(it["hits"]) - int(alarm_threshold)),
+                                }
+                                for it in items
+                            ],
+                            "isHistoricalData": True,
+                            "note": "Aggregated per-source counts from saved JSON (fast path)",
+                        }
+                    else:
+                        # Sort by hits desc
+                        records.sort(key=lambda r: r["hits"], reverse=True)
 
-                    served_from_cache = True
-                    return {
-                        "count": len(records),
-                        "records": records,
-                        "isHistoricalData": True,
-                        "note": "Unhealthy sources derived from per-source details in saved JSON",
-                    }
+                        served_from_cache = True
+                        return {
+                            "count": len(records),
+                            "records": records,
+                            "isHistoricalData": True,
+                            "note": "Unhealthy sources derived from per-source details in saved JSON",
+                        }
 
                 # If per_source missing (older JSON), fall back to file-level aggregation (less accurate)
                 files_data = saved_data.get("files", []) or []
@@ -475,6 +505,67 @@ def get_pvcI_unhealthy_sources(
         return result
     except Exception as e:
         logger.error(f"Error in unhealthy-sources endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ISA-18 plant-wide flood summary (PVC-I) with optional time-range
+@app.get("/pvcI-health/isa-flood-summary", response_class=ORJSONResponse)
+def pvcI_isa_flood_summary(
+    window_minutes: int = 10,
+    threshold: int = 10,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    include_records: bool = False,
+    include_windows: bool = True,
+    include_alarm_details: bool = True,
+    top_n: int = 10,
+    max_windows: int | None = 10,
+    raw: bool = True,
+    events_sample: bool = False,
+    events_sample_max: int = 0,
+):
+    """ISA-18 sliding-window flood summary for PVC-I.
+
+    - If no start_time/end_time are provided and a pre-saved JSON exists, serve it directly (fast path).
+    - If a custom time range is provided, compute live using CSVs from PVCI_FOLDER.
+    """
+    try:
+        # Fast path: serve pre-saved JSON when no explicit range provided
+        if not start_time and not end_time and raw:
+            try:
+                base_dir = os.path.dirname(__file__)
+                candidates = [
+                    os.path.join(base_dir, "PVCI-overall-health", "PVCI-plant-wide-latest.json"),
+                    os.path.join(base_dir, "PVCI-overall-health", "isa18-flood-summary.json"),
+                ]
+                for fp in candidates:
+                    if os.path.exists(fp):
+                        with open(fp, "r", encoding="utf-8") as f:
+                            saved = json.load(f)
+                        # Return as-is to preserve structure expected by frontend when raw=true
+                        return saved
+            except Exception as ex:
+                logger.warning(f"Failed reading saved ISA-18 JSON: {_sanitize_error_message(ex)}. Falling back to compute.")
+
+        # Compute on demand (supports range and flags)
+        result = compute_isa18_flood_summary(
+            PVCI_FOLDER,
+            window_minutes=window_minutes,
+            threshold=threshold,
+            operator_map=None,
+            start_time=start_time,
+            end_time=end_time,
+            include_records=include_records,
+            include_windows=include_windows,
+            include_alarm_details=include_alarm_details,
+            top_n=top_n,
+            max_windows=max_windows,
+            events_sample=events_sample,
+            events_sample_max=events_sample_max,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"isa-flood-summary error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/pvcI-health/file/{filename}")

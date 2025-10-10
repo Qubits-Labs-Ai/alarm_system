@@ -64,7 +64,7 @@ const isMetaSource = (name: string) => {
   return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
 };
 
-const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; includeSystem?: boolean; mode?: 'perSource' | 'flood' }> = ({ className, plantId = 'pvcI', includeSystem = true, mode = 'perSource' }) => {
+const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; includeSystem?: boolean; mode?: 'perSource' | 'flood'; appliedRange?: { startTime?: string; endTime?: string } }> = ({ className, plantId = 'pvcI', includeSystem = true, mode = 'perSource', appliedRange }) => {
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
   const [records, setRecords] = React.useState<UnhealthyRecord[]>([]);
@@ -90,7 +90,7 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
   React.useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMonth, timeRange, windowMode, plantId]);
+  }, [selectedMonth, timeRange, windowMode, plantId, appliedRange?.startTime, appliedRange?.endTime, mode]);
 
   const getWindowMs = (tr: string) => {
     switch (tr) {
@@ -138,8 +138,11 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
 
       const windowMs = getWindowMs(timeRange);
       let result: any = null;
+      const isExternallyRanged = Boolean(appliedRange?.startTime || appliedRange?.endTime);
 
-      if (selectedMonth === 'all') {
+      if (isExternallyRanged) {
+        result = await fetchUnhealthySources(appliedRange?.startTime, appliedRange?.endTime, '10T', 10, plantId);
+      } else if (selectedMonth === 'all') {
         if (timeRange === 'all') {
           result = await fetchUnhealthySources(undefined, undefined, '10T', 10, plantId);
         } else {
@@ -399,6 +402,8 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
     return [value, name];
   };
 
+  const isExternallyRanged = Boolean(appliedRange?.startTime || appliedRange?.endTime);
+
   if (loading) {
     return (
       <Card className={className}>
@@ -452,38 +457,42 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
                   Clear • {drillLocation}
                 </Button>
               )}
-              <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Month" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  {availableMonths.map(m => (
-                    <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={windowMode} onValueChange={(v) => setWindowMode(v as any)}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Window" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="recent">Most Recent</SelectItem>
-                  <SelectItem value="peak">Peak Activity</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select value={timeRange} onValueChange={setTimeRange}>
-                <SelectTrigger className="w-20">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1h">1H</SelectItem>
-                  <SelectItem value="6h">6H</SelectItem>
-                  <SelectItem value="24h">24H</SelectItem>
-                  <SelectItem value="7d">7D</SelectItem>
-                  <SelectItem value="all">All</SelectItem>
-                </SelectContent>
-              </Select>
+              {!isExternallyRanged && (
+                <>
+                  <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+                    <SelectTrigger className="w-36">
+                      <SelectValue placeholder="Month" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      {availableMonths.map(m => (
+                        <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={windowMode} onValueChange={(v) => setWindowMode(v as any)}>
+                    <SelectTrigger className="w-36">
+                      <SelectValue placeholder="Window" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="recent">Most Recent</SelectItem>
+                      <SelectItem value="peak">Peak Activity</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={timeRange} onValueChange={setTimeRange}>
+                    <SelectTrigger className="w-20">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1h">1H</SelectItem>
+                      <SelectItem value="6h">6H</SelectItem>
+                      <SelectItem value="24h">24H</SelectItem>
+                      <SelectItem value="7d">7D</SelectItem>
+                      <SelectItem value="all">All</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -517,26 +526,30 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
                 Clear • {drillLocation}
               </Button>
             )}
-            <Select value={selectedMonth} onValueChange={setSelectedMonth}>
-              <SelectTrigger className="w-36">
-                <SelectValue placeholder="Month" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                {availableMonths.map(m => (
-                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={windowMode} onValueChange={(v) => setWindowMode(v as any)}>
-              <SelectTrigger className="w-36">
-                <SelectValue placeholder="Window" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="recent">Most Recent</SelectItem>
-                <SelectItem value="peak">Peak Activity</SelectItem>
-              </SelectContent>
-            </Select>
+            {!isExternallyRanged && (
+              <>
+                <Select value={selectedMonth} onValueChange={setSelectedMonth}>
+                  <SelectTrigger className="w-36">
+                    <SelectValue placeholder="Month" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    {availableMonths.map(m => (
+                      <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={windowMode} onValueChange={(v) => setWindowMode(v as any)}>
+                  <SelectTrigger className="w-36">
+                    <SelectValue placeholder="Window" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="recent">Most Recent</SelectItem>
+                    <SelectItem value="peak">Peak Activity</SelectItem>
+                  </SelectContent>
+                </Select>
+              </>
+            )}
             <Select value={metricMode} onValueChange={(v) => setMetricMode(v as any)}>
               <SelectTrigger className="w-40">
                 <SelectValue placeholder="Metric" />
@@ -556,18 +569,20 @@ const ParetoTopOffendersChart: React.FC<{ className?: string; plantId?: string; 
                 <SelectItem value="20">Top 20</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={timeRange} onValueChange={setTimeRange}>
-              <SelectTrigger className="w-20">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1h">1H</SelectItem>
-                <SelectItem value="6h">6H</SelectItem>
-                <SelectItem value="24h">24H</SelectItem>
-                <SelectItem value="7d">7D</SelectItem>
-                <SelectItem value="all">All</SelectItem>
-              </SelectContent>
-            </Select>
+            {!isExternallyRanged && (
+              <Select value={timeRange} onValueChange={setTimeRange}>
+                <SelectTrigger className="w-20">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1h">1H</SelectItem>
+                  <SelectItem value="6h">6H</SelectItem>
+                  <SelectItem value="24h">24H</SelectItem>
+                  <SelectItem value="7d">7D</SelectItem>
+                  <SelectItem value="all">All</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
             <InsightButton onClick={handleInsightClick} disabled={loading || paretoData.length === 0} />
             <Button variant="outline" size="sm" onClick={fetchData}>
               <RefreshCw className="h-4 w-4" />

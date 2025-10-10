@@ -216,7 +216,8 @@ export async function fetchUnhealthySources(
   endTime?: string,
   binSize: string = '10T',
   alarmThreshold: number = 10,
-  plantId: string = 'pvcI'
+  plantId: string = 'pvcI',
+  options?: { aggregate?: boolean; limit?: number; timeout_ms?: number }
 ) {
   // Only call the real endpoint. No synthetic fallbacks.
   try {
@@ -226,9 +227,12 @@ export async function fetchUnhealthySources(
 
     if (startTime) url.searchParams.set('start_time', startTime);
     if (endTime) url.searchParams.set('end_time', endTime);
+    if (options?.aggregate) url.searchParams.set('aggregate', 'true');
+    if (typeof options?.limit === 'number') url.searchParams.set('limit', String(options.limit));
 
-    // Filtered datasets can still be cached briefly; keep 15 minutes default
-    const data = await fetchWithCache(url.toString(), 15 * 60 * 1000);
+    // Aggregated responses can be cached shorter
+    const ttl = options?.aggregate ? 5 * 60 * 1000 : 15 * 60 * 1000;
+    const data = await fetchWithCache(url.toString(), ttl, options?.timeout_ms);
     return data;
   } catch (error) {
     console.warn('Unhealthy sources request failed:', error);

@@ -60,6 +60,7 @@ interface Props {
   timePickerDomain?: { start: string; end: string; peakStart?: string; peakEnd?: string };
   unhealthyWindows?: Array<{ start: string; end: string; label?: string }>;
   validateWindow?: (startIso: string, endIso: string) => Promise<boolean>;
+  appliedRange?: { startTime?: string; endTime?: string };
 }
 
 const CONDITION_LIMIT = 10;
@@ -100,6 +101,7 @@ const ConditionDistributionByLocationPlantWide: React.FC<Props> = ({
   timePickerDomain,
   unhealthyWindows,
   validateWindow,
+  appliedRange,
 }) => {
   const [loading, setLoading] = React.useState<boolean>(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -125,7 +127,7 @@ const ConditionDistributionByLocationPlantWide: React.FC<Props> = ({
     if (activeWindow) return activeWindow;
     // Fallback: use ISA summary to find the global peak window
     try {
-      const res: any = await fetchPvciIsaFloodSummary({ include_records: true, include_windows: true, include_alarm_details: true, top_n: 10, max_windows: 10 });
+      const res: any = await fetchPvciIsaFloodSummary({ include_records: true, include_windows: true, include_alarm_details: true, top_n: 10, max_windows: 10, start_time: appliedRange?.startTime, end_time: appliedRange?.endTime });
       const list: any[] = Array.isArray(res?.records) ? res.records : [];
       let best: any | null = null;
       for (const r of list) {

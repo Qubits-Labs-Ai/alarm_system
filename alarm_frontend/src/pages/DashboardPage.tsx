@@ -14,13 +14,14 @@ import ConditionDistributionByLocationPlantWide from '@/components/ConditionDist
 import { useAuth } from '@/hooks/useAuth';
 import { usePlantHealth } from '@/hooks/usePlantHealth';
 import { Plant } from '@/types/dashboard';
-import { fetchPlants, fetchUnhealthySources, fetchPvciIsaFloodSummary, clearApiCache } from '@/api/plantHealth';
+import { fetchPlants, fetchUnhealthySources, fetchPvciIsaFloodSummary, clearApiCache, fetchPvciWindowSourceDetails } from '@/api/plantHealth';
 import { UnhealthyBar } from '@/types/dashboard';
 import PriorityBreakdownDonut from '@/components/PriorityBreakdownDonut';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import TopFloodWindowsChart, { TopFloodWindowRow } from '@/components/dashboard/TopFloodWindowsChart';
 import { Button } from '@/components/ui/button';
+import DateTimeRangePicker from '@/components/dashboard/DateTimeRangePicker';
 import { Bot } from 'lucide-react';
 
 
@@ -36,13 +37,7 @@ export default function DashboardPage() {
   const [topN, setTopN] = useState<1 | 3>(1);
   const [mode, setMode] = useState<'perSource' | 'flood'>('flood');
   
-  const { 
-    data, 
-    isLoading, 
-    error, 
-    refetch, 
-    isFetching 
-  } = usePlantHealth(selectedPlant.id, topN, mode);
+  
 
   // Local state for UnhealthyBarChart derived from real alarm sources
   const [unhealthyBarData, setUnhealthyBarData] = useState<UnhealthyBar[]>([]);
@@ -63,8 +58,36 @@ export default function DashboardPage() {
   const [timePickerDomain, setTimePickerDomain] = useState<{ start: string; end: string; peakStart?: string; peakEnd?: string } | null>(null);
   // Global include system toggle
   const [includeSystem, setIncludeSystem] = useState<boolean>(true);
+  // Global date/time range for ISA-18 plant-wide mode only (applied range)
+  const [isaRange, setIsaRange] = useState<{ startTime?: string; endTime?: string } | undefined>(undefined);
+  // Input controls (datetime-local strings) before applying
+  const [rangeInput, setRangeInput] = useState<{ start: string; end: string }>({ start: '', end: '' });
+
+  const toIso = (v?: string) => (v ? new Date(v).toISOString() : undefined);
+  const applyIsaRange = () => {
+    setIsaRange({ startTime: toIso(rangeInput.start), endTime: toIso(rangeInput.end) });
+  };
+  const clearIsaRange = () => {
+    setIsaRange(undefined);
+    setRangeInput({ start: '', end: '' });
+  };
   // Disable Include System toggle for PVC-II (not supported yet)
   const isIncludeSystemDisabled = selectedPlant.id === 'pvcII';
+
+  // Fetch ISA-18 summary (cards) and per-source metrics via hook; now safe to reference isaRange
+  const { 
+    data, 
+    isLoading, 
+    error, 
+    refetch, 
+    isFetching 
+  } = usePlantHealth(
+    selectedPlant.id,
+    topN,
+    mode,
+    false,
+    (mode === 'flood' && selectedPlant.id === 'pvcI') ? isaRange : undefined
+  );
 
   // Force mode to 'perSource' for plants that don't support flood mode (e.g., PVC-II)
   useEffect(() => {
@@ -133,160 +156,126 @@ export default function DashboardPage() {
       try {
         setUnhealthyBarsLoading(true);
         if (mode === 'flood' && selectedPlant.id === 'pvcI') {
-          // Flood mode: aggregate per-source counts across ISA peak windows
-          const res = await fetchPvciIsaFloodSummary({
-            include_records: true,
-            include_windows: true,
-            include_alarm_details: true,
-            top_n: 10,
-            max_windows: 10,
-          });
-          const records: any[] = Array.isArray(res?.records) ? res.records : [];
-
-          const totals: Record<string, number> = {};
-          const rep: Record<string, { start?: string; end?: string; count: number } | undefined> = {};
-
-          for (const rec of records) {
-            const topSources: any[] = rec?.peak_window_details?.top_sources || [];
-            const start: string | undefined = rec?.peak_window_start || rec?.windows?.[0]?.window_start;
-            const end: string | undefined = rec?.peak_window_end || rec?.windows?.[0]?.window_end;
-            for (const item of topSources) {
-              const src = String(item?.source || 'Unknown');
-              const c = Number(item?.count || 0);
-              if (!c) continue;
-              totals[src] = (totals[src] || 0) + c;
-              const best = rep[src];
-              if (!best || c > best.count) {
-                rep[src] = { start, end, count: c };
-              }
-            }
-          }
-
-          let bars: UnhealthyBar[] = Object.entries(totals).map(([src, sum]) => {
-            const r = rep[src];
-            const bin_start = r?.start || new Date().toISOString();
-            const bin_end = r?.end || new Date(Date.now() + 10 * 60 * 1000).toISOString();
-            return {
-              id: `${src}-${bin_start}`,
-              source: src,
-              hits: sum,
-              threshold: 10,
-              over_by: Math.max(0, sum - 10),
-              bin_start,
-              bin_end,
-            } as UnhealthyBar;
-          });
-
-          // We'll apply selected-window override after we build windowMap below.
-
-          // Build Top Flood Windows dataset (peak 10-min windows per interval)
-          const windowRows: TopFloodWindowRow[] = [];
-          const windowMap: Record<string, Array<{ source: string; count: number }>> = {};
-          // For time picker domain
-          let domainStartISO: string | null = null;
-          let domainEndISO: string | null = null;
-          let peakBestStart: string | undefined = undefined;
-          let peakBestEnd: string | undefined = undefined;
-          let peakBestCount = -1;
-          for (const rec of records) {
-            let peakCount: number | undefined = Number(rec?.peak_10min_count);
-            let start: string | undefined = rec?.peak_window_start;
-            let end: string | undefined = rec?.peak_window_end;
-            if (!peakCount || !start || !end) {
-              const ws: any[] = Array.isArray(rec?.windows) ? rec.windows : [];
-              if (ws.length > 0) {
-                const bestW = ws.reduce((m, w) => (Number(w?.count || 0) > Number(m?.count || 0) ? w : m), ws[0]);
-                peakCount = Number(bestW?.count || 0);
-                start = bestW?.window_start;
-                end = bestW?.window_end;
-              }
-            }
-            if (!peakCount || !start || !end) continue;
-            const rate = typeof rec?.peak_rate_per_min === 'number' ? Number(rec.peak_rate_per_min) : peakCount / 10;
-            const top_sources = Array.isArray(rec?.peak_window_details?.top_sources)
-              ? rec.peak_window_details.top_sources.slice(0, 5)
-              : [];
-            const label = `${new Date(start).toLocaleString()} — ${new Date(end).toLocaleString()}`;
-            windowRows.push({
-              id: String(start),
-              label,
-              flood_count: peakCount,
-              start,
-              end,
-              start_ts: new Date(start).getTime(),
-              rate_per_min: rate,
-              top_sources,
-            });
-            windowMap[String(start)] = top_sources;
-
-            // update domain min/max
-            if (!domainStartISO || new Date(start) < new Date(domainStartISO)) domainStartISO = start;
-            if (!domainEndISO || new Date(end) > new Date(domainEndISO)) domainEndISO = end;
-            // track global peak window
-            if (peakCount > peakBestCount) {
-              peakBestCount = peakCount;
-              peakBestStart = start;
-              peakBestEnd = end;
-            }
-          }
-
-          windowRows.sort((a, b) => b.flood_count - a.flood_count);
-
-          // Selected-window override using the fresh windowMap from the same response
-          if (selectedWindow) {
-            const tops = windowMap[selectedWindow.id];
-            if (Array.isArray(tops) && tops.length > 0) {
-              const filtered = tops.filter(s => {
-                const name = String(s?.source || '').trim();
-                if (!name) return false;
-                return (s?.count || 0) >= 10; // unhealthy only
-              });
-              let selBars: UnhealthyBar[] = filtered.map(s => ({
+          // Start bars and windows in parallel so bars don't wait on summary
+          const barsPromise = (async () => {
+            let bars: UnhealthyBar[] = [];
+            if (selectedWindow) {
+              const det = await fetchPvciWindowSourceDetails(selectedWindow.start, selectedWindow.end, 100);
+              const topSources: Array<{ source: string; count: number }> = Array.isArray(det?.top_sources) ? det.top_sources : [];
+              bars = (topSources || []).map((s) => ({
                 id: `${s.source}-${selectedWindow.start}`,
-                source: s.source,
+                source: String(s.source || 'Unknown'),
                 hits: Number(s.count || 0),
                 threshold: 10,
                 over_by: Math.max(0, Number(s.count || 0) - 10),
                 bin_start: selectedWindow.start,
                 bin_end: selectedWindow.end,
               }));
-              selBars = selBars.filter(b => (b?.hits ?? 0) >= 10).sort((a, b) => b.hits - a.hits).slice(0, 50);
-              bars = selBars;
+              bars = bars.filter(b => (b?.hits ?? 0) >= 10).sort((a, b) => b.hits - a.hits).slice(0, 50);
             } else {
-              // Fallback: slider-picked arbitrary window -> fetch detailed records for that exact window
-              const windowRes = await fetchUnhealthySources(selectedWindow.start, selectedWindow.end, '10T', 10, selectedPlant.id);
-              const winRecords: any[] = Array.isArray(windowRes?.records) ? windowRes.records : [];
-              const bySrc: Record<string, number> = {};
-              for (const r of winRecords) {
+              const res2 = await fetchUnhealthySources(
+                isaRange?.startTime,
+                isaRange?.endTime,
+                '10T',
+                10,
+                selectedPlant.id,
+                { aggregate: true, limit: 50, timeout_ms: 15000 }
+              );
+              const records2 = Array.isArray(res2?.records) ? res2.records : [];
+              const isMetaSource = (name: string) => {
+                const s = String(name || '').trim().toUpperCase();
+                if (!s) return false;
+                return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+              };
+              const base = includeSystem ? records2 : records2.filter((r: any) => !isMetaSource(r?.source));
+              const bySource: Record<string, number> = {};
+              for (const r of base) {
                 const src = String(r?.source || 'Unknown').trim();
-                const c = Number(typeof r?.flood_count === 'number' ? r.flood_count : r?.hits || 0);
-                if (c > 0) bySrc[src] = (bySrc[src] || 0) + c;
+                const c = Number(typeof (r as any)?.flood_count === 'number' ? (r as any).flood_count : r?.hits || 0);
+                if (c > 0) bySource[src] = (bySource[src] || 0) + c;
               }
-              let selBars: UnhealthyBar[] = Object.entries(bySrc).map(([src, sum]) => ({
-                id: `${src}-${selectedWindow.start}`,
+              bars = Object.entries(bySource).map(([src, sum]) => ({
+                id: `${src}-${isaRange?.startTime || 'agg'}`,
                 source: src,
                 hits: sum,
                 threshold: 10,
                 over_by: Math.max(0, sum - 10),
-                bin_start: selectedWindow.start,
-                bin_end: selectedWindow.end,
+                bin_start: isaRange?.startTime || new Date().toISOString(),
+                bin_end: isaRange?.endTime || new Date(Date.now() + 10 * 60 * 1000).toISOString(),
               }));
-              selBars = selBars.filter(b => (b?.hits ?? 0) >= 10).sort((a, b) => b.hits - a.hits).slice(0, 50);
-              bars = selBars;
+              bars = bars.filter(b => (b?.hits ?? 0) >= 10).sort((a, b) => b.hits - a.hits).slice(0, 50);
             }
-          } else {
-            // No selection: keep aggregated bars, filter and cap
-            bars = bars.filter(b => (b?.hits ?? 0) >= 10).sort((a, b) => b.hits - a.hits).slice(0, 50);
-          }
+            if (mounted) setUnhealthyBarData(bars);
+          })();
 
-          if (mounted) {
-            setUnhealthyBarData(bars);
-            setTopWindows(windowRows);
-            setWindowTopSources(windowMap);
-            if (domainStartISO && domainEndISO) {
-              setTimePickerDomain({ start: domainStartISO, end: domainEndISO, peakStart: peakBestStart, peakEnd: peakBestEnd });
+          const windowsPromise = (async () => {
+            const res = await fetchPvciIsaFloodSummary({
+              include_records: true,
+              include_windows: true,
+              include_alarm_details: false,
+              top_n: 5,
+              max_windows: 5,
+              start_time: isaRange?.startTime,
+              end_time: isaRange?.endTime,
+            });
+            const records: any[] = Array.isArray(res?.records) ? res.records : [];
+
+            const windowRows: TopFloodWindowRow[] = [];
+            const windowMap: Record<string, Array<{ source: string; count: number }>> = {};
+            let domainStartISO: string | null = null;
+            let domainEndISO: string | null = null;
+            let peakBestStart: string | undefined = undefined;
+            let peakBestEnd: string | undefined = undefined;
+            let peakBestCount = -1;
+            for (const rec of records) {
+              let peakCount: number | undefined = Number(rec?.peak_10min_count);
+              let start: string | undefined = rec?.peak_window_start;
+              let end: string | undefined = rec?.peak_window_end;
+              if (!peakCount || !start || !end) {
+                const ws: any[] = Array.isArray(rec?.windows) ? rec.windows : [];
+                if (ws.length > 0) {
+                  const bestW = ws.reduce((m, w) => (Number(w?.count || 0) > Number(m?.count || 0) ? w : m), ws[0]);
+                  peakCount = Number(bestW?.count || 0);
+                  start = bestW?.window_start;
+                  end = bestW?.window_end;
+                }
+              }
+              if (!peakCount || !start || !end) continue;
+              const rate = typeof rec?.peak_rate_per_min === 'number' ? Number(rec.peak_rate_per_min) : peakCount / 10;
+              const top_sources = Array.isArray(rec?.peak_window_details?.top_sources)
+                ? rec.peak_window_details.top_sources.slice(0, 5)
+                : [];
+              const label = `${new Date(start).toLocaleString()} — ${new Date(end).toLocaleString()}`;
+              windowRows.push({
+                id: String(start),
+                label,
+                flood_count: peakCount,
+                start,
+                end,
+                start_ts: new Date(start).getTime(),
+                rate_per_min: rate,
+                top_sources,
+              });
+              windowMap[String(start)] = top_sources;
+              if (!domainStartISO || new Date(start) < new Date(domainStartISO)) domainStartISO = start;
+              if (!domainEndISO || new Date(end) > new Date(domainEndISO)) domainEndISO = end;
+              if (peakCount > peakBestCount) {
+                peakBestCount = peakCount;
+                peakBestStart = start;
+                peakBestEnd = end;
+              }
             }
-          }
+            windowRows.sort((a, b) => b.flood_count - a.flood_count);
+            if (mounted) {
+              setTopWindows(windowRows);
+              setWindowTopSources(windowMap);
+              if (domainStartISO && domainEndISO) {
+                setTimePickerDomain({ start: domainStartISO, end: domainEndISO, peakStart: peakBestStart, peakEnd: peakBestEnd });
+              }
+            }
+          })();
+
+          await Promise.allSettled([barsPromise, windowsPromise]);
         } else {
           // Per-source mode (existing behavior)
           const res = await fetchUnhealthySources(undefined, undefined, '10T', 10, selectedPlant.id);
@@ -378,7 +367,7 @@ export default function DashboardPage() {
     }
     loadBars();
     return () => { mounted = false; };
-  }, [topN, selectedPlant.id, mode, selectedWindow?.id, selectedWindow?.start, selectedWindow?.end]);
+  }, [topN, selectedPlant.id, mode, selectedWindow?.id, selectedWindow?.start, selectedWindow?.end, isaRange?.startTime, isaRange?.endTime]);
 
   if (authLoading) {
     return (
@@ -478,6 +467,20 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* ISA-18 plant-wide: Global Date/Time Range */}
+        {selectedPlant.id === 'pvcI' && mode === 'flood' && (
+          <div className="flex flex-wrap items-center gap-3">
+            <DateTimeRangePicker
+              value={isaRange}
+              onApply={(s, e) => setIsaRange({ startTime: s, endTime: e })}
+              onClear={clearIsaRange}
+              domainStartISO={timePickerDomain?.start}
+              domainEndISO={timePickerDomain?.end}
+              label="Observation range"
+            />
+          </div>
+        )}
+
         {/* Insight Cards */}
         <InsightCards
           metrics={data?.metrics || {
@@ -574,6 +577,7 @@ export default function DashboardPage() {
                 includeSystem={includeSystem}
                 mode={'flood'}
                 selectedWindow={selectedWindow}
+                appliedRange={isaRange}
               />
 
               {/* PVC-I Plant-wide Pareto (locations aggregated) */}
@@ -581,6 +585,7 @@ export default function DashboardPage() {
                 plantId={selectedPlant.id}
                 includeSystem={includeSystem}
                 mode={'flood'}
+                appliedRange={isaRange}
               />
 
               {/* PVC-I Plant-wide: Condition Distribution by Location (stacked by ISA condition) */}
@@ -589,6 +594,7 @@ export default function DashboardPage() {
                 includeSystem={includeSystem}
                 selectedWindow={selectedWindow}
                 timePickerDomain={timePickerDomain || undefined}
+                appliedRange={isaRange}
                 onApplyTimePicker={(s, e) => {
                   setSelectedWindow({
                     id: s,

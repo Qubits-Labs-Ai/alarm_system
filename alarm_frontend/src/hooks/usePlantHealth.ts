@@ -60,11 +60,12 @@ export function usePlantHealth(
   topN: 1 | 3 = 1,
   mode: 'perSource' | 'flood' = 'perSource',
   // disable periodic refetches; manual refresh via UI
-  refetchInterval: false | number = false
+  refetchInterval: false | number = false,
+  range?: { startTime?: string; endTime?: string }
 ) {
   return useQuery({
     // Avoid refetching when toggling Top N; transform locally instead
-    queryKey: ['plant-health', plantId, mode],
+    queryKey: ['plant-health', plantId, mode, range?.startTime || null, range?.endTime || null],
     queryFn: async (): Promise<PlantHealthResponse> => {
       if (mode === 'flood' && plantId === 'pvcI') {
         const res = await fetchPvciIsaFloodSummary({
@@ -75,6 +76,8 @@ export function usePlantHealth(
           include_alarm_details: true,
           top_n: 10,
           max_windows: 10,
+          start_time: range?.startTime,
+          end_time: range?.endTime,
         });
         const overall = (res?.overall || {}) as any;
         const metrics = {
