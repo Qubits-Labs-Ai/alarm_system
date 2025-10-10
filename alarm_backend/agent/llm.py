@@ -218,8 +218,25 @@ class AgentLLM:
                 "condition",
             ]
         )
-        # Extra cues for "which appears most" style questions
-        has_ranking_terms = any(t in ql for t in ["top", "most", "max", "highest", "peak", "zyada"])  # roman-Urdu: zyada
+        # Extra cues for listing/ranking style questions (English + Roman-Urdu)
+        has_ranking_terms = any(
+            t in ql
+            for t in [
+                "top",
+                "most",
+                "max",
+                "highest",
+                "peak",
+                "zyada",          # roman-Urdu: more/most
+                "list",
+                "ranking",
+                "rank",
+                "list karo",
+                "dikhao",
+                "dikha do",
+                "dikhado",
+            ]
+        )
         has_unhealthy_terms = any(t in ql for t in ["unhealthy", "flood"]) 
         has_plant_terms = any(t in ql for t in [
             "isa", "plant-wide", "plant wide", "10-minute", "10 min", "10min", "window", "windows", "flood window", "percent time in flood"
@@ -336,6 +353,66 @@ class AgentLLM:
                     },
                 }
 
+        # Plant-window ranking intent: list Top ISA windows (avoid mixing with generic snapshot)
+        if has_plant_terms and has_ranking_terms and not has_source_terms:
+            try:
+                top_n = int(payload.top_n or 10)
+                isa_w = tool_isa_top_windows(top_n=top_n, sort_by="peak_10min_count") or {"data": []}
+                citations = []
+                for csrc in (isa_w.get("citations") or []):
+                    try:
+                        citations.append({
+                            "source": csrc.get("source"),
+                            "key": csrc.get("key"),
+                            "note": csrc.get("note"),
+                        })
+                    except Exception:
+                        pass
+
+                one_call_messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Using only the ISA-18 method windows JSON, list the Top "
+                            + str(top_n)
+                            + " 10-minute flood windows. For each item, include window_start, window_end, and peak_10min_count (concise bullets, no tables).\n"
+                            "ISA top_windows: " + json.dumps(isa_w.get("data", []), ensure_ascii=False)
+                        ),
+                    },
+                ]
+                resp = self.client.chat.completions.create(
+                    model=AGENT_MODEL,
+                    messages=one_call_messages,
+                    temperature=TEMPERATURE,
+                )
+                choice = resp.choices[0]
+                content = (choice.message.content or "").strip()
+                return {
+                    "answer": content or "Not available in current data.",
+                    "citations": citations,
+                    "used_tools": ["isa_top_windows"],
+                    "meta": {
+                        "model": AGENT_MODEL,
+                        "temperature": TEMPERATURE,
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "finish_reason": getattr(choice, "finish_reason", None),
+                        "mode": "single_call_top_windows",
+                    },
+                }
+            except Exception as e:
+                return {
+                    "answer": "Not available in current data.",
+                    "citations": [],
+                    "used_tools": ["isa_top_windows"],
+                    "meta": {
+                        "model": AGENT_MODEL,
+                        "temperature": TEMPERATURE,
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "finish_reason": f"error:{type(e).__name__}",
+                    },
+                }
+
         # ISA-priority fast-path for plant-wide/window phrasing (no explicit per-source intent)
         if has_plant_terms and not has_source_terms:
             try:
@@ -396,8 +473,84 @@ class AgentLLM:
                     },
                 }
 
+        # Ambiguous but ranking/unhealthy intent: default to Top 10 unhealthy sources (avoid generic snapshot)
+        if (has_ranking_terms or has_unhealthy_terms) and not (has_source_terms or has_plant_terms):
+            try:
+                top_n = int(payload.top_n or 10)
+                top_data = tool_unhealthy_sources_top(top_n=top_n, sort_by="total_hits", windows_per_source=2) or {"data": []}
+                by_loc = tool_unhealthy_breakdown(by="location", top_n=10) or {"data": []}
+                by_cond = tool_unhealthy_breakdown(by="condition", top_n=10) or {"data": []}
+                citations = []
+                for csrc in (top_data.get("citations") or []) + (by_loc.get("citations") or []) + (by_cond.get("citations") or []):
+                    try:
+                        citations.append({
+                            "source": csrc.get("source"),
+                            "key": csrc.get("key"),
+                            "note": csrc.get("note"),
+                        })
+                    except Exception:
+                        pass
+
+                one_call_messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Using only the provided JSON, list the sources contributing most to unhealthiness (concise).\n"
+                            "Include a brief overview and 5-8 key sources with inline numbers (no tables).\n"
+                            "JSON top_sources: " + json.dumps(top_data.get("data", []), ensure_ascii=False) + "\n"
+                            "JSON by_location: " + json.dumps(by_loc.get("data", []), ensure_ascii=False) + "\n"
+                            "JSON by_condition: " + json.dumps(by_cond.get("data", []), ensure_ascii=False)
+                        ),
+                    },
+                ]
+                resp = self.client.chat.completions.create(
+                    model=AGENT_MODEL,
+                    messages=one_call_messages,
+                    temperature=TEMPERATURE,
+                )
+                choice = resp.choices[0]
+                content = (choice.message.content or "").strip()
+                return {
+                    "answer": content or "Not available in current data.",
+                    "citations": citations,
+                    "used_tools": ["unhealthy_sources_top", "unhealthy_breakdown"],
+                    "meta": {
+                        "model": AGENT_MODEL,
+                        "temperature": TEMPERATURE,
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "finish_reason": getattr(choice, "finish_reason", None),
+                        "mode": "single_call_ambiguous_top_sources",
+                    },
+                }
+            except Exception as e:
+                return {
+                    "answer": "Not available in current data.",
+                    "citations": [],
+                    "used_tools": ["unhealthy_sources_top", "unhealthy_breakdown"],
+                    "meta": {
+                        "model": AGENT_MODEL,
+                        "temperature": TEMPERATURE,
+                        "generated_at": datetime.now(timezone.utc).isoformat(),
+                        "finish_reason": f"error:{type(e).__name__}",
+                    },
+                }
+
         # Ambiguous phrasing: consult both (ISA first, PVC-I overall as secondary context)
-        if not has_source_terms and not has_plant_terms:
+        # Only trigger when there are domain hints to avoid overriding general chat (now handled by the model itself)
+        if (
+            not has_source_terms
+            and not has_plant_terms
+            and (
+                has_unhealthy_terms
+                or ("health" in ql)
+                or ("status" in ql)
+                or ("overall" in ql)
+                or ("pvc" in ql)
+                or ("pvc-i" in ql)
+                or ("isa" in ql)
+            )
+        ):
             try:
                 isa_o = tool_isa_overall() or {"data": {}}
                 pvc_o = tool_overall_health() or {"data": {}}

@@ -39,61 +39,8 @@ const AgentPage = () => {
   const [animatedDone, setAnimatedDone] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Identity reply (professional template tailored to project)
-  const IDENTITY_RESPONSE = `I'm the PVC‑I Alarm Management Copilot, an AI assistant built by Qbit Dynamics.
-\nI'm here to help you with:\n
-📊 Analyzing alarm floods and unhealthy sources (per‑source & plant‑wide)\n
-🔍 Summarizing peak 10‑minute windows using the ISA‑18 method (PVC‑I method)\n
-📈 Creating insights and reports: top offenders, locations, priorities & actions\n
-📚 Explaining locations, conditions, priorities and recommended actions\n
-🎯 Providing actionable recommendations to improve alarm performance & compliance\n
-🧩 Linking the right dashboard views and data for faster diagnostics\n
-I work with your current datasets (alarm events, ISA summaries, source histories, etc.) and help you make data‑driven decisions to keep operations safe and efficient.\n
-What plant health question can I help you tackle today?`;
-
-  // Friendly greeting reply for short greetings (Urdu/English)
-  const GREETING_RESPONSE = `Assalam o Alaikum! Main aap ka PVC‑I Alarm Management Copilot hoon.
-
-You can ask in Urdu or English. Try one of these:
-
-- Show peak flood windows (ISA‑18)
-- Top unhealthy sources right now
-- Explain location VS-1309 high flood
-- What priorities are most impacted?
-
-Bas ek line me apni need likhen; main short, cited jawab dunga.`;
-
-  const isGreetingQuery = (q: string) => {
-    const s = q.trim().toLowerCase().replace(/[!.,]/g, "");
-    const greetings = [
-      "hi",
-      "hello",
-      "hey",
-      "salam",
-      "salaam",
-      "assalam",
-      "asalam",
-      "assalamu alaikum",
-      "assalamualaikum",
-      "salam alaikum",
-      "salam o alaikum",
-      "as-salamu alaykum",
-      "aoa",
-    ];
-    return greetings.includes(s);
-  };
-
-  const isIdentityQuery = (q: string) => {
-    const s = q.toLowerCase();
-    return (
-      /\bwho\s*are\s*you\b/.test(s) ||
-      /\bwho\s*r\s*u\b/.test(s) ||
-      /\bwhich\s*(model|agent)\b/.test(s) ||
-      /\bwhat\s*(model|agent)\b/.test(s) ||
-      /\bwhat\s+is\s+(your\s+)?(work|working|role|function)\b/.test(s) ||
-      /\byour\s+(capabilities|abilities)\b/.test(s)
-    );
-  };
+  // Removed local identity/greeting templates and detectors;
+  // let the backend agent handle all queries uniformly.
 
   // auto-scroll to bottom (page-level feel)
   useEffect(() => {
@@ -138,17 +85,6 @@ Bas ek line me apni need likhen; main short, cited jawab dunga.`;
     const pendingMsg: ChatMessage = { id: pendingId, role: "assistant", content: "Generating response…", pending: true };
     setMessages((m) => [...m, userMsg, pendingMsg]);
     setInput("");
-    // Local greeting response (do not call backend for a simple 'hi/hello/salam')
-    if (isGreetingQuery(text)) {
-      setMessages((m) => m.map((mm) => (mm.id === pendingId ? { ...mm, content: GREETING_RESPONSE, pending: false, animate: true } : mm)));
-      return;
-    }
-    // Local identity response only; other queries will be handled once backend is wired
-    if (isIdentityQuery(text)) {
-      // Replace the pending bubble with identity response
-      setMessages((m) => m.map((mm) => (mm.id === pendingId ? { ...mm, content: IDENTITY_RESPONSE, pending: false, animate: true } : mm)));
-      return;
-    }
     // Call backend agent for all other queries
     void askAgent(text, pendingId);
   };

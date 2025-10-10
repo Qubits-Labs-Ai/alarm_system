@@ -4,5 +4,5 @@
 // Note: Keep this file publicly readable; it is served as /config.js
 window.__APP_CONFIG__ = Object.assign({}, window.__APP_CONFIG__, {
   // Update this to your backend URL (http://host:port)
-  API_BASE_URL: "http://103.18.20.205:8085",
+  API_BASE_URL: "http://127.0.0.1:8000",
 });
