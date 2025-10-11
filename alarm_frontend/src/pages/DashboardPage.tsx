@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { PageShell } from '@/components/dashboard/PageShell';
 import { PlantSelector } from '@/components/dashboard/PlantSelector';
 import { InsightCards } from '@/components/dashboard/InsightCards';
+import { UniqueSourcesCard } from '@/components/dashboard/UniqueSourcesCard';
 import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
 import { ErrorState } from '@/components/dashboard/ErrorState';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
@@ -14,7 +15,7 @@ import ConditionDistributionByLocationPlantWide from '@/components/ConditionDist
 import { useAuth } from '@/hooks/useAuth';
 import { usePlantHealth } from '@/hooks/usePlantHealth';
 import { Plant } from '@/types/dashboard';
-import { fetchPlants, fetchUnhealthySources, fetchPvciIsaFloodSummary, clearApiCache, fetchPvciWindowSourceDetails } from '@/api/plantHealth';
+import { fetchPlants, fetchUnhealthySources, fetchPvciIsaFloodSummaryEnhanced, clearApiCache, fetchPvciWindowSourceDetails, fetchPvciUniqueSourcesSummary } from '@/api/plantHealth';
 import { UnhealthyBar } from '@/types/dashboard';
 import PriorityBreakdownDonut from '@/components/PriorityBreakdownDonut';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -62,6 +63,13 @@ export default function DashboardPage() {
   const [isaRange, setIsaRange] = useState<{ startTime?: string; endTime?: string } | undefined>(undefined);
   // Input controls (datetime-local strings) before applying
   const [rangeInput, setRangeInput] = useState<{ start: string; end: string }>({ start: '', end: '' });
+  
+  // Unique sources data
+  const [uniqueSourcesData, setUniqueSourcesData] = useState<{
+    totalUnique: number;
+    healthySources: number;
+    unhealthySources: number;
+  }>({ totalUnique: 0, healthySources: 0, unhealthySources: 0 });
 
   const toIso = (v?: string) => (v ? new Date(v).toISOString() : undefined);
   const applyIsaRange = () => {
@@ -71,6 +79,40 @@ export default function DashboardPage() {
     setIsaRange(undefined);
     setRangeInput({ start: '', end: '' });
   };
+
+  // Calculate unique sources data from unhealthy bar data
+  const calculateUniqueSourcesData = useCallback((bars: UnhealthyBar[]) => {
+    const isMetaSource = (name: string) => {
+      const s = String(name || '').trim().toUpperCase();
+      if (!s) return false;
+      return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+    };
+
+    // Filter based on include system setting
+    const filteredBars = includeSystem ? bars : bars.filter(b => !isMetaSource(b.source));
+    
+    // Get unique sources
+    const uniqueSources = new Set(filteredBars.map(b => b.source));
+    const totalUnique = uniqueSources.size;
+    
+    // Count healthy vs unhealthy based on 10-hit threshold
+    let healthySources = 0;
+    let unhealthySources = 0;
+    
+    uniqueSources.forEach(source => {
+      const sourceHits = filteredBars
+        .filter(b => b.source === source)
+        .reduce((sum, b) => sum + (b.hits || 0), 0);
+      
+      if (sourceHits >= 10) {
+        unhealthySources++;
+      } else {
+        healthySources++;
+      }
+    });
+
+    return { totalUnique, healthySources, unhealthySources };
+  }, [includeSystem]);
   // Disable Include System toggle for PVC-II (not supported yet)
   const isIncludeSystemDisabled = selectedPlant.id === 'pvcII';
 
@@ -172,49 +214,93 @@ export default function DashboardPage() {
                 bin_end: selectedWindow.end,
               }));
               bars = bars.filter(b => (b?.hits ?? 0) >= 10).sort((a, b) => b.hits - a.hits).slice(0, 50);
-            } else {
-              const res2 = await fetchUnhealthySources(
-                isaRange?.startTime,
-                isaRange?.endTime,
-                '10T',
-                10,
-                selectedPlant.id,
-                { aggregate: true, limit: 50, timeout_ms: 15000 }
-              );
-              const records2 = Array.isArray(res2?.records) ? res2.records : [];
-              const isMetaSource = (name: string) => {
-                const s = String(name || '').trim().toUpperCase();
-                if (!s) return false;
-                return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
-              };
-              const base = includeSystem ? records2 : records2.filter((r: any) => !isMetaSource(r?.source));
-              const bySource: Record<string, number> = {};
-              for (const r of base) {
-                const src = String(r?.source || 'Unknown').trim();
-                const c = Number(typeof (r as any)?.flood_count === 'number' ? (r as any).flood_count : r?.hits || 0);
-                if (c > 0) bySource[src] = (bySource[src] || 0) + c;
+
+              // Compute Unique Sources from full per-window details (not Top-N)
+              try {
+                const psd: any[] = Array.isArray((det as any)?.per_source_detailed) ? (det as any).per_source_detailed : [];
+                const isMetaSource = (name: string) => {
+                  const s = String(name || '').trim().toUpperCase();
+                  if (!s) return false;
+                  return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+                };
+                const baseList = includeSystem ? psd : psd.filter(d => !isMetaSource(d?.source));
+                const seen = new Set<string>();
+                let healthy = 0;
+                let unhealthy = 0;
+                for (const d of baseList) {
+                  const src = String(d?.source || 'Unknown').trim();
+                  if (seen.has(src)) continue;
+                  seen.add(src);
+                  const c = Number(d?.count || 0);
+                  if (c >= 10) unhealthy++; else healthy++;
+                }
+                if (mounted) setUniqueSourcesData({ totalUnique: seen.size, healthySources: healthy, unhealthySources: unhealthy });
+              } catch {
+                // ignore errors; card will remain as previous value
               }
-              bars = Object.entries(bySource).map(([src, sum]) => ({
-                id: `${src}-${isaRange?.startTime || 'agg'}`,
-                source: src,
-                hits: sum,
+            } else {
+              // Use enhanced endpoint for pre-computed aggregations
+              const enhancedRes = await fetchPvciIsaFloodSummaryEnhanced({
+                window_minutes: 10,
                 threshold: 10,
-                over_by: Math.max(0, sum - 10),
-                bin_start: isaRange?.startTime || new Date().toISOString(),
-                bin_end: isaRange?.endTime || new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-              }));
-              bars = bars.filter(b => (b?.hits ?? 0) >= 10).sort((a, b) => b.hits - a.hits).slice(0, 50);
+                start_time: isaRange?.startTime,
+                end_time: isaRange?.endTime,
+                include_enhanced: true,
+                include_records: false,
+                include_windows: false,
+                lite: true,
+                timeout_ms: 15000,
+              });
+
+              // Use pre-computed unique_sources_summary from enhanced response
+              const uniqueSourcesSummary = (enhancedRes as any)?.unique_sources_summary;
+              if (uniqueSourcesSummary && typeof uniqueSourcesSummary.total_unique_sources === 'number') {
+                if (mounted) setUniqueSourcesData({
+                  totalUnique: Number(uniqueSourcesSummary.total_unique_sources || 0),
+                  healthySources: Number(uniqueSourcesSummary.healthy_sources || 0),
+                  unhealthySources: Number(uniqueSourcesSummary.unhealthy_sources || 0),
+                });
+              }
+
+              // Use pre-computed unhealthy_sources_top_n from enhanced response
+              const unhealthySources = (enhancedRes as any)?.unhealthy_sources_top_n;
+              if (unhealthySources && Array.isArray(unhealthySources.sources)) {
+                const isMetaSource = (name: string) => {
+                  const s = String(name || '').trim().toUpperCase();
+                  if (!s) return false;
+                  return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
+                };
+                
+                const filteredSources = includeSystem 
+                  ? unhealthySources.sources 
+                  : unhealthySources.sources.filter((s: any) => !isMetaSource(s.source));
+
+                bars = filteredSources.map((s: any) => ({
+                  id: `${s.source}-${isaRange?.startTime || 'agg'}`,
+                  source: String(s.source || 'Unknown'),
+                  hits: Number(s.hits || 0),
+                  threshold: Number(s.threshold || 10),
+                  over_by: Number(s.over_by || 0),
+                  bin_start: isaRange?.startTime || new Date().toISOString(),
+                  bin_end: isaRange?.endTime || new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+                  location_tag: s.location_tag,
+                }));
+                bars = bars.slice(0, 50); // Already sorted by backend
+              }
             }
             if (mounted) setUnhealthyBarData(bars);
           })();
 
           const windowsPromise = (async () => {
-            const res = await fetchPvciIsaFloodSummary({
+            const res = await fetchPvciIsaFloodSummaryEnhanced({
               include_records: true,
               include_windows: true,
               include_alarm_details: false,
               top_n: 5,
               max_windows: 5,
+              include_enhanced: true,
+              top_locations: 20,
+              top_sources_per_condition: 5,
               start_time: isaRange?.startTime,
               end_time: isaRange?.endTime,
             });
@@ -369,6 +455,16 @@ export default function DashboardPage() {
     return () => { mounted = false; };
   }, [topN, selectedPlant.id, mode, selectedWindow?.id, selectedWindow?.start, selectedWindow?.end, isaRange?.startTime, isaRange?.endTime]);
 
+  // Update unique sources data when unhealthy bar data changes
+  useEffect(() => {
+    // In PVC-I Plant-wide mode, unique sources are computed from full aggregated/window data
+    // inside loadBars(); skip recalculation from Top-N bars to avoid truncation to 50 and
+    // unhealthy-only bias.
+    if (selectedPlant.id === 'pvcI' && mode === 'flood') return;
+    const newUniqueData = calculateUniqueSourcesData(unhealthyBarData);
+    setUniqueSourcesData(newUniqueData);
+  }, [unhealthyBarData, calculateUniqueSourcesData, mode, selectedPlant.id]);
+
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -482,17 +578,28 @@ export default function DashboardPage() {
         )}
 
         {/* Insight Cards */}
-        <InsightCards
-          metrics={data?.metrics || {
-            healthy_percentage: 0,
-            unhealthy_percentage: 0,
-            total_sources: 0,
-            total_files: 0,
-            last_updated: '',
-          }}
-          isLoading={isLoading}
-          mode={mode}
-        />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+          <div className="lg:col-span-4">
+            <InsightCards
+              metrics={data?.metrics || {
+                healthy_percentage: 0,
+                unhealthy_percentage: 0,
+                total_sources: 0,
+                total_files: 0,
+                last_updated: '',
+              }}
+              isLoading={isLoading}
+              mode={mode}
+            />
+          </div>
+          <div className="lg:col-span-1">
+            <UniqueSourcesCard
+              data={uniqueSourcesData}
+              isLoading={unhealthyBarsLoading}
+              mode={mode}
+            />
+          </div>
+        </div>
 
         {/* Charts Section */}
         {selectedPlant.id === 'pvcI' && mode === 'perSource' && (

@@ -23,7 +23,7 @@ import {
 } from 'recharts';
 import { CHART_GREEN_DARK, CHART_GREEN_LIGHT, CHART_GREEN_MEDIUM, CHART_GREEN_PALE, priorityToGreen } from '@/theme/chartColors';
 import { Switch } from '@/components/ui/switch';
-import { fetchUnhealthySources as fetchAPI, fetchPvciIsaFloodSummary, fetchPvciWindowSourceDetails } from '@/api/plantHealth';
+import { fetchUnhealthySources as fetchAPI, fetchPvciIsaFloodSummaryEnhanced, fetchPvciWindowSourceDetails } from '@/api/plantHealth';
 
 interface UnhealthyRecord {
   event_time: string;
@@ -133,7 +133,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
   const loadAvailableMonths = async () => {
     try {
       if (mode === 'flood' && plantId === 'pvcI') {
-        const res: any = await fetchPvciIsaFloodSummary({ include_records: true, include_windows: true, include_alarm_details: false, top_n: 10, max_windows: 180, timeout_ms: 12000 });
+        const res: any = await fetchPvciIsaFloodSummaryEnhanced({ include_records: true, include_windows: true, include_alarm_details: false, include_enhanced: true, top_n: 10, max_windows: 180, timeout_ms: 12000 });
         const monthMap = new Map<string, { start: Date; end: Date }>();
         // Prefer by_day for robust month coverage
         const byDay: any[] = Array.isArray(res?.by_day) ? res.by_day : [];
@@ -205,6 +205,10 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
       setError(null);
       const myReq = ++reqRef.current;
 
+      console.log(`[UnhealthySourcesChart] Loading data - mode: ${mode}, plantId: ${plantId}, appliedRange:`, appliedRange);
+      console.log(`[UnhealthySourcesChart] selectedWindow:`, selectedWindow);
+      console.log(`[UnhealthySourcesChart] selectedMonth: ${selectedMonth}, timeRange: ${timeRange}, windowMode: ${windowMode}`);
+
       const windowMs = getWindowMs(timeRange);
 
       // Flood mode (PVC-I ISA 18.2 plant-wide)
@@ -234,8 +238,7 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
             return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
           };
           if (!includeSystem) recs = recs.filter(r => !isMetaSourceName(r.source));
-          // Unhealthy only
-          recs = recs.filter(r => Number((r as any).flood_count ?? r.hits ?? 0) >= 10);
+          // Note: Do NOT enforce per-source >=10 here; plant-wide floods can have many sources <10.
           const result = { count: recs.length, records: recs };
           if (myReq === reqRef.current) setData(result);
           // Set domain to the selected window
@@ -248,19 +251,48 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
         const deriveAndFetch = async (startIso?: string, endIso?: string) => {
           // If we are fetching a whole month (timeRange === 'all'), allow more windows so later dates appear
           const maxWindows = (startIso && endIso && timeRange === 'all') ? 1000 : 60;
-          const res: any = await fetchPvciIsaFloodSummary({ include_records: true, include_windows: true, include_alarm_details: true, top_n: 10, max_windows: maxWindows, start_time: startIso, end_time: endIso, timeout_ms: 12000 });
+          
+          console.log(`[UnhealthySourcesChart] Fetching ISA flood summary for range: ${startIso} → ${endIso}`);
+          
+          const isRangeFetch = Boolean(startIso && endIso);
+          const res: any = await fetchPvciIsaFloodSummaryEnhanced({ 
+            include_records: true, 
+            // For applied ranges, skip windows/details to keep it fast; we synthesize fallback points
+            include_windows: isRangeFetch ? false : true, 
+            include_alarm_details: isRangeFetch ? false : true, 
+            include_enhanced: true,
+            top_n: 10, 
+            max_windows: isRangeFetch ? 0 : maxWindows, 
+            start_time: startIso, 
+            end_time: endIso, 
+            timeout_ms: isRangeFetch ? 20000 : 12000 
+          });
+          
+          console.log(`[UnhealthySourcesChart] ISA flood summary response:`, res);
+          
           const list: any[] = Array.isArray(res?.records) ? res.records : [];
+          console.log(`[UnhealthySourcesChart] Processing ${list.length} flood records`);
+          
           const points: any[] = [];
           for (const r of list) {
             const pws = r?.peak_window_start || r?.windows?.[0]?.window_start;
             const pwe = r?.peak_window_end || r?.windows?.[0]?.window_end;
+            
+            if (!pws || !pwe) {
+              console.log(`[UnhealthySourcesChart] Skipping record with missing window times:`, r);
+              continue;
+            }
+            
             // Try multiple shapes for top sources
             const tops: any[] = Array.isArray(r?.peak_window_details?.top_sources)
               ? r.peak_window_details.top_sources
               : (Array.isArray(r?.top_sources) ? r.top_sources : []);
+              
+            console.log(`[UnhealthySourcesChart] Found ${tops.length} top sources for window ${pws} → ${pwe}`);
+            
             for (const t of tops) {
               const c = Number(t?.count || 0);
-              if (!c) continue;
+              if (!c) continue; // Skip only if zero or missing
               points.push({
                 event_time: pws,
                 bin_end: pwe,
@@ -278,32 +310,118 @@ const UnhealthySourcesChart: React.FC<UnhealthySourcesChartProps> = ({ className
               });
             }
           }
+
+          // Fallback: if we have ISA flood records but NO per-source details were produced,
+          // synthesize plant-wide points so the timeline is not empty.
+          if (points.length === 0 && list.length > 0) {
+            console.log('[UnhealthySourcesChart] No per-source details; falling back to plant-wide peak points');
+            for (const r of list) {
+              const pws = r?.peak_window_start || r?.windows?.[0]?.window_start;
+              const pwe = r?.peak_window_end || r?.windows?.[0]?.window_end;
+              const pc = Number(r?.peak_10min_count || r?.windows?.[0]?.count || 0);
+              if (!pws || !pwe || !pc) continue;
+              points.push({
+                event_time: pws,
+                bin_end: pwe,
+                source: 'Plant‑Wide',
+                hits: pc,
+                threshold: 10,
+                over_by: Math.max(0, pc - 10),
+                rate_per_min: pc / 10,
+                location_tag: undefined,
+                condition: undefined,
+                flood_count: pc,
+                priority: (pc >= 25 ? 'High' : pc >= 15 ? 'Medium' : 'Low'),
+                peak_window_start: pws,
+                peak_window_end: pwe,
+              });
+            }
+            console.log(`[UnhealthySourcesChart] Fallback synthesized ${points.length} plant-wide points`);
+          }
+          
+          console.log(`[UnhealthySourcesChart] Generated ${points.length} data points before filtering`);
+          
           // IncludeSystem and unhealthy-only
           const isMetaSourceName = (name: string) => {
             const s = String(name || '').trim().toUpperCase();
             return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
           };
-          let filtered = (includeSystem ? points : points.filter(p => !isMetaSourceName(p.source))).filter(p => (p.flood_count ?? p.hits ?? 0) >= 10);
+          
+          let filtered = includeSystem ? points : points.filter(p => !isMetaSourceName(p.source));
+          console.log(`[UnhealthySourcesChart] After includeSystem filter: ${filtered.length} points (no per-source >=10 filter in flood mode)`);
+          
           // Guard: ensure we only keep points within requested time range when provided
           if (startIso && endIso) {
             const startMs = new Date(startIso).getTime();
             const endMs = new Date(endIso).getTime();
+            const beforeTimeFilter = filtered.length;
             filtered = filtered.filter(p => {
               const ts = new Date(p.peak_window_start || p.event_time || p.bin_end || p.peak_window_end).getTime();
               return ts >= startMs && ts <= endMs;
             });
+            console.log(`[UnhealthySourcesChart] After time range filter (${startIso} → ${endIso}): ${filtered.length} points (was ${beforeTimeFilter})`);
           }
+          
           // When a bounded range is provided, set explicit domain
-          if (startIso && endIso) setXDomain([new Date(startIso).getTime(), new Date(endIso).getTime()]);
-          else setXDomain(null);
-          return { count: filtered.length, records: filtered };
+          if (startIso && endIso) {
+            setXDomain([new Date(startIso).getTime(), new Date(endIso).getTime()]);
+            console.log(`[UnhealthySourcesChart] Set X domain: ${startIso} → ${endIso}`);
+          } else {
+            setXDomain(null);
+            console.log(`[UnhealthySourcesChart] Cleared X domain (auto-scale)`);
+          }
+          
+          // If applied range yields no plant-wide ISA points, fall back to per-source unhealthy events
+          if ((startIso && endIso) && filtered.length === 0) {
+            try {
+              console.log('[UnhealthySourcesChart] No ISA points in range; falling back to per-source unhealthy events');
+              const alt = await fetchAPI(startIso, endIso, '10T', 10, plantId);
+              const recs: any[] = Array.isArray(alt?.records) ? alt.records : [];
+              let altPoints = recs.map((r: any) => {
+                const cnt = Number((r?.flood_count ?? r?.hits) || 0);
+                const pws2 = r?.peak_window_start || r?.event_time;
+                const pwe2 = r?.peak_window_end || r?.bin_end;
+                return {
+                  event_time: pws2,
+                  bin_end: pwe2,
+                  source: String(r?.source || 'Unknown'),
+                  hits: cnt,
+                  threshold: 10,
+                  over_by: Math.max(0, cnt - 10),
+                  rate_per_min: cnt / 10,
+                  location_tag: (r as any)?.location_tag,
+                  condition: (r as any)?.condition,
+                  flood_count: cnt,
+                  priority: (cnt >= 25 ? 'High' : cnt >= 15 ? 'Medium' : 'Low'),
+                  peak_window_start: pws2,
+                  peak_window_end: pwe2,
+                } as any;
+              });
+              const baseAlt = includeSystem ? altPoints : altPoints.filter(p => !isMetaSourceName(p.source));
+              console.log(`[UnhealthySourcesChart] Per-source fallback yielded ${baseAlt.length} points`);
+              if (baseAlt.length > 0) {
+                return { count: baseAlt.length, records: baseAlt };
+              }
+            } catch (e) {
+              console.warn('[UnhealthySourcesChart] Per-source fallback failed', e);
+            }
+          }
+          
+          const result = { count: filtered.length, records: filtered };
+          console.log(`[UnhealthySourcesChart] Final result:`, result);
+          return result;
         };
 
         let result: any = null;
         // If a global applied range is present, use it directly
         if (appliedRange?.startTime || appliedRange?.endTime) {
+          console.log(`[UnhealthySourcesChart] Using applied range:`, appliedRange);
           result = await deriveAndFetch(appliedRange?.startTime, appliedRange?.endTime);
-          if (myReq === reqRef.current) setData(result);
+          console.log(`[UnhealthySourcesChart] Applied range result:`, result);
+          if (myReq === reqRef.current) {
+            setData(result);
+            console.log(`[UnhealthySourcesChart] Set data for applied range, count: ${result?.count || 0}`);
+          }
           return;
         }
         if (selectedMonth === 'all') {

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { fetchPlantHealth, fetchPvciIsaFloodSummary } from '@/api/plantHealth';
+import { fetchPlantHealth, fetchPvciIsaFloodSummaryEnhanced } from '@/api/plantHealth';
 import { UnhealthyBar, UnhealthyBin, PlantHealthResponse } from '@/types/dashboard';
 
 function transformUnhealthyBins(
@@ -68,7 +68,7 @@ export function usePlantHealth(
     queryKey: ['plant-health', plantId, mode, range?.startTime || null, range?.endTime || null],
     queryFn: async (): Promise<PlantHealthResponse> => {
       if (mode === 'flood' && plantId === 'pvcI') {
-        const res = await fetchPvciIsaFloodSummary({
+        const res = await fetchPvciIsaFloodSummaryEnhanced({
           window_minutes: 10,
           threshold: 10,
           include_records: false,
@@ -76,6 +76,9 @@ export function usePlantHealth(
           include_alarm_details: true,
           top_n: 10,
           max_windows: 10,
+          include_enhanced: true,
+          top_locations: 20,
+          top_sources_per_condition: 5,
           start_time: range?.startTime,
           end_time: range?.endTime,
         });

@@ -22,7 +22,7 @@ import {
   CHART_WARNING,
   getGreenPalette,
 } from '@/theme/chartColors';
-import { fetchUnhealthySources, fetchPvciIsaFloodSummary, fetchPvciWindowSourceDetails } from '@/api/plantHealth';
+import { fetchUnhealthySources, fetchPvciIsaFloodSummaryEnhanced, fetchPvciWindowSourceDetails } from '@/api/plantHealth';
 import { InsightButton } from '@/components/insights/InsightButton';
 import { useInsightModal } from '@/components/insights/useInsightModal';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -125,9 +125,19 @@ const ConditionDistributionByLocationPlantWide: React.FC<Props> = ({
 
   async function resolveWindow(): Promise<SelectedWindowRef | null> {
     if (activeWindow) return activeWindow;
-    // Fallback: use ISA summary to find the global peak window
+    // Prefer pre-fetched unhealthy windows from Dashboard (no extra network)
     try {
-      const res: any = await fetchPvciIsaFloodSummary({ include_records: true, include_windows: true, include_alarm_details: true, top_n: 10, max_windows: 10, start_time: appliedRange?.startTime, end_time: appliedRange?.endTime });
+      if (Array.isArray(unhealthyWindows) && unhealthyWindows.length > 0) {
+        // Choose the first item (already sorted by flood_count in Dashboard)
+        const w = unhealthyWindows[0];
+        if (w?.start && w?.end) {
+          return { id: String(w.start), start: w.start, end: w.end, label: w.label || `${new Date(w.start).toLocaleString()} — ${new Date(w.end).toLocaleString()}` };
+        }
+      }
+    } catch {}
+    // Fallback: use ISA summary (lite cached) to find the global peak window
+    try {
+      const res: any = await fetchPvciIsaFloodSummaryEnhanced({ include_records: true, include_windows: true, include_alarm_details: false, include_enhanced: true, top_n: 10, max_windows: 10, start_time: appliedRange?.startTime, end_time: appliedRange?.endTime });
       const list: any[] = Array.isArray(res?.records) ? res.records : [];
       let best: any | null = null;
       for (const r of list) {

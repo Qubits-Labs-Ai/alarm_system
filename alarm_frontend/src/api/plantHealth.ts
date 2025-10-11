@@ -11,6 +11,29 @@ function now() {
   return Date.now();
 }
 
+// Overall unique sources (healthy + unhealthy) summary for PVC-I (ISA mode)
+export async function fetchPvciUniqueSourcesSummary(params?: {
+  start_time?: string;
+  end_time?: string;
+  include_system?: boolean;
+  threshold?: number;
+  timeout_ms?: number;
+}) {
+  const { start_time, end_time, include_system = true, threshold = 10, timeout_ms } = params || {};
+  const url = new URL(`${API_BASE_URL}/pvcI-health/unique-sources-summary`);
+  if (start_time) url.searchParams.set('start_time', start_time);
+  if (end_time) url.searchParams.set('end_time', end_time);
+  url.searchParams.set('include_system', String(include_system));
+  url.searchParams.set('threshold', String(threshold));
+  try {
+    // Summary is small; cache for 15 minutes
+    return await fetchWithCache(url.toString(), 15 * 60 * 1000, timeout_ms);
+  } catch (e) {
+    console.warn('Failed to fetch unique sources summary:', e);
+    return null;
+  }
+}
+
 // ISA event-based per-source/location/condition counts for a given time window (PVC-I)
 export async function fetchPvciWindowSourceDetails(
   startTime: string,
@@ -151,6 +174,7 @@ export async function fetchPvciIsaFloodSummary(params?: {
   top_n?: number;
   max_windows?: number;
   raw?: boolean;
+  lite?: boolean;
   timeout_ms?: number;
 }) {
   const {
@@ -163,7 +187,9 @@ export async function fetchPvciIsaFloodSummary(params?: {
     include_alarm_details = true,
     top_n = 10,
     max_windows = 10,
-    raw = true,
+    // Default to lite cached response for speed; callers can set raw=true for full payload
+    raw = false,
+    lite = true,
     timeout_ms,
   } = params || {};
 
@@ -177,13 +203,75 @@ export async function fetchPvciIsaFloodSummary(params?: {
   url.searchParams.set('max_windows', String(max_windows));
   if (start_time) url.searchParams.set('start_time', start_time);
   if (end_time) url.searchParams.set('end_time', end_time);
-  if (raw) url.searchParams.set('raw', 'true');
+  if (raw) url.searchParams.set('raw', 'true'); else url.searchParams.set('raw', 'false');
+  if (lite) url.searchParams.set('lite', 'true');
 
   try {
     // ISA summary changes infrequently; cache for 30 minutes
     return await fetchWithCache(url.toString(), 30 * 60 * 1000, timeout_ms);
   } catch (e) {
     console.warn('Failed to fetch ISA flood summary:', e);
+    return null;
+  }
+}
+
+// Enhanced ISA 18.2 flood summary with pre-computed aggregations (90%+ faster frontend)
+export async function fetchPvciIsaFloodSummaryEnhanced(params?: {
+  window_minutes?: number;
+  threshold?: number;
+  start_time?: string;
+  end_time?: string;
+  include_records?: boolean;
+  include_windows?: boolean;
+  include_alarm_details?: boolean;
+  top_n?: number;
+  max_windows?: number;
+  raw?: boolean;
+  lite?: boolean;
+  include_enhanced?: boolean;
+  top_locations?: number;
+  top_sources_per_condition?: number;
+  timeout_ms?: number;
+}) {
+  const {
+    window_minutes = 10,
+    threshold = 10,
+    start_time,
+    end_time,
+    include_records = false,
+    include_windows = true,
+    include_alarm_details = true,
+    top_n = 10,
+    max_windows = 10,
+    raw = false,
+    lite = true,
+    include_enhanced = true,
+    top_locations = 20,
+    top_sources_per_condition = 5,
+    timeout_ms,
+  } = params || {};
+
+  const url = new URL(`${API_BASE_URL}/pvcI-health/isa-flood-summary-enhanced`);
+  url.searchParams.set('window_minutes', String(window_minutes));
+  url.searchParams.set('threshold', String(threshold));
+  url.searchParams.set('include_records', String(include_records));
+  url.searchParams.set('include_windows', String(include_windows));
+  url.searchParams.set('include_alarm_details', String(include_alarm_details));
+  url.searchParams.set('top_n', String(top_n));
+  url.searchParams.set('max_windows', String(max_windows));
+  url.searchParams.set('include_enhanced', String(include_enhanced));
+  url.searchParams.set('top_locations', String(top_locations));
+  url.searchParams.set('top_sources_per_condition', String(top_sources_per_condition));
+  if (start_time) url.searchParams.set('start_time', start_time);
+  if (end_time) url.searchParams.set('end_time', end_time);
+  if (raw) url.searchParams.set('raw', 'true'); else url.searchParams.set('raw', 'false');
+  if (lite) url.searchParams.set('lite', 'true');
+
+  try {
+    // Enhanced summary with pre-computed aggregations; cache for 30 minutes
+    return await fetchWithCache(url.toString(), 30 * 60 * 1000, timeout_ms);
+  } catch (e) {
+    console.warn('Failed to fetch enhanced ISA flood summary:', e);
     return null;
   }
 }
@@ -217,7 +305,7 @@ export async function fetchUnhealthySources(
   binSize: string = '10T',
   alarmThreshold: number = 10,
   plantId: string = 'pvcI',
-  options?: { aggregate?: boolean; limit?: number; timeout_ms?: number }
+  options?: { aggregate?: boolean; limit?: number; timeout_ms?: number; include_system?: boolean; stats_only?: boolean }
 ) {
   // Only call the real endpoint. No synthetic fallbacks.
   try {
@@ -229,6 +317,8 @@ export async function fetchUnhealthySources(
     if (endTime) url.searchParams.set('end_time', endTime);
     if (options?.aggregate) url.searchParams.set('aggregate', 'true');
     if (typeof options?.limit === 'number') url.searchParams.set('limit', String(options.limit));
+    if (typeof options?.include_system === 'boolean') url.searchParams.set('include_system', String(options.include_system));
+    if (options?.stats_only) url.searchParams.set('stats_only', 'true');
 
     // Aggregated responses can be cached shorter
     const ttl = options?.aggregate ? 5 * 60 * 1000 : 15 * 60 * 1000;
