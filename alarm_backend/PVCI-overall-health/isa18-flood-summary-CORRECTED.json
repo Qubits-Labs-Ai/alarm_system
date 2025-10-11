@@ -1,0 +1,555 @@
+{
+  "plant_folder": "D:\\Qbit-dynamics\\alarm_system\\alarm_backend\\ALARM_DATA_DIR\\PVC-I (Jan, Feb, Mar) EVENTS",
+  "generated_at": "2025-10-11T15:32:53.659289+00:00",
+  "params": {
+    "window_minutes": 10,
+    "threshold": 10,
+    "start_time": null,
+    "end_time": null,
+    "isa_18_2_corrected": true,
+    "alarm_filtering_enabled": true
+  },
+  "overall": {
+    "total_observation_duration_min": 108655.50166666666,
+    "total_alarms": 31104,
+    "flood_windows_count": 406,
+    "flood_duration_min": 6428.095,
+    "percent_time_in_flood": 5.916032691763837,
+    "isa_overall_health_pct": 94.08396730823617,
+    "peak_10min_count": 55,
+    "peak_10min_window_start": "2025-01-08T20:04:34.400000+00:00",
+    "peak_10min_window_end": "2025-01-08T21:42:25.700000+00:00",
+    "compliance": {
+      "target": "<1% time in flood",
+      "value": 5.916032691763837,
+      "meets": false
+    }
+  },
+  "by_day": [
+    {
+      "date": "2025-01-01",
+      "flood_duration_min": 80.61666666666667,
+      "percent_time_in_flood": 5.598379629629631,
+      "isa_health_pct": 94.40162037037037,
+      "peak_10min_count": 12
+    },
+    {
+      "date": "2025-01-02",
+      "flood_duration_min": 65.595,
+      "percent_time_in_flood": 4.555208333333334,
+      "isa_health_pct": 95.44479166666666,
+      "peak_10min_count": 16
+    },
+    {
+      "date": "2025-01-03",
+      "flood_duration_min": 8.04,
+      "percent_time_in_flood": 0.5583333333333332,
+      "isa_health_pct": 99.44166666666666,
+      "peak_10min_count": 10
+    },
+    {
+      "date": "2025-01-04",
+      "flood_duration_min": 14.591666666666667,
+      "percent_time_in_flood": 1.0133101851851851,
+      "isa_health_pct": 98.98668981481481,
+      "peak_10min_count": 11
+    },
+    {
+      "date": "2025-01-05",
+      "flood_duration_min": 12.085,
+      "percent_time_in_flood": 0.8392361111111111,
+      "isa_health_pct": 99.1607638888889,
+      "peak_10min_count": 14
+    },
+    {
+      "date": "2025-01-06",
+      "flood_duration_min": 25.555,
+      "percent_time_in_flood": 1.7746527777777779,
+      "isa_health_pct": 98.22534722222223,
+      "peak_10min_count": 14
+    },
+    {
+      "date": "2025-01-07",
+      "flood_duration_min": 6.9350000000000005,
+      "percent_time_in_flood": 0.48159722222222223,
+      "isa_health_pct": 99.51840277777778,
+      "peak_10min_count": 10
+    },
+    {
+      "date": "2025-01-08",
+      "flood_duration_min": 179.63333333333333,
+      "percent_time_in_flood": 12.474537037037036,
+      "isa_health_pct": 87.52546296296296,
+      "peak_10min_count": 55
+    },
+    {
+      "date": "2025-01-09",
+      "flood_duration_min": 35.15833333333333,
+      "percent_time_in_flood": 2.441550925925926,
+      "isa_health_pct": 97.55844907407408,
+      "peak_10min_count": 20
+    },
+    {
+      "date": "2025-01-10",
+      "flood_duration_min": 88.28166666666667,
+      "percent_time_in_flood": 6.130671296296296,
+      "isa_health_pct": 93.8693287037037,
+      "peak_10min_count": 11
+    },
+    {
+      "date": "2025-01-11",
+      "flood_duration_min": 39.60666666666667,
+      "percent_time_in_flood": 2.7504629629629633,
+      "isa_health_pct": 97.24953703703704,
+      "peak_10min_count": 14
+    },
+    {
+      "date": "2025-01-12",
+      "flood_duration_min": 241.155,
+      "percent_time_in_flood": 16.746875,
+      "isa_health_pct": 83.253125,
+      "peak_10min_count": 20
+    },
+    {
+      "date": "2025-01-13",
+      "flood_duration_min": 30.424999999999997,
+      "percent_time_in_flood": 2.112847222222222,
+      "isa_health_pct": 97.88715277777777,
+      "peak_10min_count": 10
+    },
+    {
+      "date": "2025-01-14",
+      "flood_duration_min": 9.745000000000001,
+      "percent_time_in_flood": 0.6767361111111112,
+      "isa_health_pct": 99.32326388888889,
+      "peak_10min_count": 10
+    },
+    {
+      "date": "2025-01-15",
+      "flood_duration_min": 33.605000000000004,
+      "percent_time_in_flood": 2.333680555555556,
+      "isa_health_pct": 97.66631944444444,
+      "peak_10min_count": 12
+    },
+    {
+      "date": "2025-01-16",
+      "flood_duration_min": 15.55,
+      "percent_time_in_flood": 1.0798611111111112,
+      "isa_health_pct": 98.92013888888889,
+      "peak_10min_count": 13
+    },
+    {
+      "date": "2025-01-17",
+      "flood_duration_min": 8.456666666666667,
+      "percent_time_in_flood": 0.5872685185185186,
+      "isa_health_pct": 99.41273148148149,
+      "peak_10min_count": 10
+    },
+    {
+      "date": "2025-01-18",
+      "flood_duration_min": 28.368333333333332,
+      "percent_time_in_flood": 1.9700231481481483,
+      "isa_health_pct": 98.02997685185186,
+      "peak_10min_count": 10
+    },
+    {
+      "date": "2025-01-19",
+      "flood_duration_min": 95.60666666666667,
+      "percent_time_in_flood": 6.639351851851852,
+      "isa_health_pct": 93.36064814814814,
+      "peak_10min_count": 15
+    },
+    {
+      "date": "2025-01-20",
+      "flood_duration_min": 76.99666666666666,
+      "percent_time_in_flood": 5.34699074074074,
+      "isa_health_pct": 94.65300925925926,
+      "peak_10min_count": 17
+    },
+    {
+      "date": "2025-01-22",
+      "flood_duration_min": 9.081666666666667,
+      "percent_time_in_flood": 0.6306712962962964,
+      "isa_health_pct": 99.3693287037037,
+      "peak_10min_count": 10
+    },
+    {
+      "date": "2025-01-23",
+      "flood_duration_min": 175.48166666666668,
+      "percent_time_in_flood": 12.186226851851853,
+      "isa_health_pct": 87.81377314814814,
+      "peak_10min_count": 40
+    },
+    {
+      "date": "2025-01-24",
+      "flood_duration_min": 17.666666666666668,
+      "percent_time_in_flood": 1.2268518518518519,
+      "isa_health_pct": 98.77314814814815,
+      "peak_10min_count": 12
+    },
+    {
+      "date": "2025-01-25",
+      "flood_duration_min": 76.04,
+      "percent_time_in_flood": 5.280555555555556,
+      "isa_health_pct": 94.71944444444445,
+      "peak_10min_count": 26
+    },
+    {
+      "date": "2025-01-26",
+      "flood_duration_min": 37.458333333333336,
+      "percent_time_in_flood": 2.6012731481481484,
+      "isa_health_pct": 97.39872685185185,
+      "peak_10min_count": 17
+    },
+    {
+      "date": "2025-01-27",
+      "flood_duration_min": 0,
+      "percent_time_in_flood": 0.0,
+      "isa_health_pct": 100.0,
+      "peak_10min_count": 0
+    },
+    {
+      "date": "2025-01-28",
+      "flood_duration_min": 11.156666666666666,
+      "percent_time_in_flood": 0.7747685185185185,
+      "isa_health_pct": 99.22523148148149,
+      "peak_10min_count": 31
+    },
+    {
+      "date": "2025-01-29",
+      "flood_duration_min": 0,
+      "percent_time_in_flood": 0.0,
+      "isa_health_pct": 100.0,
+      "peak_10min_count": 0
+    },
+    {
+      "date": "2025-01-30",
+      "flood_duration_min": 10.15,
+      "percent_time_in_flood": 0.7048611111111112,
+      "isa_health_pct": 99.29513888888889,
+      "peak_10min_count": 12
+    },
+    {
+      "date": "2025-01-31",
+      "flood_duration_min": 28.978333333333335,
+      "percent_time_in_flood": 2.0123842592592593,
+      "isa_health_pct": 97.98761574074074,
+      "peak_10min_count": 20
+    },
+    {
+      "date": "2025-02-01",
+      "flood_duration_min": 183.10333333333332,
+      "percent_time_in_flood": 12.715509259259258,
+      "isa_health_pct": 87.28449074074074,
+      "peak_10min_count": 46
+    },
+    {
+      "date": "2025-02-02",
+      "flood_duration_min": 61.16666666666667,
+      "percent_time_in_flood": 4.247685185185186,
+      "isa_health_pct": 95.75231481481481,
+      "peak_10min_count": 17
+    },
+    {
+      "date": "2025-02-03",
+      "flood_duration_min": 17.921666666666667,
+      "percent_time_in_flood": 1.244560185185185,
+      "isa_health_pct": 98.75543981481482,
+      "peak_10min_count": 12
+    },
+    {
+      "date": "2025-02-04",
+      "flood_duration_min": 90.26333333333334,
+      "percent_time_in_flood": 6.268287037037037,
+      "isa_health_pct": 93.73171296296296,
+      "peak_10min_count": 27
+    },
+    {
+      "date": "2025-02-05",
+      "flood_duration_min": 79.24833333333333,
+      "percent_time_in_flood": 5.5033564814814815,
+      "isa_health_pct": 94.49664351851852,
+      "peak_10min_count": 16
+    },
+    {
+      "date": "2025-02-06",
+      "flood_duration_min": 59.733333333333334,
+      "percent_time_in_flood": 4.148148148148148,
+      "isa_health_pct": 95.85185185185185,
+      "peak_10min_count": 14
+    },
+    {
+      "date": "2025-02-07",
+      "flood_duration_min": 26.463333333333335,
+      "percent_time_in_flood": 1.8377314814814816,
+      "isa_health_pct": 98.16226851851852,
+      "peak_10min_count": 13
+    },
+    {
+      "date": "2025-02-08",
+      "flood_duration_min": 93.03,
+      "percent_time_in_flood": 6.460416666666667,
+      "isa_health_pct": 93.53958333333333,
+      "peak_10min_count": 38
+    },
+    {
+      "date": "2025-02-09",
+      "flood_duration_min": 64.07499999999999,
+      "percent_time_in_flood": 4.449652777777777,
+      "isa_health_pct": 95.55034722222223,
+      "peak_10min_count": 18
+    },
+    {
+      "date": "2025-02-10",
+      "flood_duration_min": 283.3566666666667,
+      "percent_time_in_flood": 19.677546296296295,
+      "isa_health_pct": 80.3224537037037,
+      "peak_10min_count": 22
+    },
+    {
+      "date": "2025-02-11",
+      "flood_duration_min": 79.80166666666668,
+      "percent_time_in_flood": 5.541782407407408,
+      "isa_health_pct": 94.45821759259259,
+      "peak_10min_count": 27
+    },
+    {
+      "date": "2025-02-12",
+      "flood_duration_min": 175.325,
+      "percent_time_in_flood": 12.175347222222221,
+      "isa_health_pct": 87.82465277777777,
+      "peak_10min_count": 31
+    },
+    {
+      "date": "2025-02-13",
+      "flood_duration_min": 107.00666666666666,
+      "percent_time_in_flood": 7.431018518518519,
+      "isa_health_pct": 92.56898148148149,
+      "peak_10min_count": 13
+    },
+    {
+      "date": "2025-02-14",
+      "flood_duration_min": 110.89333333333333,
+      "percent_time_in_flood": 7.700925925925926,
+      "isa_health_pct": 92.29907407407407,
+      "peak_10min_count": 21
+    },
+    {
+      "date": "2025-02-15",
+      "flood_duration_min": 170.46666666666667,
+      "percent_time_in_flood": 11.837962962962962,
+      "isa_health_pct": 88.16203703703704,
+      "peak_10min_count": 46
+    },
+    {
+      "date": "2025-02-16",
+      "flood_duration_min": 11.171666666666665,
+      "percent_time_in_flood": 0.7758101851851851,
+      "isa_health_pct": 99.22418981481482,
+      "peak_10min_count": 13
+    },
+    {
+      "date": "2025-02-17",
+      "flood_duration_min": 132.07833333333332,
+      "percent_time_in_flood": 9.17210648148148,
+      "isa_health_pct": 90.82789351851852,
+      "peak_10min_count": 38
+    },
+    {
+      "date": "2025-02-18",
+      "flood_duration_min": 37.553333333333335,
+      "percent_time_in_flood": 2.6078703703703705,
+      "isa_health_pct": 97.39212962962964,
+      "peak_10min_count": 13
+    },
+    {
+      "date": "2025-02-19",
+      "flood_duration_min": 80.63333333333334,
+      "percent_time_in_flood": 5.599537037037037,
+      "isa_health_pct": 94.40046296296296,
+      "peak_10min_count": 14
+    },
+    {
+      "date": "2025-02-20",
+      "flood_duration_min": 121.77166666666666,
+      "percent_time_in_flood": 8.45636574074074,
+      "isa_health_pct": 91.54363425925926,
+      "peak_10min_count": 16
+    },
+    {
+      "date": "2025-02-21",
+      "flood_duration_min": 110.61666666666667,
+      "percent_time_in_flood": 7.681712962962964,
+      "isa_health_pct": 92.31828703703704,
+      "peak_10min_count": 17
+    },
+    {
+      "date": "2025-02-22",
+      "flood_duration_min": 57.093333333333334,
+      "percent_time_in_flood": 3.964814814814815,
+      "isa_health_pct": 96.03518518518518,
+      "peak_10min_count": 15
+    },
+    {
+      "date": "2025-02-23",
+      "flood_duration_min": 40.81,
+      "percent_time_in_flood": 2.834027777777778,
+      "isa_health_pct": 97.16597222222222,
+      "peak_10min_count": 12
+    },
+    {
+      "date": "2025-02-24",
+      "flood_duration_min": 80.86666666666667,
+      "percent_time_in_flood": 5.615740740740741,
+      "isa_health_pct": 94.38425925925925,
+      "peak_10min_count": 19
+    },
+    {
+      "date": "2025-02-25",
+      "flood_duration_min": 71.37166666666667,
+      "percent_time_in_flood": 4.956365740740741,
+      "isa_health_pct": 95.04363425925926,
+      "peak_10min_count": 15
+    },
+    {
+      "date": "2025-02-26",
+      "flood_duration_min": 94.07,
+      "percent_time_in_flood": 6.532638888888888,
+      "isa_health_pct": 93.46736111111112,
+      "peak_10min_count": 15
+    },
+    {
+      "date": "2025-02-27",
+      "flood_duration_min": 106.18833333333333,
+      "percent_time_in_flood": 7.374189814814815,
+      "isa_health_pct": 92.62581018518519,
+      "peak_10min_count": 14
+    },
+    {
+      "date": "2025-02-28",
+      "flood_duration_min": 115.82,
+      "percent_time_in_flood": 8.043055555555554,
+      "isa_health_pct": 91.95694444444445,
+      "peak_10min_count": 21
+    },
+    {
+      "date": "2025-03-01",
+      "flood_duration_min": 89.51666666666667,
+      "percent_time_in_flood": 6.216435185185185,
+      "isa_health_pct": 93.78356481481481,
+      "peak_10min_count": 32
+    },
+    {
+      "date": "2025-03-02",
+      "flood_duration_min": 64.51,
+      "percent_time_in_flood": 4.479861111111112,
+      "isa_health_pct": 95.5201388888889,
+      "peak_10min_count": 16
+    },
+    {
+      "date": "2025-03-03",
+      "flood_duration_min": 78.71166666666666,
+      "percent_time_in_flood": 5.466087962962963,
+      "isa_health_pct": 94.53391203703704,
+      "peak_10min_count": 19
+    },
+    {
+      "date": "2025-03-04",
+      "flood_duration_min": 24.628333333333334,
+      "percent_time_in_flood": 1.7103009259259259,
+      "isa_health_pct": 98.28969907407408,
+      "peak_10min_count": 12
+    },
+    {
+      "date": "2025-03-05",
+      "flood_duration_min": 217.67833333333334,
+      "percent_time_in_flood": 15.116550925925926,
+      "isa_health_pct": 84.88344907407408,
+      "peak_10min_count": 31
+    },
+    {
+      "date": "2025-03-06",
+      "flood_duration_min": 0,
+      "percent_time_in_flood": 0.0,
+      "isa_health_pct": 100.0,
+      "peak_10min_count": 0
+    },
+    {
+      "date": "2025-03-07",
+      "flood_duration_min": 22.443333333333335,
+      "percent_time_in_flood": 1.5585648148148148,
+      "isa_health_pct": 98.44143518518518,
+      "peak_10min_count": 12
+    },
+    {
+      "date": "2025-03-08",
+      "flood_duration_min": 91.69333333333333,
+      "percent_time_in_flood": 6.367592592592593,
+      "isa_health_pct": 93.63240740740741,
+      "peak_10min_count": 23
+    },
+    {
+      "date": "2025-03-09",
+      "flood_duration_min": 33.32,
+      "percent_time_in_flood": 2.313888888888889,
+      "isa_health_pct": 97.68611111111112,
+      "peak_10min_count": 15
+    },
+    {
+      "date": "2025-03-10",
+      "flood_duration_min": 36.846666666666664,
+      "percent_time_in_flood": 2.558796296296296,
+      "isa_health_pct": 97.4412037037037,
+      "peak_10min_count": 13
+    },
+    {
+      "date": "2025-03-11",
+      "flood_duration_min": 44.175,
+      "percent_time_in_flood": 3.067708333333333,
+      "isa_health_pct": 96.93229166666667,
+      "peak_10min_count": 22
+    },
+    {
+      "date": "2025-03-12",
+      "flood_duration_min": 120.25833333333334,
+      "percent_time_in_flood": 8.351273148148149,
+      "isa_health_pct": 91.64872685185185,
+      "peak_10min_count": 26
+    },
+    {
+      "date": "2025-03-13",
+      "flood_duration_min": 90.11166666666666,
+      "percent_time_in_flood": 6.257754629629629,
+      "isa_health_pct": 93.74224537037037,
+      "peak_10min_count": 25
+    },
+    {
+      "date": "2025-03-14",
+      "flood_duration_min": 631.9866666666667,
+      "percent_time_in_flood": 43.88796296296296,
+      "isa_health_pct": 56.11203703703704,
+      "peak_10min_count": 50
+    },
+    {
+      "date": "2025-03-15",
+      "flood_duration_min": 471.575,
+      "percent_time_in_flood": 32.74826388888889,
+      "isa_health_pct": 67.25173611111111,
+      "peak_10min_count": 30
+    },
+    {
+      "date": "2025-03-16",
+      "flood_duration_min": 286.71999999999997,
+      "percent_time_in_flood": 19.91111111111111,
+      "isa_health_pct": 80.08888888888889,
+      "peak_10min_count": 18
+    },
+    {
+      "date": "2025-03-17",
+      "flood_duration_min": 0,
+      "percent_time_in_flood": 0.0,
+      "isa_health_pct": 100.0,
+      "peak_10min_count": 0
+    }
+  ]
+}

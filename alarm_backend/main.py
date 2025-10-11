@@ -704,7 +704,9 @@ def pvcI_isa_flood_summary_enhanced(
             try:
                 base_dir = os.path.dirname(__file__)
                 enhanced_candidates = [
+                    # Priority 1: Corrected enhanced JSON (alarm filtering enabled)
                     os.path.join(base_dir, "PVCI-overall-health", "isa18-flood-summary-enhanced.json"),
+                    os.path.join(base_dir, "PVCI-overall-health", "isa18-flood-summary-CORRECTED-ENHANCED.json"),
                     os.path.join(base_dir, "PVCI-overall-health", "PVCI-plant-wide-latest-enhanced.json"),
                 ]
                 
@@ -760,6 +762,7 @@ def pvcI_isa_flood_summary_enhanced(
                                     "condition_distribution_by_location": saved.get("condition_distribution_by_location"),
                                     "unique_sources_summary": saved.get("unique_sources_summary"),
                                     "unhealthy_sources_top_n": saved.get("unhealthy_sources_top_n"),
+                                    "event_statistics": saved.get("event_statistics"),  # ✅ ADDED: Event statistics
                                     "_enhanced": True,
                                     "_version": saved.get("_version", "2.0"),
                                 }

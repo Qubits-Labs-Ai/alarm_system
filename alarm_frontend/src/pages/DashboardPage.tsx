@@ -5,6 +5,7 @@ import { PlantSelector } from '@/components/dashboard/PlantSelector';
 import { InsightCards } from '@/components/dashboard/InsightCards';
 import { UniqueSourcesCard } from '@/components/dashboard/UniqueSourcesCard';
 import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
+import { EventStatisticsCards } from '@/components/dashboard/EventStatisticsCards';
 import { ErrorState } from '@/components/dashboard/ErrorState';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
 import UnhealthySourcesWordCloud from '@/components/UnhealthySourcesWordCloud';
@@ -70,6 +71,9 @@ export default function DashboardPage() {
     healthySources: number;
     unhealthySources: number;
   }>({ totalUnique: 0, healthySources: 0, unhealthySources: 0 });
+
+  // Event statistics (only for PVC-I Plant-Wide mode)
+  const [eventStats, setEventStats] = useState<any>(null);
 
   const toIso = (v?: string) => (v ? new Date(v).toISOString() : undefined);
   const applyIsaRange = () => {
@@ -260,6 +264,12 @@ export default function DashboardPage() {
                   healthySources: Number(uniqueSourcesSummary.healthy_sources || 0),
                   unhealthySources: Number(uniqueSourcesSummary.unhealthy_sources || 0),
                 });
+              }
+
+              // Extract event statistics from enhanced response
+              const eventStatistics = (enhancedRes as any)?.event_statistics;
+              if (eventStatistics && mounted) {
+                setEventStats(eventStatistics);
               }
 
               // Use pre-computed unhealthy_sources_top_n from enhanced response
@@ -600,6 +610,14 @@ export default function DashboardPage() {
             />
           </div>
         </div>
+
+        {/* Event Statistics Cards - Only for PVC-I Plant-Wide Mode */}
+        {selectedPlant.id === 'pvcI' && mode === 'flood' && (
+          <EventStatisticsCards 
+            eventStats={eventStats} 
+            isLoading={isLoading || unhealthyBarsLoading}
+          />
+        )}
 
         {/* Charts Section */}
         {selectedPlant.id === 'pvcI' && mode === 'perSource' && (
