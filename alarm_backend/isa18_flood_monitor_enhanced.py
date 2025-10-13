@@ -30,6 +30,47 @@ from isa18_flood_monitor import (
 
 logger = logging.getLogger(__name__)
 
+# --- Classification helpers reused from ISA-18 scripts ---
+try:
+    from isa18_csv_reader import (
+        ALARM_CONDITIONS,
+        OPERATOR_ACTIONS,
+        SYSTEM_EVENTS,
+        NON_ALARM_CONDITIONS,
+        ISA18Config,
+    )
+except Exception:
+    # Fallback defaults (minimal) if import fails
+    ALARM_CONDITIONS = {
+        'ALARM','HI','LO','HIHI','LOLO','PVHIGH','PVLOW','PVHIHI','PVLOLO','DEVLOW','DEVHIGH'
+    }
+    OPERATOR_ACTIONS = {'ACK','OK','SHELVE','UNSHELVE','CNF','ACK PNT'}
+    SYSTEM_EVENTS = {'CHANGE','State Change','ChOfSt','Start','End','RecipeRemoval'}
+    NON_ALARM_CONDITIONS = {'BAD PV','MESSAGE','DIAG','OP Fail in circuit/field wire'}
+
+QUALITY_KEYWORDS = ("BAD", "COMM", "DISABL", "FAIL")
+
+def _is_actual_alarm_row(action: str, condition: str) -> bool:
+    a = (action or "").strip()
+    c = (condition or "").strip()
+    if a and a != '(blank)':
+        return False
+    c_up = c.upper()
+    if c_up in ALARM_CONDITIONS or any(k in c_up for k in ("PVHIGH","PVLOW","PVHIHI","PVLOLO","DEVLOW","DEVHIGH")):
+        return True
+    if (c_up in OPERATOR_ACTIONS) or (c_up in SYSTEM_EVENTS) or (c_up in NON_ALARM_CONDITIONS):
+        return False
+    return False
+
+def _is_quality_issue(condition: str) -> bool:
+    cu = (condition or "").upper()
+    if any(k in cu for k in QUALITY_KEYWORDS):
+        return True
+    # Explicit known quality issue labels seen in plant data
+    if cu in {"COMMAND","BADCTL","COMMS","SYNCHRONIZATION FAILED","OP FAIL IN CIRCUIT/FIELD WIRE"}:
+        return True
+    return False
+
 
 def _normalize_location(loc: Optional[str]) -> str:
     """Normalize location tags for consistent grouping."""
@@ -71,6 +112,9 @@ def compute_condition_distribution_by_location(
     top_locations: int = 20,
     top_sources_per_condition: int = 5,
     threshold: int = 10,
+    *,
+    alarms_only: bool = True,
+    include_system: bool = False,
 ) -> Dict[str, Any]:
     """
     Pre-compute condition distribution aggregated by location.
@@ -128,19 +172,19 @@ def compute_condition_distribution_by_location(
         total_alarms = 0
         
         for fp in files:
-            df = _read_rows_for_file(fp)
+            df = _read_rows_for_file(fp, alarms_only=alarms_only, include_system=include_system)
             if df is None or df.empty:
                 continue
             
-            # Filter by time if provided
+            # Filter by time if provided (align mask to DataFrame index to avoid reindex warnings)
             if start_dt or end_dt:
                 ts = df["Event Time"]
-                mask = pd.Series([True] * len(df))
+                mask = pd.Series(True, index=ts.index)
                 if start_dt:
-                    mask &= (ts >= start_dt)
+                    mask = mask & (ts >= start_dt)
                 if end_dt:
-                    mask &= (ts <= end_dt)
-                df = df[mask]
+                    mask = mask & (ts <= end_dt)
+                df = df.loc[mask]
             
             if df.empty:
                 continue
@@ -257,6 +301,8 @@ def compute_unique_sources_summary(
     end_dt: Optional[datetime] = None,
     threshold: int = 10,
     include_system: bool = True,
+    *,
+    alarms_only: bool = True,
 ) -> Dict[str, Any]:
     """
     Pre-compute unique sources summary with activity breakdown.
@@ -291,19 +337,19 @@ def compute_unique_sources_summary(
         source_counts: Dict[str, int] = defaultdict(int)
         
         for fp in files:
-            df = _read_rows_for_file(fp)
+            df = _read_rows_for_file(fp, alarms_only=alarms_only, include_system=include_system)
             if df is None or df.empty:
                 continue
             
-            # Filter by time
+            # Filter by time (align mask index)
             if start_dt or end_dt:
                 ts = df["Event Time"]
-                mask = pd.Series([True] * len(df))
+                mask = pd.Series(True, index=ts.index)
                 if start_dt:
-                    mask &= (ts >= start_dt)
+                    mask = mask & (ts >= start_dt)
                 if end_dt:
-                    mask &= (ts <= end_dt)
-                df = df[mask]
+                    mask = mask & (ts <= end_dt)
+                df = df.loc[mask]
             
             if df.empty:
                 continue
@@ -407,6 +453,8 @@ def compute_unhealthy_sources_top_n(
     top_n: int = 10,
     threshold: int = 10,
     include_system: bool = True,
+    *,
+    alarms_only: bool = True,
 ) -> Dict[str, Any]:
     """
     Pre-compute top N unhealthy sources for bar chart display.
@@ -445,7 +493,7 @@ def compute_unhealthy_sources_top_n(
         })
         
         for fp in files:
-            df = _read_rows_for_file(fp)
+            df = _read_rows_for_file(fp, alarms_only=alarms_only, include_system=include_system)
             if df is None or df.empty:
                 continue
             
@@ -546,6 +594,201 @@ def _empty_unhealthy_sources() -> Dict[str, Any]:
         }
     }
 
+# ------------------------------------------------------------------------------------
+# Extra enhanced blocks: events_top_n, quality_issues_top_n, source_catalog
+# ------------------------------------------------------------------------------------
+from typing import Iterable, Tuple
+import pandas as _pd
+
+
+def _iter_rows_for_stats(file_path: str, start_dt: Optional[datetime], end_dt: Optional[datetime]) -> _pd.DataFrame:
+    """Read a CSV with the minimal columns required for classification stats.
+    Returns a DataFrame with cleaned columns. Heavy but used offline during generation.
+    """
+    try:
+        df = _pd.read_csv(
+            file_path,
+            skiprows=8,
+            encoding="utf-8",
+            engine="python",
+            on_bad_lines="skip",
+        )
+        if df is None or df.empty:
+            return _pd.DataFrame(columns=["Event Time","Source","Location Tag","Condition","Action"])  # type: ignore
+        # Normalize columns
+        df.columns = df.columns.str.strip()
+        for col in ("Event Time","Source","Location Tag","Condition","Action"):
+            if col not in df.columns:
+                df[col] = ""
+        # Parse timestamps
+        df["Event Time"] = _pd.to_datetime(df["Event Time"], errors="coerce", utc=True)
+        df = df.dropna(subset=["Event Time"])  # keep only valid ts
+        if start_dt is not None:
+            df = df[df["Event Time"] >= start_dt]
+        if end_dt is not None:
+            df = df[df["Event Time"] <= end_dt]
+        # Trim to needed cols
+        sub = df[["Event Time","Source","Location Tag","Condition","Action"]].copy()
+        # Normalize text
+        for c in ("Source","Location Tag","Condition","Action"):
+            sub[c] = sub[c].astype(str).str.strip()
+        return sub
+    except Exception:
+        return _pd.DataFrame(columns=["Event Time","Source","Location Tag","Condition","Action"])  # type: ignore
+
+
+def _compute_events_quality_and_catalog(
+    folder_path: str,
+    start_dt: Optional[datetime],
+    end_dt: Optional[datetime],
+    threshold: int,
+    include_system: bool,
+    top_n: int,
+) -> Dict[str, Any]:
+    """Compute additional enhanced sections derived from all CSV rows.
+    - events_top_n: top sources by non-alarm event count (includes system/meta like REPORT)
+    - quality_issues_top_n: top sources by quality/communication issues
+    - source_catalog: per-source totals and top breakdowns
+    """
+    files = _list_csv_files(folder_path)
+    if not files:
+        return {
+            "events_top_n": {"sources": [], "metadata": {"computed_at": datetime.now(timezone.utc).isoformat(), "filters": {"include_system": include_system}}},
+            "quality_issues_top_n": {"sources": [], "metadata": {"computed_at": datetime.now(timezone.utc).isoformat()}},
+            "source_catalog": {},
+        }
+
+    # Aggregation maps
+    from collections import defaultdict as _dd
+    src_totals = _dd(lambda: {
+        "alarms": 0,
+        "events": 0,
+        "quality_issues": 0,
+        "event_conditions": _dd(int),
+        "alarm_conditions": _dd(int),
+        "actions": _dd(int),
+        "locations": _dd(int),
+        "first_ts": None,
+        "last_ts": None,
+    })
+    system_meta_counts: Dict[str, int] = {}
+
+    for fp in files:
+        df = _iter_rows_for_stats(fp, start_dt, end_dt)
+        if df is None or df.empty:
+            continue
+        for _, r in df.iterrows():
+            ts = r["Event Time"]
+            src = str(r.get("Source") or "").strip()
+            if not src:
+                continue
+            loc = _normalize_location(r.get("Location Tag"))
+            cond = _normalize_condition(r.get("Condition"))
+            act = str(r.get("Action") or "").strip()
+
+            s = src_totals[src]
+            # Update time bounds
+            try:
+                if s["first_ts"] is None or ts < s["first_ts"]:
+                    s["first_ts"] = ts
+                if s["last_ts"] is None or ts > s["last_ts"]:
+                    s["last_ts"] = ts
+            except Exception:
+                pass
+
+            if _is_actual_alarm_row(act, cond):
+                s["alarms"] += 1
+                s["alarm_conditions"][cond] += 1
+            else:
+                s["events"] += 1
+                s["event_conditions"][cond] += 1
+                if _is_quality_issue(cond):
+                    s["quality_issues"] += 1
+            if act:
+                s["actions"][act] += 1
+            if loc:
+                s["locations"][loc] += 1
+            if _is_meta_source(src):
+                system_meta_counts[src] = system_meta_counts.get(src, 0) + 1
+
+    # Build events_top_n
+    ev_items: List[Tuple[str, int]] = sorted(((k, int(v["events"])) for k, v in src_totals.items() if int(v["events"]) > 0), key=lambda x: x[1], reverse=True)
+    if isinstance(top_n, int) and top_n > 0:
+        ev_items = ev_items[:top_n]
+    events_top = []
+    for src, cnt in ev_items:
+        v = src_totals[src]
+        top_ec = sorted(v["event_conditions"].items(), key=lambda x: x[1], reverse=True)[:5]
+        top_actions = sorted(v["actions"].items(), key=lambda x: x[1], reverse=True)[:5]
+        events_top.append({
+            "source": src,
+            "hits": int(cnt),
+            "top_event_conditions": [{"condition": c, "count": int(n)} for c, n in top_ec],
+            "top_actions": [{"action": a, "count": int(n)} for a, n in top_actions],
+        })
+
+    # Build quality_issues_top_n
+    q_items: List[Tuple[str, int]] = sorted(((k, int(v["quality_issues"])) for k, v in src_totals.items() if int(v["quality_issues"]) > 0), key=lambda x: x[1], reverse=True)
+    if isinstance(top_n, int) and top_n > 0:
+        q_items = q_items[:top_n]
+    quality_top = []
+    for src, cnt in q_items:
+        v = src_totals[src]
+        top_q = sorted(((c, n) for c, n in v["event_conditions"].items() if _is_quality_issue(c)), key=lambda x: x[1], reverse=True)[:5]
+        quality_top.append({
+            "source": src,
+            "hits": int(cnt),
+            "top_quality_conditions": [{"condition": c, "count": int(n)} for c, n in top_q],
+        })
+
+    # Build source_catalog
+    catalog: Dict[str, Any] = {}
+    for src, v in src_totals.items():
+        is_sys = _is_meta_source(src)
+        if not include_system and is_sys:
+            continue
+        def _top_items(m: Dict[str, int], k: int = 5, key_name: str = "name") -> List[Dict[str, Any]]:
+            return [{key_name: k2, "count": int(n)} for k2, n in sorted(m.items(), key=lambda x: x[1], reverse=True)[:k]]
+        first_ts = v.get("first_ts")
+        last_ts = v.get("last_ts")
+        catalog[src] = {
+            "is_system_meta": bool(is_sys),
+            "totals": {
+                "alarms": int(v["alarms"]),
+                "events": int(v["events"]),
+                "quality_issues": int(v["quality_issues"]),
+            },
+            "alarm_conditions_top": _top_items(dict(v["alarm_conditions"]), 5, key_name="condition"),
+            "event_conditions_top": _top_items(dict(v["event_conditions"]), 5, key_name="condition"),
+            "actions_top": _top_items(dict(v["actions"]), 5, key_name="action"),
+            "locations_top": _top_items(dict(v["locations"]), 5, key_name="location"),
+            "first_seen": first_ts.isoformat() if hasattr(first_ts, "isoformat") and first_ts is not None else None,
+            "last_seen": last_ts.isoformat() if hasattr(last_ts, "isoformat") and last_ts is not None else None,
+        }
+
+    system_sources_block = {
+        "count": len(system_meta_counts),
+        "sources": [{"source": s, "count": int(c)} for s, c in sorted(system_meta_counts.items(), key=lambda x: x[1], reverse=True)],
+    }
+
+    return {
+        "events_top_n": {
+            "sources": events_top,
+            "metadata": {
+                "computed_at": datetime.now(timezone.utc).isoformat(),
+                "filters": {"include_system": True},
+            },
+        },
+        "quality_issues_top_n": {
+            "sources": quality_top,
+            "metadata": {
+                "computed_at": datetime.now(timezone.utc).isoformat(),
+            },
+        },
+        "source_catalog": catalog,
+        "system_sources": system_sources_block,
+    }
+
 
 def compute_enhanced_isa18_flood_summary(
     folder_path: str,
@@ -565,6 +808,9 @@ def compute_enhanced_isa18_flood_summary(
     include_enhanced: bool = True,
     top_locations: int = 20,
     top_sources_per_condition: int = 5,
+    *,
+    alarms_only: bool = True,
+    include_system: bool = False,
 ) -> Dict[str, Any]:
     """
     Compute ISA 18.2 flood summary with enhanced pre-computed aggregations.
@@ -591,6 +837,8 @@ def compute_enhanced_isa18_flood_summary(
         max_windows=max_windows,
         events_sample=events_sample,
         events_sample_max=events_sample_max,
+        alarms_only=alarms_only,
+        include_system=include_system,
     )
     
     if not include_enhanced:
@@ -611,6 +859,8 @@ def compute_enhanced_isa18_flood_summary(
             top_locations=top_locations,
             top_sources_per_condition=top_sources_per_condition,
             threshold=threshold,
+            alarms_only=alarms_only,
+            include_system=include_system,
         )
     )
     
@@ -620,7 +870,8 @@ def compute_enhanced_isa18_flood_summary(
             start_dt=start_dt,
             end_dt=end_dt,
             threshold=threshold,
-            include_system=True,
+            include_system=include_system,
+            alarms_only=alarms_only,
         )
     )
     
@@ -631,9 +882,53 @@ def compute_enhanced_isa18_flood_summary(
             end_dt=end_dt,
             top_n=top_n,
             threshold=threshold,
-            include_system=True,
+            include_system=include_system,
+            alarms_only=alarms_only,
         )
     )
+
+    # Per-window condition distributions (Option B): attach to each record
+    try:
+        recs = base_summary.get("records") or []
+        for rec in recs:
+            try:
+                s_iso = rec.get("peak_window_start") or rec.get("start")
+                e_iso = rec.get("peak_window_end") or rec.get("end")
+                if not s_iso or not e_iso:
+                    continue
+                sdt = _parse_user_iso(str(s_iso))
+                edt = _parse_user_iso(str(e_iso))
+                if not sdt or not edt:
+                    continue
+                per_win = compute_condition_distribution_by_location(
+                    folder_path=folder_path,
+                    start_dt=sdt,
+                    end_dt=edt,
+                    top_locations=top_locations,
+                    top_sources_per_condition=top_sources_per_condition,
+                    threshold=threshold,
+                )
+                pwd = rec.get("peak_window_details") or {}
+                pwd["per_window_condition_distribution"] = per_win
+                rec["peak_window_details"] = pwd
+            except Exception as _e:
+                logger.debug(f"per-window distribution skipped for a record: {_e}")
+    except Exception as e:
+        logger.warning(f"Failed to attach per-window distributions: {e}")
+
+    # Additional detailed sections so frontend can rely solely on this file
+    try:
+        extra = _compute_events_quality_and_catalog(
+            folder_path=folder_path,
+            start_dt=start_dt,
+            end_dt=end_dt,
+            threshold=threshold,
+            include_system=include_system,
+            top_n=top_n,
+        )
+        base_summary.update(extra)
+    except Exception as e:
+        logger.warning(f"Failed to compute extra enhanced sections: {e}")
     
     # Add marker that this is an enhanced response
     base_summary["_enhanced"] = True

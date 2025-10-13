@@ -19,12 +19,12 @@ export function UniqueSourcesCard({ data, isLoading = false, mode = 'perSource' 
   
   if (isLoading) {
     return (
-      <Card className="shadow-metric-card">
+      <Card className="shadow-metric-card h-full min-h-[140px] flex flex-col">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <div className="h-4 w-32 bg-muted animate-pulse rounded" />
           <div className="h-4 w-4 bg-muted animate-pulse rounded" />
         </CardHeader>
-        <CardContent>
+        <CardContent className="mt-auto">
           <div className="h-8 w-16 bg-muted animate-pulse rounded mb-2" />
           <div className="space-y-1">
             <div className="h-3 w-24 bg-muted animate-pulse rounded" />
@@ -36,14 +36,14 @@ export function UniqueSourcesCard({ data, isLoading = false, mode = 'perSource' 
   }
 
   return (
-    <Card className="shadow-metric-card bg-dashboard-metric-card-bg">
+    <Card className="shadow-metric-card bg-dashboard-metric-card-bg h-full min-h-[140px] flex flex-col">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">
+        <CardTitle className="text-sm font-medium text-muted-foreground truncate">
           Unique Sources
         </CardTitle>
         <Users className="h-4 w-4 text-muted-foreground" />
       </CardHeader>
-      <CardContent>
+      <CardContent className="mt-auto">
         <div className="text-2xl font-bold text-foreground mb-2">
           {data.totalUnique.toLocaleString()}
         </div>
@@ -71,7 +71,7 @@ export function UniqueSourcesCard({ data, isLoading = false, mode = 'perSource' 
             </span>
           </div>
         </div>
-        <p className="text-xs text-muted-foreground mt-2">
+        <p className="text-xs text-muted-foreground mt-2 leading-tight whitespace-normal break-words">
           {isFlood 
             ? 'Sources by flood activity (≥10 threshold)'
             : 'Sources by health status (≥10 threshold)'

@@ -1,0 +1,8 @@
+2025-10-13 19:08:21,227 - add_event_statistics - INFO - Analyzing all records (alarms + events) for statistics...
+2025-10-13 19:10:04,965 - add_event_statistics - INFO - Analysis complete: 934,098 total records
+2025-10-13 19:10:04,965 - add_event_statistics - INFO -   - 74,529 actual alarms (8.0%)
+2025-10-13 19:10:04,965 - add_event_statistics - INFO -   - 859,569 events (92.0%)
+2025-10-13 19:13:29,902 - add_event_statistics - INFO - Analyzing all records (alarms + events) for statistics...
+2025-10-13 19:15:08,198 - add_event_statistics - INFO - Analysis complete: 934,098 total records
+2025-10-13 19:15:08,198 - add_event_statistics - INFO -   - 74,529 actual alarms (8.0%)
+2025-10-13 19:15:08,198 - add_event_statistics - INFO -   - 859,569 events (92.0%)

@@ -560,6 +560,9 @@ def pvcI_isa_flood_summary(
     # New: when true and no explicit time range is provided, return a trimmed view
     # of the saved JSON instead of the entire large blob.
     lite: bool = False,
+    # ISA-18.2 controls
+    alarms_only: bool = True,
+    include_system: bool = False,
 ):
     """ISA-18 sliding-window flood summary for PVC-I.
 
@@ -658,6 +661,8 @@ def pvcI_isa_flood_summary(
             max_windows=max_windows,
             events_sample=events_sample,
             events_sample_max=events_sample_max,
+            alarms_only=alarms_only,
+            include_system=include_system,
         )
         return result
     except Exception as e:
@@ -684,6 +689,9 @@ def pvcI_isa_flood_summary_enhanced(
     include_enhanced: bool = True,  # New: toggle pre-computed aggregations
     top_locations: int = 20,
     top_sources_per_condition: int = 5,
+    # ISA-18.2 controls
+    alarms_only: bool = True,
+    include_system: bool = False,
 ):
     """Enhanced ISA-18 sliding-window flood summary with pre-computed frontend aggregations.
     
@@ -762,7 +770,11 @@ def pvcI_isa_flood_summary_enhanced(
                                     "condition_distribution_by_location": saved.get("condition_distribution_by_location"),
                                     "unique_sources_summary": saved.get("unique_sources_summary"),
                                     "unhealthy_sources_top_n": saved.get("unhealthy_sources_top_n"),
-                                    "event_statistics": saved.get("event_statistics"),  # ✅ ADDED: Event statistics
+                                    "events_top_n": saved.get("events_top_n"),
+                                    "quality_issues_top_n": saved.get("quality_issues_top_n"),
+                                    "source_catalog": saved.get("source_catalog"),
+                                    "system_sources": saved.get("system_sources"),
+                                    "event_statistics": saved.get("event_statistics"),  # ✅ keep
                                     "_enhanced": True,
                                     "_version": saved.get("_version", "2.0"),
                                 }
@@ -795,6 +807,8 @@ def pvcI_isa_flood_summary_enhanced(
             include_enhanced=include_enhanced,
             top_locations=top_locations,
             top_sources_per_condition=top_sources_per_condition,
+            alarms_only=alarms_only,
+            include_system=include_system,
         )
         return result
     except ImportError as ie:
@@ -1699,6 +1713,9 @@ def get_pvci_isa_flood_summary(
     max_windows: int = 10,
     events_sample: bool = False,
     events_sample_max: int = 0,
+    # ISA-18.2 controls
+    alarms_only: bool = True,
+    include_system: bool = False,
 ):
     """
     ISA 18.2 sliding 10-minute flood summary for PVC-I.
@@ -1793,6 +1810,8 @@ def get_pvci_isa_flood_summary(
             max_windows=max_windows,
             events_sample=events_sample,
             events_sample_max=events_sample_max,
+            alarms_only=alarms_only,
+            include_system=include_system,
         )
 
         # Attempt to cache

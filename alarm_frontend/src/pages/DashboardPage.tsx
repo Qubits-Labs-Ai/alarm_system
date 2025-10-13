@@ -20,7 +20,6 @@ import { fetchPlants, fetchUnhealthySources, fetchPvciIsaFloodSummaryEnhanced, c
 import { UnhealthyBar } from '@/types/dashboard';
 import PriorityBreakdownDonut from '@/components/PriorityBreakdownDonut';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import TopFloodWindowsChart, { TopFloodWindowRow } from '@/components/dashboard/TopFloodWindowsChart';
 import { Button } from '@/components/ui/button';
 import DateTimeRangePicker from '@/components/dashboard/DateTimeRangePicker';
@@ -60,6 +59,13 @@ export default function DashboardPage() {
   const [timePickerDomain, setTimePickerDomain] = useState<{ start: string; end: string; peakStart?: string; peakEnd?: string } | null>(null);
   // Global include system toggle
   const [includeSystem, setIncludeSystem] = useState<boolean>(true);
+  // Enforce ISA‑18.2 plant‑wide semantics for PVC‑I: exclude system/meta sources by default
+  useEffect(() => {
+    if (selectedPlant.id === 'pvcI' && mode === 'flood' && includeSystem) {
+      setIncludeSystem(false);
+    }
+    // No else branch: if users later add a UI toggle, their preference in other modes remains untouched.
+  }, [selectedPlant.id, mode]);
   // Global date/time range for ISA-18 plant-wide mode only (applied range)
   const [isaRange, setIsaRange] = useState<{ startTime?: string; endTime?: string } | undefined>(undefined);
   // Input controls (datetime-local strings) before applying
@@ -117,8 +123,7 @@ export default function DashboardPage() {
 
     return { totalUnique, healthySources, unhealthySources };
   }, [includeSystem]);
-  // Disable Include System toggle for PVC-II (not supported yet)
-  const isIncludeSystemDisabled = selectedPlant.id === 'pvcII';
+
 
   // Fetch ISA-18 summary (cards) and per-source metrics via hook; now safe to reference isaRange
   const { 
@@ -206,8 +211,16 @@ export default function DashboardPage() {
           const barsPromise = (async () => {
             let bars: UnhealthyBar[] = [];
             if (selectedWindow) {
-              const det = await fetchPvciWindowSourceDetails(selectedWindow.start, selectedWindow.end, 100);
-              const topSources: Array<{ source: string; count: number }> = Array.isArray(det?.top_sources) ? det.top_sources : [];
+              // Use enhanced JSON (pre-computed Top Flood Windows) rather than event-level endpoint
+              let topSources: Array<{ source: string; count: number }> = [];
+              try {
+                topSources = (windowTopSources[selectedWindow.start] || []) as any;
+                if ((!topSources || topSources.length === 0) && Array.isArray(topWindows) && topWindows.length > 0) {
+                  const row = topWindows.find(w => w.start === selectedWindow.start);
+                  if (row && Array.isArray(row.top_sources)) topSources = row.top_sources as any;
+                }
+              } catch {}
+
               bars = (topSources || []).map((s) => ({
                 id: `${s.source}-${selectedWindow.start}`,
                 source: String(s.source || 'Unknown'),
@@ -219,28 +232,28 @@ export default function DashboardPage() {
               }));
               bars = bars.filter(b => (b?.hits ?? 0) >= 10).sort((a, b) => b.hits - a.hits).slice(0, 50);
 
-              // Compute Unique Sources from full per-window details (not Top-N)
+              // Compute Unique Sources for the selected window from enhanced top_sources (best effort)
               try {
-                const psd: any[] = Array.isArray((det as any)?.per_source_detailed) ? (det as any).per_source_detailed : [];
                 const isMetaSource = (name: string) => {
                   const s = String(name || '').trim().toUpperCase();
                   if (!s) return false;
                   return s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM');
                 };
-                const baseList = includeSystem ? psd : psd.filter(d => !isMetaSource(d?.source));
+                const baseList = includeSystem ? (topSources || []) : (topSources || []).filter(d => !isMetaSource(d?.source));
                 const seen = new Set<string>();
-                let healthy = 0;
                 let unhealthy = 0;
                 for (const d of baseList) {
-                  const src = String(d?.source || 'Unknown').trim();
+                  const src = String((d as any)?.source || 'Unknown').trim();
                   if (seen.has(src)) continue;
                   seen.add(src);
-                  const c = Number(d?.count || 0);
-                  if (c >= 10) unhealthy++; else healthy++;
+                  const c = Number((d as any)?.count || 0);
+                  if (c >= 10) unhealthy++;
                 }
-                if (mounted) setUniqueSourcesData({ totalUnique: seen.size, healthySources: healthy, unhealthySources: unhealthy });
+                const totalUnique = seen.size;
+                const healthy = Math.max(0, totalUnique - unhealthy);
+                if (mounted) setUniqueSourcesData({ totalUnique, healthySources: healthy, unhealthySources: unhealthy });
               } catch {
-                // ignore errors; card will remain as previous value
+                // ignore; card will remain as previous value
               }
             } else {
               // Use enhanced endpoint for pre-computed aggregations
@@ -305,7 +318,7 @@ export default function DashboardPage() {
             const res = await fetchPvciIsaFloodSummaryEnhanced({
               include_records: true,
               include_windows: true,
-              include_alarm_details: false,
+              include_alarm_details: true, // needed for per-window top_sources mapping
               top_n: 5,
               max_windows: 5,
               include_enhanced: true,
@@ -545,19 +558,6 @@ export default function DashboardPage() {
             )}
           </div>
           <div className="flex items-center gap-3">
-            {/* Global Include System toggle (PVC-II disabled) */}
-            <div
-              className={`flex items-center gap-2 pr-2 ${isIncludeSystemDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-              title={isIncludeSystemDisabled ? 'Unavailable for PVC-II (coming soon)' : undefined}
-            >
-              <span className="text-sm text-muted-foreground">Include system</span>
-              <Switch
-                checked={includeSystem}
-                onCheckedChange={(v) => startTransition(() => setIncludeSystem(v))}
-                disabled={isIncludeSystemDisabled}
-                aria-disabled={isIncludeSystemDisabled}
-              />
-            </div>
             <span className="text-sm text-muted-foreground">Mode</span>
             <Select value={mode} onValueChange={(v) => setMode(v as any)} disabled={selectedPlant.id !== 'pvcI'}>
               <SelectTrigger className="w-56">

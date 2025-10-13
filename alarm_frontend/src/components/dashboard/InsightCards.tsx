@@ -74,14 +74,14 @@ export function InsightCards({ metrics, isLoading = false, mode = 'perSource' }:
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
         {[...Array(4)].map((_, i) => (
-          <Card key={i} className="shadow-metric-card">
+          <Card key={i} className="shadow-metric-card h-full min-h-[140px] flex flex-col">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <div className="h-4 w-24 bg-muted animate-pulse rounded" />
               <div className="h-4 w-4 bg-muted animate-pulse rounded" />
             </CardHeader>
-            <CardContent>
+            <CardContent className="mt-auto">
               <div className="h-8 w-16 bg-muted animate-pulse rounded mb-2" />
               <div className="h-3 w-32 bg-muted animate-pulse rounded" />
             </CardContent>
@@ -92,13 +92,13 @@ export function InsightCards({ metrics, isLoading = false, mode = 'perSource' }:
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
       {cards.map((card) => {
         const Icon = card.icon;
         return (
-          <Card key={card.title} className="shadow-metric-card bg-dashboard-metric-card-bg">
+          <Card key={card.title} className="shadow-metric-card bg-dashboard-metric-card-bg h-full min-h-[140px] flex flex-col">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
+              <CardTitle className="text-sm font-medium text-muted-foreground truncate">
                 {card.title}
               </CardTitle>
               <Icon 
@@ -111,11 +111,11 @@ export function InsightCards({ metrics, isLoading = false, mode = 'perSource' }:
                 }`} 
               />
             </CardHeader>
-            <CardContent>
+            <CardContent className="mt-auto">
               <div className="text-2xl font-bold text-foreground mb-1">
                 {card.value}
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground leading-tight whitespace-normal break-words">
                 {card.description}
               </p>
             </CardContent>

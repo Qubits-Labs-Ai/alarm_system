@@ -162,51 +162,113 @@ const ConditionDistributionByLocationPlantWide: React.FC<Props> = ({
       const win = await resolveWindow();
       let res: any = null;
       if (win?.start && win?.end) {
-        // Use ISA event-based counts for exact window to align with Top Bars
-        const details = await fetchPvciWindowSourceDetails(win.start, win.end, 500);
-        const detailed: Array<{ source: string; location_tag?: string; condition?: string; count: number }>
-          = Array.isArray(details?.per_source_detailed) ? details.per_source_detailed : [];
-        // Transform to records resembling unhealthy endpoint for downstream aggregation
-        let recs: UnhealthyRecord[] = detailed.map((d) => ({
-          event_time: win.start,
-          bin_end: win.end,
-          source: String(d.source || 'Unknown'),
-          hits: Number(d.count || 0),
-          threshold: 10,
-          over_by: Math.max(0, Number(d.count || 0) - 10),
-          rate_per_min: Number(d.count || 0) / 10,
-          location_tag: d.location_tag,
-          condition: d.condition || 'Not Provided',
-          flood_count: Number(d.count || 0),
-        }));
+        // Prefer enhanced JSON per-window distribution (Option B)
+        let recs: UnhealthyRecord[] | null = null;
+        try {
+          const enh = await fetchPvciIsaFloodSummaryEnhanced({
+            include_records: true,
+            include_windows: true,
+            include_alarm_details: false,
+            start_time: appliedRange?.startTime,
+            end_time: appliedRange?.endTime,
+            top_n: 10,
+            max_windows: 100,
+            include_enhanced: true,
+          });
+          const rows: any[] = Array.isArray(enh?.records) ? enh.records : [];
+          // Find matching record (compare by timestamp)
+          const targetStart = new Date(win.start).getTime();
+          const targetEnd = new Date(win.end).getTime();
+          const sameTs = (a?: string, b?: string) => (a && b) ? (new Date(a).getTime() === new Date(b).getTime()) : false;
+          let match = rows.find(r => sameTs(r?.peak_window_start || r?.start, win.start) && sameTs(r?.peak_window_end || r?.end, win.end));
+          if (!match) {
+            // Relaxed: nearest by absolute diff
+            match = rows.reduce((best: any, r: any) => {
+              const s = new Date(r?.peak_window_start || r?.start || 0).getTime();
+              const e = new Date(r?.peak_window_end || r?.end || 0).getTime();
+              const d = Math.abs(s - targetStart) + Math.abs(e - targetEnd);
+              if (!best || d < best._d) return { ...r, _d: d };
+              return best;
+            }, null);
+          }
+          const pwd = match?.peak_window_details?.per_window_condition_distribution;
+          if (pwd && Array.isArray(pwd.locations)) {
+            // Transform per-window distribution -> UnhealthyRecord[]
+            const tmp: UnhealthyRecord[] = [];
+            for (const locRow of pwd.locations as any[]) {
+              const loc = String(locRow.location || 'Unknown Location');
+              const conds = locRow.conditions || {};
+              const topByCond = locRow.top_sources_by_condition || {};
+              for (const condKey of Object.keys(conds)) {
+                const total = Number(conds[condKey] || 0);
+                if (total <= 0) continue;
+                const tops: Array<{ name: string; count: number }> = Array.isArray(topByCond[condKey]) ? topByCond[condKey] : [];
+                const filteredTops = (tops || []).filter(s => includeSystem || !isMetaSource(s.name));
+                const sumTop = filteredTops.reduce((a, b) => a + Number(b.count || 0), 0);
+                const others = Math.max(0, total - sumTop);
+                // push top sources as individual records
+                for (const s of filteredTops) {
+                  const c = Number(s.count || 0);
+                  if (c <= 0) continue;
+                  tmp.push({
+                    event_time: win.start,
+                    bin_end: win.end,
+                    source: String(s.name),
+                    hits: c,
+                    threshold: 10,
+                    over_by: Math.max(0, c - 10),
+                    rate_per_min: c / 10,
+                    location_tag: loc,
+                    condition: condKey,
+                    flood_count: c,
+                  } as UnhealthyRecord);
+                }
+                // Add Others bucket so totals match
+                if (others >= 10) {
+                  tmp.push({
+                    event_time: win.start,
+                    bin_end: win.end,
+                    source: 'Others',
+                    hits: others,
+                    threshold: 10,
+                    over_by: Math.max(0, others - 10),
+                    rate_per_min: others / 10,
+                    location_tag: loc,
+                    condition: condKey,
+                    flood_count: others,
+                  } as UnhealthyRecord);
+                }
+              }
+            }
+            recs = tmp;
+          }
+        } catch (e) {
+          // ignore and fall back
+        }
+
+        if (!recs) {
+          // Fallback: ISA event-based counts for exact window
+          const details = await fetchPvciWindowSourceDetails(win.start, win.end, 500);
+          const detailed: Array<{ source: string; location_tag?: string; condition?: string; count: number }>
+            = Array.isArray(details?.per_source_detailed) ? details.per_source_detailed : [];
+          recs = detailed.map((d) => ({
+            event_time: win.start,
+            bin_end: win.end,
+            source: String(d.source || 'Unknown'),
+            hits: Number(d.count || 0),
+            threshold: 10,
+            over_by: Math.max(0, Number(d.count || 0) - 10),
+            rate_per_min: Number(d.count || 0) / 10,
+            location_tag: d.location_tag,
+            condition: d.condition || 'Not Provided',
+            flood_count: Number(d.count || 0),
+          }));
+        }
 
         // IncludeSystem filter
         if (!includeSystem) recs = recs.filter(r => !isMetaSource(r.source));
         // Unhealthy only rule
         recs = recs.filter(r => Number((r as any).flood_count ?? r.hits ?? 0) >= 10);
-
-        // Enrich missing location tags using unhealthy-sources (JSON-backed) for same window
-        if (recs.some(r => !r.location_tag)) {
-          try {
-            const enrichRes = await fetchUnhealthySources(win.start, win.end, '10T', 10, plantId);
-            const enrichList: any[] = Array.isArray(enrichRes?.records) ? enrichRes.records : [];
-            const srcToLoc = new Map<string, string>();
-            for (const r of enrichList) {
-              const src = String(r?.source || '').trim();
-              const loc = String(r?.location_tag || '').trim();
-              if (src && loc && loc.toLowerCase() !== 'not provided') {
-                if (!srcToLoc.has(src)) srcToLoc.set(src, loc);
-              }
-            }
-            recs = recs.map(it => (
-              !it.location_tag || it.location_tag.trim() === '' || it.location_tag.toLowerCase() === 'not provided'
-                ? { ...it, location_tag: srcToLoc.get(String(it.source)) || it.location_tag }
-                : it
-            ));
-          } catch (e) {
-            // best-effort enrichment only; ignore errors
-          }
-        }
 
         if (myReq === reqRef.current) {
           setRecords(recs);

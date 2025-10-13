@@ -272,26 +272,37 @@ def _classify_conditions(by_condition: dict) -> dict:
 
 
 def add_event_stats_to_corrected_json():
-    """Add event statistics to the corrected JSON file."""
+    """Add event statistics into the enhanced JSON the API/dashboard uses.
+
+    Primary target: PVCI-overall-health/isa18-flood-summary-enhanced.json
+    Fallback (if present): PVCI-overall-health/isa18-flood-summary-CORRECTED-ENHANCED.json
+    """
     
     print("\n" + "="*80)
-    print("  ADDING EVENT STATISTICS TO CORRECTED JSON")
+    print("  ADDING EVENT STATISTICS TO ENHANCED JSON")
     print("="*80)
     print()
     
-    # Load existing corrected JSON
-    json_path = os.path.join(ROOT, 'PVCI-overall-health', 'isa18-flood-summary-CORRECTED-ENHANCED.json')
-    
-    if not os.path.exists(json_path):
-        print(f"❌ ERROR: Corrected JSON not found: {json_path}")
+    base_dir = os.path.join(ROOT, 'PVCI-overall-health')
+    enhanced_path = os.path.join(base_dir, 'isa18-flood-summary-enhanced.json')
+    corrected_path = os.path.join(base_dir, 'isa18-flood-summary-CORRECTED-ENHANCED.json')
+
+    # Choose input JSON: prefer enhanced.json
+    if os.path.exists(enhanced_path):
+        json_path = enhanced_path
+    elif os.path.exists(corrected_path):
+        json_path = corrected_path
+    else:
+        print("❌ ERROR: No enhanced JSON found. Please generate it first (FAST or full generator).")
+        print(f"   Expected: {enhanced_path}")
         return
     
     print(f"📂 Loading: {os.path.basename(json_path)}")
     
     with open(json_path, 'r', encoding='utf-8') as f:
-        corrected_data = json.load(f)
+        data = json.load(f)
     
-    print(f"✅ Loaded corrected JSON")
+    print(f"✅ Loaded JSON")
     print()
     
     # Analyze all records for event statistics
@@ -306,19 +317,31 @@ def add_event_stats_to_corrected_json():
     print(f"   Events:            {summary['events']:,} ({summary['events_pct']:.1f}%)")
     print()
     
-    # Add to corrected JSON
-    corrected_data['event_statistics'] = event_stats
+    # Add to JSON
+    data['event_statistics'] = event_stats
     
-    # Save updated JSON
+    # Save updated JSON (in-place), also ensure enhanced.json is updated for API fast-path
     print("💾 Saving updated JSON with event statistics...")
-    
+
+    # Backup current file
+    try:
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_path = json_path + f'.bak_{ts}'
+        with open(backup_path, 'w', encoding='utf-8') as fb:
+            json.dump(data, fb, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+    # Write to the chosen input file
     with open(json_path, 'w', encoding='utf-8') as f:
-        json.dump(corrected_data, f, ensure_ascii=False, indent=2)
-    
-    # Also update API file
-    api_path = os.path.join(ROOT, 'PVCI-overall-health', 'isa18-flood-summary-enhanced.json')
-    with open(api_path, 'w', encoding='utf-8') as f:
-        json.dump(corrected_data, f, ensure_ascii=False, indent=2)
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    # Also write to enhanced_path to guarantee API fast-path consistency
+    try:
+        with open(enhanced_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
     
     file_size_kb = os.path.getsize(json_path) / 1024
     

@@ -12,6 +12,12 @@ import fnmatch
 # Reuse the robust CSV reader and defaults from the existing engine
 from pvcI_health_monitor import read_csv_smart, DEFAULT_CONFIG
 
+# Alarms-only CSV reader (ISA 18.2 compliant)
+try:
+    from isa18_csv_reader import read_csv_alarms_only
+except Exception:  # Fallback no-op if module not available
+    read_csv_alarms_only = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,12 +67,45 @@ def _to_utc_iso(dt: Optional[datetime]) -> Optional[str]:
         return None
 
 
-def _read_event_times_for_file(file_path: str) -> List[datetime]:
-    """Return sorted UTC-aware datetimes for all events in a CSV file."""
+def _is_meta_source(source: str) -> bool:
+    """Identify meta/system sources that should be optionally excluded."""
+    s = str(source or "").strip().upper()
+    if not s:
+        return False
+    return (
+        s == "REPORT"
+        or s.startswith("$")
+        or s.startswith("ACTIVITY")
+        or s.startswith("SYS_")
+        or s.startswith("SYSTEM")
+    )
+
+
+def _read_event_times_for_file(
+    file_path: str,
+    alarms_only: bool = True,
+    include_system: bool = False,
+) -> List[datetime]:
+    """Return sorted UTC-aware datetimes for events in a CSV file.
+
+    When alarms_only=True, counts ONLY actual alarms (ISA 18.2 compliant), excluding
+    operator actions/system events. When include_system=False, filters out meta/system
+    sources such as REPORT, $*, ACTIVITY*, SYS_*, SYSTEM*.
+    """
     try:
-        df = read_csv_smart(file_path)
+        if alarms_only and read_csv_alarms_only is not None:
+            df = read_csv_alarms_only(file_path, return_all_columns=False)  # ['Event Time', 'Source']
+        else:
+            df = read_csv_smart(file_path)
         if df is None or df.empty or "Event Time" not in df.columns:
             return []
+        # Optional system/meta filter
+        try:
+            if not include_system and "Source" in df.columns:
+                df = df.loc[~df["Source"].astype(str).map(_is_meta_source)]
+        except Exception:
+            pass
+        # Normalize timestamps
         ts = pd.to_datetime(df["Event Time"], errors="coerce", utc=True)
         ts = ts.dropna().sort_values()
         return [t.to_pydatetime() for t in ts]
@@ -75,8 +114,15 @@ def _read_event_times_for_file(file_path: str) -> List[datetime]:
         return []
 
 
-def _read_rows_for_file(file_path: str) -> pd.DataFrame:
-    """Read lightweight columns needed for assignment and window aggregations.
+def _read_rows_for_file(
+    file_path: str,
+    alarms_only: bool = True,
+    include_system: bool = False,
+) -> pd.DataFrame:
+    """Read lightweight rows for assignment and aggregations.
+
+    When alarms_only=True, returns only actual alarm rows by using the ISA reader.
+    When include_system=False, filters out meta/system sources.
 
     Columns ensured:
       - Event Time (UTC-aware datetime)
@@ -84,59 +130,71 @@ def _read_rows_for_file(file_path: str) -> pd.DataFrame:
       - Source (string)
       - Condition (string; optional in CSV, synthesized when missing)
     """
-    df = read_csv_smart(file_path, DEFAULT_CONFIG)
-    if df is None or df.empty:
-        return pd.DataFrame(columns=["Event Time", "Location Tag", "Source", "Condition"])
-    # Ensure columns exist
-    for col in ("Event Time", "Location Tag", "Source", "Condition"):
-        if col not in df.columns:
-            df[col] = ""
-    # Normalize types
-    out = df[["Event Time", "Location Tag", "Source", "Condition"]].copy()
-    out["Event Time"] = pd.to_datetime(out["Event Time"], errors="coerce", utc=True)
-    out = out.dropna(subset=["Event Time"])  # keep only valid timestamps
-    # Normalize text columns to strings
-    for c in ("Location Tag", "Source", "Condition"):
-        out[c] = out[c].astype(str)
-
-    # Heuristic: infer missing/blank Condition from Source/Location tokens
     try:
-        def _infer_cond(row) -> str:
-            cond = (row.get("Condition") or "").strip()
-            if cond:
-                return cond
-            src = str(row.get("Source") or "").upper()
-            loc = str(row.get("Location Tag") or "").upper()
-            # Direct patterns from common plant tags
-            if "PVLOW" in src or "PV_LOW" in src or "PV-LOW" in src:
-                return "PVLOW"
-            if "PVHIGH" in src or "PV_HIGH" in src or "PV-HIGH" in src:
-                return "PVHIGH"
-            if src.startswith("REPORT") or "CHANGE" in src:
-                return "CHANGE"
-            if "RECIPE" in src:
-                # Most JSONs refer to recipe related as RecipeRemoval
-                return "RecipeRemoval"
-            if src.startswith("EVENT") or "EVENT_" in src:
-                return "EVENT"
-            if src.startswith("OP_") or src.startswith("OP-"):
-                return "OPERATION"
-            # Fallbacks using location tag patterns
-            if "PVLOW" in loc:
-                return "PVLOW"
-            if "PVHIGH" in loc:
-                return "PVHIGH"
-            return ""  # unknown
-
-        # Apply row-wise; acceptable as we only process a few columns
-        inferred = out.apply(_infer_cond, axis=1)
-        # Only replace blanks
-        mask_blank = out["Condition"].str.strip() == ""
-        out.loc[mask_blank, "Condition"] = inferred[mask_blank]
-    except Exception:
-        # Best-effort only; leave as-is on any error
-        pass
-    return out
+        if alarms_only and read_csv_alarms_only is not None:
+            # Read all columns, then trim
+            df_full = read_csv_alarms_only(file_path, return_all_columns=True)
+            if df_full is None or df_full.empty:
+                return pd.DataFrame(columns=["Event Time", "Location Tag", "Source", "Condition"])
+            # Ensure required columns
+            for col in ("Event Time", "Location Tag", "Source", "Condition"):
+                if col not in df_full.columns:
+                    df_full[col] = ""
+            out = df_full[["Event Time", "Location Tag", "Source", "Condition"]].copy()
+        else:
+            df = read_csv_smart(file_path, DEFAULT_CONFIG)
+            if df is None or df.empty:
+                return pd.DataFrame(columns=["Event Time", "Location Tag", "Source", "Condition"])
+            for col in ("Event Time", "Location Tag", "Source", "Condition"):
+                if col not in df.columns:
+                    df[col] = ""
+            out = df[["Event Time", "Location Tag", "Source", "Condition"]].copy()
+        # Optional meta/system source filter
+        try:
+            if not include_system and "Source" in out.columns:
+                out = out.loc[~out["Source"].astype(str).map(_is_meta_source)]
+        except Exception:
+            pass
+        # Normalize timestamps
+        out["Event Time"] = pd.to_datetime(out["Event Time"], errors="coerce", utc=True)
+        out = out.dropna(subset=["Event Time"])  # keep only valid timestamps
+        # Normalize text columns to strings
+        for c in ("Location Tag", "Source", "Condition"):
+            out[c] = out[c].astype(str)
+        # Heuristic: infer missing/blank Condition
+        try:
+            def _infer_cond(row) -> str:
+                cond = (row.get("Condition") or "").strip()
+                if cond:
+                    return cond
+                src = str(row.get("Source") or "").upper()
+                loc = str(row.get("Location Tag") or "").upper()
+                if "PVLOW" in src or "PV_LOW" in src or "PV-LOW" in src:
+                    return "PVLOW"
+                if "PVHIGH" in src or "PV_HIGH" in src or "PV-HIGH" in src:
+                    return "PVHIGH"
+                if src.startswith("REPORT") or "CHANGE" in src:
+                    return "CHANGE"
+                if "RECIPE" in src:
+                    return "RecipeRemoval"
+                if src.startswith("EVENT") or "EVENT_" in src:
+                    return "EVENT"
+                if src.startswith("OP_") or src.startswith("OP-"):
+                    return "OPERATION"
+                if "PVLOW" in loc:
+                    return "PVLOW"
+                if "PVHIGH" in loc:
+                    return "PVHIGH"
+                return ""
+            inferred = out.apply(_infer_cond, axis=1)
+            mask_blank = out["Condition"].str.strip() == ""
+            out.loc[mask_blank, "Condition"] = inferred[mask_blank]
+        except Exception:
+            pass
+        return out
+    except Exception as e:
+        logger.warning(f"Failed reading rows for {file_path}: {e}")
+        return pd.DataFrame(columns=["Event Time", "Location Tag", "Source", "Condition"])
 
 
 def _normalize_operator_map(raw: Dict[str, Any]) -> List[Tuple[str, str, str]]:
@@ -474,6 +532,9 @@ def _aggregate_alarm_details_for_range(
     top_n: int = 10,
     include_sample: bool = False,
     sample_max: int = 0,
+    *,
+    alarms_only: bool = True,
+    include_system: bool = False,
 ) -> Dict[str, Any]:
     """
     Aggregate counts per Source and Location Tag for events within [start_dt, end_dt].
@@ -488,7 +549,7 @@ def _aggregate_alarm_details_for_range(
         sample: List[Dict[str, Any]] = []
 
         for fp in files:
-            df = _read_rows_for_file(fp)
+            df = _read_rows_for_file(fp, alarms_only=alarms_only, include_system=include_system)
             if df is None or df.empty:
                 continue
             # Filter by time range
@@ -584,6 +645,8 @@ def compute_isa18_flood_summary(
     max_windows: Optional[int] = 10,
     events_sample: bool = False,
     events_sample_max: int = 0,
+    alarms_only: bool = True,
+    include_system: bool = False,
 ) -> Dict[str, Any]:
     """
     ISA 18.2 sliding 10-minute flood summary.
@@ -604,7 +667,7 @@ def compute_isa18_flood_summary(
         for fp in files:
             if op_rules:
                 # Row-wise read for operator assignment
-                df = _read_rows_for_file(fp)
+                df = _read_rows_for_file(fp, alarms_only=alarms_only, include_system=include_system)
                 if df is not None and not df.empty:
                     # Iterate rows; this is acceptable as we only touch three columns
                     for _, row in df.iterrows():
@@ -624,7 +687,7 @@ def compute_isa18_flood_summary(
                             all_ts.append(dt_utc)
                             op_streams.setdefault(op, []).append(dt_utc)
             else:
-                ts = _read_event_times_for_file(fp)
+                ts = _read_event_times_for_file(fp, alarms_only=alarms_only, include_system=include_system)
                 if ts:
                     all_ts.extend(ts)
 
@@ -785,6 +848,8 @@ def compute_isa18_flood_summary(
                         top_n=top_n,
                         include_sample=events_sample,
                         sample_max=events_sample_max,
+                        alarms_only=alarms_only,
+                        include_system=include_system,
                     )
                     rec["peak_window_details"] = details
 
@@ -837,6 +902,8 @@ def get_window_source_details(
     top_n: int | None = None,
     include_sample: bool = False,
     sample_max: int = 0,
+    alarms_only: bool = True,
+    include_system: bool = False,
 ) -> Dict[str, Any]:
     """Return ISA event-based counts within [start_time, end_time].
 
@@ -865,6 +932,8 @@ def get_window_source_details(
             top_n=top_n if isinstance(top_n, int) else 10,
             include_sample=include_sample,
             sample_max=sample_max,
+            alarms_only=alarms_only,
+            include_system=include_system,
         )
         return {
             "start": _to_utc_iso(sdt),
