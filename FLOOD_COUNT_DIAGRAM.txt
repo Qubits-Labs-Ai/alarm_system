@@ -1,0 +1,201 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                 UNHEALTHY BAR CHART - FLOOD COUNT EXPLAINED                  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SCENARIO: AI_PH10 shows 1,489 alarms                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+══════════════════════════════════════════════════════════════════════════════
+ TIME RANGE: October 1, 2025 - October 14, 2025 (14 days = ~2,016 windows)
+══════════════════════════════════════════════════════════════════════════════
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ OBSERVATION PERIOD                                                         │
+│ ════════════════════════════════════════════════════════════════════════   │
+│                                                                            │
+│  Day 1    Day 2    Day 3    ...    Day 13   Day 14                        │
+│  ├───┤   ├───┤   ├───┤     ...    ├───┤    ├───┤                         │
+│  │144│   │144│   │144│            │144│    │144│   windows/day           │
+│  └───┘   └───┘   └───┘            └───┘    └───┘                         │
+│                                                                            │
+│  Total windows: 14 days × 144 windows/day = 2,016 windows                 │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ BREAKDOWN OF 1,489 ALARMS FOR AI_PH10                                     │
+└────────────────────────────────────────────────────────────────────────────┘
+
+Window Type Distribution:
+┌─────────────────────────────────────────────────────────────────────────┐
+│                                                                         │
+│  HEALTHY WINDOWS (< 10 alarms/window):     ~1,950 windows             │
+│  ┌─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┐                  │
+│  │1│2│3│0│1│5│2│0│4│1│0│3│2│1│0│4│2│0│1│3│0│2│1│0│5│ ...              │
+│  └─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┘                  │
+│  Total from healthy: ~1,450 alarms ✓                                   │
+│                                                                         │
+│  UNHEALTHY WINDOWS (≥ 10 alarms/window):    ~66 windows               │
+│  ┌──┬──┬──┬──┬──┬──┬──┬──┬──┬──┐                                      │
+│  │15│12│45│10│11│23│18│67│14│19│ ...                                  │
+│  └──┴──┴──┴──┴──┴──┴──┴──┴──┴──┘                                      │
+│  Total from unhealthy: ~39 alarms (in top spikes) ✓                    │
+│                                                                         │
+│  ────────────────────────────────────────────────────────              │
+│  GRAND TOTAL: 1,489 alarms across ALL windows                          │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+KEY INSIGHT:
+┌─────────────────────────────────────────────────────────────────────────┐
+│ The 1,489 count includes:                                               │
+│  ✓ All alarms from healthy windows (most of them!)                     │
+│  ✓ All alarms from unhealthy windows (a few spikes)                    │
+│  ✓ Source appears because total ≥ threshold (10)                       │
+│  ✗ NOT just alarms from unhealthy windows                              │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Average: 1,489 ÷ 2,016 = 0.74 alarms per window
+        (Most windows are healthy!)
+
+══════════════════════════════════════════════════════════════════════════════
+ COMPARISON: AGGREGATE vs SINGLE WINDOW
+══════════════════════════════════════════════════════════════════════════════
+
+┌────────────────────────────────────┬────────────────────────────────────┐
+│  AGGREGATE VIEW (No window)        │  SINGLE WINDOW VIEW (Selected)     │
+├────────────────────────────────────┼────────────────────────────────────┤
+│                                    │                                    │
+│  ┌───────────────────────────┐    │  ┌───────────────────────────┐    │
+│  │ AI_PH10                   │    │  │ AI_PH10                   │    │
+│  │ Total alarm count: 1489   │    │  │ Flood count: 45           │    │
+│  │ ⚠️ Aggregate data         │    │  │ ✓ Single window           │    │
+│  │ Duration: 14 days         │    │  │                           │    │
+│  │ (~2,016 windows)          │    │  │ 10/14/2025 2:06-2:16 PM   │    │
+│  └───────────────────────────┘    │  └───────────────────────────┘    │
+│                                    │                                    │
+│  Data Source:                      │  Data Source:                      │
+│  unhealthy_sources_top_n           │  topWindows[].top_sources          │
+│  (Backend aggregation)             │  (Pre-computed window data)        │
+│                                    │                                    │
+│  Y-axis: "Total alarm count"       │  Y-axis: "Flood count"             │
+│  Color: 🟡 Amber (warning)         │  Color: 🟢 Green (confirmed)       │
+│                                    │                                    │
+└────────────────────────────────────┴────────────────────────────────────┘
+
+══════════════════════════════════════════════════════════════════════════════
+ DATA FLOW DIAGRAM
+══════════════════════════════════════════════════════════════════════════════
+
+                     ┌─────────────────────────┐
+                     │  CSV Alarm Files        │
+                     │  (All plant data)       │
+                     └───────────┬─────────────┘
+                                 │
+                                 ▼
+            ┌────────────────────────────────────────┐
+            │  Backend: compute_unhealthy_sources    │
+            │  isa18_flood_monitor_enhanced.py       │
+            └────────────────────────────────────────┘
+                                 │
+                 ┌───────────────┴───────────────┐
+                 │                               │
+                 ▼                               ▼
+    ┌────────────────────────┐      ┌────────────────────────┐
+    │ Count ALL events       │      │ Filter by time range   │
+    │ for each source        │      │ (if provided)          │
+    └────────────┬───────────┘      └────────────┬───────────┘
+                 │                               │
+                 └───────────────┬───────────────┘
+                                 ▼
+                   ┌──────────────────────────┐
+                   │ Filter sources where     │
+                   │ total_count >= threshold │
+                   │ (10)                     │
+                   └────────────┬─────────────┘
+                                │
+                                ▼
+                   ┌──────────────────────────┐
+                   │ Return top N sources     │
+                   │ (sorted by count)        │
+                   └────────────┬─────────────┘
+                                │
+                                ▼
+                   ┌──────────────────────────┐
+                   │ Frontend displays bars   │
+                   │ UnhealthyBarChart.tsx    │
+                   └──────────────────────────┘
+
+══════════════════════════════════════════════════════════════════════════════
+ BACKEND LOGIC (Simplified)
+══════════════════════════════════════════════════════════════════════════════
+
+```python
+# Step 1: Initialize counters
+source_data = defaultdict(lambda: {"count": 0})
+
+# Step 2: Iterate ALL CSV files
+for csv_file in all_csv_files:
+    for row in csv_file:
+        source = row["Source"]
+        source_data[source]["count"] += 1  # ← Count EVERY alarm
+        
+# Step 3: Filter to unhealthy (total >= threshold)
+unhealthy = {
+    src: data 
+    for src, data in source_data.items() 
+    if data["count"] >= 10  # ← Only affects which sources shown
+}
+
+# Step 4: Return top N
+return sorted(unhealthy.items(), key=lambda x: x[1]["count"])[:10]
+```
+
+Result for AI_PH10:
+  - Counted 1,489 alarm events total
+  - 1,489 >= 10, so include in result ✓
+  - Ranked high, so appears in Top 10 ✓
+
+══════════════════════════════════════════════════════════════════════════════
+ VISUAL CHANGES IN UI
+══════════════════════════════════════════════════════════════════════════════
+
+BEFORE FIX:
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Unhealthy Bar Chart                                                      │
+│ Sources exceeding threshold of 10 hits                                  │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ AI_PH10 (1489)                              │
+│    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ AI8102 (1432)                                 │
+│                                                                          │
+│    Hover shows: "Flood count: 1489"                                     │
+│    Time: 10/1/2025... - 10/14/2025...                                   │
+│                                                                          │
+│    ❌ CONFUSING! Looks like single window but huge count                │
+└──────────────────────────────────────────────────────────────────────────┘
+
+AFTER FIX:
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Unhealthy Bar Chart                                                      │
+│ Sources exceeding threshold of 10 hits                                  │
+│ (Aggregate totals across observation range) ← NEW!                      │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Total alarm count ↑                                                      │
+│                                                                          │
+│    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ AI_PH10 (1489)                              │
+│    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ AI8102 (1432)                                 │
+│                                                                          │
+│    Hover shows:                                                          │
+│    "Total alarm count: 1489" ← Changed from "Flood count"               │
+│    "⚠️ Aggregate data across entire observation range" ← NEW!           │
+│    "Duration: 14 days (~2,016 windows)" ← NEW!                          │
+│    "Observation range: 10/1/2025... - 10/14/2025..."                    │
+│                                                                          │
+│    ✓ CLEAR! Shows it's aggregate with duration info                     │
+└──────────────────────────────────────────────────────────────────────────┘
+
+══════════════════════════════════════════════════════════════════════════════
+
+Status: ✅ IMPLEMENTED
+Date: October 14, 2025

@@ -453,20 +453,26 @@ def compute_unhealthy_sources_top_n(
     top_n: int = 10,
     threshold: int = 10,
     include_system: bool = True,
+    window_minutes: int = 10,
     *,
     alarms_only: bool = True,
 ) -> Dict[str, Any]:
     """
     Pre-compute top N unhealthy sources for bar chart display.
     
+    FIXED: Now ISA 18.2 compliant - only counts alarms from UNHEALTHY windows,
+    not all alarms across the entire observation range.
+    
+    A window is unhealthy when alarm count > threshold in any sliding window_minutes period.
+    
     Returns structure:
     {
         "sources": [
             {
                 "source": "TIC1203",
-                "hits": 5230,
+                "hits": 245,  # Count only from unhealthy windows
                 "threshold": 10,
-                "over_by": 5220,
+                "over_by": 235,
                 "priority": "HIGH",  # if available
                 "location_tag": "REACTOR_A"  # if available
             },
@@ -479,13 +485,40 @@ def compute_unhealthy_sources_top_n(
     }
     """
     try:
-        logger.info(f"Computing top {top_n} unhealthy sources...")
+        logger.info(f"Computing top {top_n} unhealthy sources (ISA 18.2 - unhealthy windows only)...")
         
         files = _list_csv_files(folder_path)
         if not files:
             return _empty_unhealthy_sources()
         
-        # Aggregate: source -> (count, common_location, common_priority)
+        # Step 1: Detect unhealthy windows using plant-wide ISA 18.2 flood detection
+        from isa18_flood_monitor import _read_event_times_for_file, _filter_by_range, _detect_flood_intervals
+        from collections import deque
+        
+        # Collect all plant-wide timestamps
+        all_timestamps: List[datetime] = []
+        for fp in files:
+            ts_list = _read_event_times_for_file(fp, alarms_only=alarms_only, include_system=include_system)
+            all_timestamps.extend(ts_list)
+        
+        # Filter by time range
+        all_timestamps = _filter_by_range(all_timestamps, start_dt, end_dt)
+        
+        if not all_timestamps:
+            return _empty_unhealthy_sources()
+        
+        # Detect flood intervals (merged unhealthy periods)
+        flood_intervals, peak_count, peak_window = _detect_flood_intervals(
+            all_timestamps, window_minutes, threshold
+        )
+        
+        if not flood_intervals:
+            logger.info("No unhealthy windows found - all sources are healthy")
+            return _empty_unhealthy_sources()
+        
+        logger.info(f"Found {len(flood_intervals)} unhealthy flood intervals")
+        
+        # Step 2: Count alarms per source ONLY within unhealthy windows
         source_data: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
             "count": 0,
             "locations": defaultdict(int),
@@ -497,7 +530,7 @@ def compute_unhealthy_sources_top_n(
             if df is None or df.empty:
                 continue
             
-            # Filter by time
+            # Filter by time range
             if start_dt or end_dt:
                 ts = df["Event Time"]
                 mask = pd.Series([True] * len(df))
@@ -510,7 +543,7 @@ def compute_unhealthy_sources_top_n(
             if df.empty:
                 continue
             
-            # Aggregate per source
+            # Count alarms ONLY if they fall within unhealthy flood intervals
             for _, row in df.iterrows():
                 src = str(row.get("Source", "") or "Unknown").strip()
                 
@@ -518,17 +551,25 @@ def compute_unhealthy_sources_top_n(
                 if not include_system and _is_meta_source(src):
                     continue
                 
-                source_data[src]["count"] += 1
+                event_time = row["Event Time"]
                 
-                # Track most common location and priority
-                loc = str(row.get("Location Tag", "") or "").strip()
-                if loc:
-                    source_data[src]["locations"][loc] += 1
+                # Check if this alarm falls within any unhealthy flood interval
+                in_unhealthy_window = False
+                for interval in flood_intervals:
+                    if interval["start"] <= event_time <= interval["end"]:
+                        in_unhealthy_window = True
+                        break
                 
-                # Priority might not be in _read_rows_for_file; best-effort
-                # For now, we'll skip priority unless we extend the row reader
+                # Only count alarms from unhealthy windows
+                if in_unhealthy_window:
+                    source_data[src]["count"] += 1
+                    
+                    # Track most common location
+                    loc = str(row.get("Location Tag", "") or "").strip()
+                    if loc:
+                        source_data[src]["locations"][loc] += 1
         
-        # Filter to unhealthy only (>= threshold)
+        # Filter to sources with at least threshold hits in unhealthy windows
         unhealthy = {
             src: data 
             for src, data in source_data.items() 
@@ -536,6 +577,7 @@ def compute_unhealthy_sources_top_n(
         }
         
         if not unhealthy:
+            logger.info("No sources exceeded threshold in unhealthy windows")
             return _empty_unhealthy_sources()
         
         # Build result list
@@ -563,19 +605,22 @@ def compute_unhealthy_sources_top_n(
             "sources": top_sources,
             "metadata": {
                 "total_unhealthy_sources": len(sources_list),
+                "unhealthy_intervals_count": len(flood_intervals),
                 "computed_at": datetime.now(timezone.utc).isoformat(),
                 "filters": {
                     "start_time": _to_utc_iso(start_dt),
                     "end_time": _to_utc_iso(end_dt),
                     "threshold": threshold,
+                    "window_minutes": window_minutes,
                     "include_system": include_system,
+                    "counting_method": "unhealthy_windows_only"
                 }
             }
         }
         
         logger.info(
             f"Computed top {len(top_sources)} unhealthy sources "
-            f"out of {len(sources_list)} total"
+            f"out of {len(sources_list)} total (from {len(flood_intervals)} unhealthy intervals)"
         )
         return result
         
@@ -882,6 +927,7 @@ def compute_enhanced_isa18_flood_summary(
             end_dt=end_dt,
             top_n=top_n,
             threshold=threshold,
+            window_minutes=window_minutes,
             include_system=include_system,
             alarms_only=alarms_only,
         )

@@ -61,9 +61,9 @@ def main() -> None:
     parser.add_argument("--end-time", type=str, default=None, help="ISO end time, e.g. 2025-01-31T23:59:59Z")
     parser.add_argument("--include-system", action="store_true", help="Include system/meta sources (REPORT, $*, SYS_*, SYSTEM*)")
     parser.add_argument("--all-events", action="store_true", help="Count all events (not ISA alarms-only). Default is alarms-only")
-parser.add_argument("--max-windows", type=int, default=100, help="Limit number of flood windows (default: 100)")
-parser.add_argument("--no-details", action="store_true", help="Disable per-window alarm details (top_sources). Default is enabled")
-parser.add_argument("--no-event-stats", action="store_true", help="Skip computing event statistics (actions/state/quality). Default is to include them")
+    parser.add_argument("--max-windows", type=int, default=100, help="Limit number of flood windows (default: 100)")
+    parser.add_argument("--no-details", action="store_true", help="Disable per-window alarm details (top_sources). Default is enabled")
+    parser.add_argument("--no-event-stats", action="store_true", help="Skip computing event statistics (actions/state/quality). Default is to include them")
     args = parser.parse_args()
 
     # OPTIMIZED Parameters for faster generation (ISA-compliant by default)
@@ -73,7 +73,7 @@ parser.add_argument("--no-event-stats", action="store_true", help="Skip computin
         'threshold': 10,                   # ISA 18.2 standard threshold
         'include_records': True,           # Include flood window records
         'include_windows': True,           # Include per-window details
-'include_alarm_details': (False if args.no_details else True),    # Per-window top_sources; disable with --no-details
+        'include_alarm_details': (False if args.no_details else True),    # Per-window top_sources; disable with --no-details
         'top_n': 10,                       # Top 10 sources per window
         'max_windows': args.max_windows,   # ⚡ LIMIT to top windows (vs all)
         'include_enhanced': True,          # ⭐ Enable enhanced aggregations

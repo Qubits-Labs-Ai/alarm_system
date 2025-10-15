@@ -185,7 +185,7 @@ def get_all_pvc_files_data():
 
 @app.get("/pvcI-health/overall", response_class=ORJSONResponse)
 def get_pvcI_overall_health(
-    bin_size: str = "10T",
+    bin_size: str = "10min",
     alarm_threshold: int = 10,
     max_workers: int = 12,  # Increased workers for better parallelization
     per_file_timeout: int | None = 1800,  # Increased timeout to 2 minutes
@@ -292,7 +292,7 @@ def get_pvcI_overall_health(
 
 @app.get("/pvcI-health/overall/weighted")
 def get_pvcI_overall_health_weighted_endpoint(
-    bin_size: str = "10T",
+    bin_size: str = "10min",
     alarm_threshold: int = 10,
     max_workers: int = 4,
     per_file_timeout: int | None = 30
@@ -308,7 +308,7 @@ def get_pvcI_overall_health_weighted_endpoint(
 def get_pvcI_unhealthy_sources(
     start_time: str | None = None,
     end_time: str | None = None,
-    bin_size: str = "10T",
+    bin_size: str = "10min",
     alarm_threshold: int = 10,
     max_workers: int = 4,
     per_file_timeout: int | None = 30,
@@ -728,7 +728,59 @@ def pvcI_isa_flood_summary_enhanced(
                 if saved_path:
                     with open(saved_path, "r", encoding="utf-8") as f:
                         saved = json.load(f)
-                    
+
+                    # If caller requests a different include_system than the saved JSON, recompute live
+                    try:
+                        cis = None
+                        try:
+                            cis = (
+                                (saved.get("condition_distribution_by_location") or {})
+                                .get("metadata", {})
+                                .get("filters", {})
+                                .get("include_system")
+                            )
+                        except Exception:
+                            cis = None
+                        if cis is None:
+                            try:
+                                cis = (
+                                    (saved.get("unique_sources_summary") or {})
+                                    .get("metadata", {})
+                                    .get("filters", {})
+                                    .get("include_system")
+                                )
+                            except Exception:
+                                cis = None
+
+                        # If we can determine saved include_system and it differs from requested, recompute
+                        if cis is not None and bool(cis) != bool(include_system):
+                            logger.info(
+                                f"include_system={include_system} requested but saved JSON has include_system={cis}; recomputing enhanced summary."
+                            )
+                            from isa18_flood_monitor_enhanced import compute_enhanced_isa18_flood_summary
+                            return compute_enhanced_isa18_flood_summary(
+                                folder_path=PVCI_FOLDER,
+                                window_minutes=window_minutes,
+                                threshold=threshold,
+                                operator_map=None,
+                                start_time=start_time,
+                                end_time=end_time,
+                                include_records=include_records,
+                                include_windows=include_windows,
+                                include_alarm_details=include_alarm_details,
+                                top_n=top_n,
+                                max_windows=max_windows,
+                                events_sample=events_sample,
+                                events_sample_max=events_sample_max,
+                                include_enhanced=include_enhanced,
+                                top_locations=top_locations,
+                                top_sources_per_condition=top_sources_per_condition,
+                                alarms_only=alarms_only,
+                                include_system=include_system,
+                            )
+                    except Exception as _cis_ex:
+                        logger.warning(f"Failed to evaluate include_system on saved JSON: {_sanitize_error_message(_cis_ex)}")
+
                     # Check if this is truly an enhanced response
                     if saved.get("_enhanced") or saved.get("condition_distribution_by_location"):
                         logger.info(f"Serving pre-saved enhanced ISA summary from {saved_path}")
@@ -859,7 +911,7 @@ def get_pvcI_file_health_endpoint(filename: str):
 
 @app.post("/pvcI-health/regenerate-cache")
 def regenerate_pvcI_health_cache(
-    bin_size: str = "10T",
+    bin_size: str = "10min",
     alarm_threshold: int = 10,
     max_workers: int = 12,  # More workers for batch processing
     per_file_timeout: int = 300  # 5 minutes per file for batch processing

@@ -130,8 +130,7 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
                       ? [...r.top_sources].sort((a, b) => b.count - a.count)
                       : [];
                     // Apply includeSystem toggle and unhealthy-only filter (count >= 10)
-                    const ts = (includeSystem ? tsAll : tsAll.filter(s => !isMetaSource(s.source)))
-                      .filter(s => Number(s.count || 0) >= 10);
+                    const ts = (includeSystem ? tsAll : tsAll.filter(s => !isMetaSource(s.source)));
                     const c1 = ts[0]?.count ?? 0; // highest
                     const c2 = ts[1]?.count ?? 0; // middle
                     const c3 = ts[2]?.count ?? 0; // lowest of the shown top 3
@@ -179,7 +178,7 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
                     const tsAll = Array.isArray(row.top_sources) ? [...row.top_sources] : [];
                     const tsFiltered = tsAll
                       .sort((a, b) => b.count - a.count)
-                      .filter(s => (includeSystem || !isMetaSource(s.source)) && Number(s.count || 0) >= 10);
+                      .filter(s => (includeSystem || !isMetaSource(s.source)));
                     const shown = tsFiltered.slice(0, 3);
                     const sumShown = shown.reduce((acc, s) => acc + Number(s.count || 0), 0);
                     const othersCount = Math.max(0, Number(visibleFlood || 0) - sumShown);
@@ -196,7 +195,7 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
                           <div className="text-xs">UTC: {new Date(row.start).toLocaleString(undefined, { timeZone: 'UTC' })} — {new Date(row.end).toLocaleString(undefined, { timeZone: 'UTC' })}</div>
                           {(shown.length > 0 || showOthers) && (
                             <div className="pt-2">
-                              <div className="text-xs font-medium text-foreground mb-1">Top sources (≥ 10)</div>
+                              <div className="text-xs font-medium text-foreground mb-1">Top sources</div>
                               <ul className="text-xs space-y-0.5">
                                 {shown.map((s, i) => (
                                   <li key={i} className="flex justify-between gap-2">

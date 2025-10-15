@@ -69,16 +69,59 @@ export function UnhealthyBarChart({
 
   const [includeSystemLocal, setIncludeSystemLocal] = useState(true);
   const includeSystem = includeSystemProp ?? includeSystemLocal;
-  const formatTooltip = (value: number, name: string, props: any) => {
+  const formatTooltip = (value: number, name: string, props: { payload: UnhealthyBar }) => {
     const { payload } = props;
     if (!payload) return null;
+
+    // Determine if this is aggregate data or window-specific data
+    const isWindowSpecific = activeWindowLabel && activeWindowStart && activeWindowEnd;
+    const isAggregateData = mode === 'flood' && !isWindowSpecific;
+
+    // Calculate observation period for aggregate data
+    let observationInfo = null;
+    if (isAggregateData && payload.bin_start && payload.bin_end) {
+      const startTime = new Date(payload.bin_start);
+      const endTime = new Date(payload.bin_end);
+      const durationMs = endTime.getTime() - startTime.getTime();
+      const durationHours = Math.round(durationMs / (1000 * 60 * 60));
+      const durationDays = Math.round(durationHours / 24);
+      const approxWindows = Math.floor(durationMs / (10 * 60 * 1000));
+      
+      observationInfo = {
+        durationHours,
+        durationDays,
+        approxWindows,
+        startTime,
+        endTime,
+      };
+    }
 
     return (
       <div className="bg-popover text-popover-foreground p-3 rounded shadow-lg border">
         <p className="font-medium text-foreground">{payload.source}</p>
         <p className="text-sm text-muted-foreground">
-          Flood count: <span className="font-medium text-foreground">{payload.hits}</span>
+          {isAggregateData ? 'Total alarm count' : 'Flood count'}: <span className="font-medium text-foreground">{payload.hits}</span>
         </p>
+        {isAggregateData && observationInfo && (
+          <>
+            <p className="text-xs text-blue-600 dark:text-blue-400 mt-1 font-medium">
+              ℹ️ Sum of alarms from unhealthy windows only
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Observation: <span className="font-medium text-foreground">
+                {observationInfo.durationDays > 0 ? `${observationInfo.durationDays} days` : `${observationInfo.durationHours} hours`}
+              </span> (~{observationInfo.approxWindows.toLocaleString()} total windows)
+            </p>
+            <p className="text-xs text-muted-foreground italic">
+              Only windows with &gt;10 alarms/10min counted
+            </p>
+          </>
+        )}
+        {isWindowSpecific && (
+          <p className="text-xs text-green-600 dark:text-green-400 mt-1 font-medium">
+            ✓ Single 10-minute window data
+          </p>
+        )}
         {/* <p className="text-sm text-muted-foreground">
           Over threshold by: <span className="font-medium text-red-600">{payload.over_by}</span>
         </p> */}
@@ -112,7 +155,10 @@ export function UnhealthyBarChart({
             Setpoint: <span className="font-medium text-foreground">{String(payload.setpoint_value)}{payload.raw_units ? ` ${payload.raw_units}` : ''}</span>
           </p>
         )}
-        <p className="text-xs text-muted-foreground mt-1">
+        <p className="text-xs text-muted-foreground mt-2 pt-2 border-t">
+          {isAggregateData ? 'Observation range:' : 'Window:'}
+        </p>
+        <p className="text-xs text-muted-foreground">
           Local: {new Date(payload.bin_start).toLocaleString()} - {new Date(payload.bin_end).toLocaleString()}
         </p>
         <p className="text-xs text-muted-foreground">
@@ -171,8 +217,8 @@ export function UnhealthyBarChart({
           hits: restSum,
           threshold: threshold,
           over_by: Math.max(0, restSum - threshold),
-          bin_start: (ref as any)?.bin_start || nowIso,
-          bin_end: (ref as any)?.bin_end || nowIso,
+          bin_start: ref?.bin_start || nowIso,
+          bin_end: ref?.bin_end || nowIso,
         } as UnhealthyBar;
         displayData = [...cropped, others];
       } else {
@@ -200,7 +246,23 @@ export function UnhealthyBarChart({
                 Unhealthy Bar Chart
               </CardTitle>
               <CardDescription>
-                Sources exceeding threshold of {threshold} hits
+                {mode === 'flood' && !activeWindowLabel ? (
+                  <>
+                    Sources exceeding threshold of {threshold} hits
+                    <span className="text-blue-600 dark:text-blue-400 font-medium ml-2">
+                      (From unhealthy windows only)
+                    </span>
+                  </>
+                ) : mode === 'flood' && activeWindowLabel ? (
+                  <>
+                    Sources exceeding threshold of {threshold} hits
+                    <span className="text-green-600 dark:text-green-400 font-medium ml-2">
+                      (Single 10-minute window)
+                    </span>
+                  </>
+                ) : (
+                  `Sources exceeding threshold of {threshold} hits`
+                )}
               </CardDescription>
             </div>
             <div className="flex gap-2 items-center">
@@ -350,7 +412,13 @@ export function UnhealthyBarChart({
                   tick={{ fill: 'var(--muted-foreground)', fontSize: 12 }}
                   axisLine={{ stroke: 'var(--border)' }}
                   tickMargin={8}
-                  label={{ value: 'Flood count', angle: -90, position: 'left', offset: 10, fill: 'var(--muted-foreground)' }}
+                  label={{ 
+                    value: mode === 'flood' && !activeWindowLabel ? 'Total alarm count' : 'Flood count', 
+                    angle: -90, 
+                    position: 'left', 
+                    offset: 10, 
+                    fill: 'var(--muted-foreground)' 
+                  }}
                 />
                 <Tooltip 
                   content={({ active, payload }) => {

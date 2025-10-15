@@ -125,6 +125,19 @@ import pandas as pd
 import math
 from typing import Dict, Any, List
 
+def _parse_bin_minutes(val: str) -> int:
+    s = str(val or '').strip()
+    m = re.match(r'^(\d+)\s*(?:min|m)?$', s)
+    if m:
+        return int(m.group(1))
+    m = re.match(r'^(\d+)\s*T$', s, flags=re.I)
+    if m:
+        return int(m.group(1))
+    try:
+        return int(pd.to_timedelta(s).total_seconds() // 60)
+    except Exception:
+        return 10
+
 def group_events_by_source_with_timegap(df, bin_size: str = '10min', max_gap_minutes: int = None):
     """
     Groups events by source into FIXED 10-min bins (non-overlapping).
@@ -137,8 +150,9 @@ def group_events_by_source_with_timegap(df, bin_size: str = '10min', max_gap_min
         return pd.DataFrame()
 
     df = df.sort_values("__ts__").reset_index(drop=True)
-    df['bin_start'] = df['__ts__'].dt.floor(bin_size)
-    df['bin_end'] = df['bin_start'] + pd.Timedelta(bin_size)
+    bin_minutes = _parse_bin_minutes(bin_size)
+    df['bin_start'] = df['__ts__'].dt.floor(f"{bin_minutes}min")
+    df['bin_end'] = df['bin_start'] + pd.Timedelta(minutes=bin_minutes)
 
     # Group by source + bin, agg stats
     def bin_stats(group):
@@ -150,13 +164,13 @@ def group_events_by_source_with_timegap(df, bin_size: str = '10min', max_gap_min
             "first_event_ts": ts.min(),
             "last_event_ts": ts.max(),
             "duration_seconds": (ts.max() - ts.min()).total_seconds() if len(ts) > 1 else 0,
-            "window_minutes": int(pd.Timedelta(bin_size).total_seconds() / 60),  # Fixed 10
+            "window_minutes": int(bin_minutes),
         })
 
     grouped_runs = df.groupby(['__source__', 'bin_start']).apply(bin_stats).reset_index(drop=True)
 
     # Compute rate (hits / 10 min, even if actual duration <10)
-    grouped_runs['window_minutes'] = 10  # Override if needed
+    grouped_runs['window_minutes'] = int(bin_minutes)
     grouped_runs['rate_per_min'] = round(grouped_runs['hits'] / 10.0, 6)
 
     # Only include non-empty bins (hits >=1)
@@ -290,7 +304,7 @@ def compute_pvcI_file_health(
     )
 
     alarm_threshold = int(getattr(config, "alarm_threshold", 10) or 10)
-    bin_minutes = int(pd.Timedelta(config.bin_size).total_seconds() // 60)
+    bin_minutes = _parse_bin_minutes(getattr(config, "bin_size", "10min"))
 
     # --- Dynamic sliding-window floods per source ---
     source_events: Dict[str, List[Dict[str, Any]]] = {}
@@ -871,7 +885,7 @@ def _extract_metadata_from_csv(file_path: str, source: str, bin_start: str, bin_
             return _default_metadata()
 
         # Convert Event Time to datetime - handle multiple formats
-        df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce", infer_datetime_format=True)
+        df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
         df = df.dropna(subset=["Event Time"])
         
         if df.empty:
