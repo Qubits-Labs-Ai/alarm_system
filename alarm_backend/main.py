@@ -1888,3 +1888,319 @@ def get_pvci_isa_flood_summary(
         logger.error(f"Error in ISA flood summary endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ==================== PVCI ACTUAL-CALC MODE ENDPOINTS ====================
+# Import actual calculation service
+try:
+    import sys
+    actual_calc_dir = os.path.join(BASE_DIR, "PVCI-actual-calc")
+    if actual_calc_dir not in sys.path:
+        sys.path.insert(0, actual_calc_dir)
+    from actual_calc_service import (
+        run_actual_calc,
+        read_cache,
+        write_cache,
+        dataframe_to_json_records,
+        kpis_to_json_safe
+    )
+    ACTUAL_CALC_AVAILABLE = True
+except ImportError as ie:
+    logger.warning(f"Actual calc service not available: {ie}")
+    ACTUAL_CALC_AVAILABLE = False
+
+
+@app.get("/pvcI-actual-calc/overall", response_class=ORJSONResponse)
+def get_pvci_actual_calc_overall(
+    stale_min: int = 60,
+    chatter_min: int = 10,
+    include_per_source: bool = False,
+    offset: int = 0,
+    limit: int = 200,
+    include_cycles: bool = False,
+    raw: bool = False,
+    force_recompute: bool = False
+):
+    """Get PVCI actual calculation KPIs (alarm cycles, stale, chattering).
+    
+    This mode computes advanced alarm management KPIs from the merged PVCI CSV:
+    - Unique alarms per source (state-machine counting)
+    - Stale alarms (no action for > stale_min)
+    - Chattering alarms (> chatter_min occurrences in chatter_min window)
+    - Alarm lifecycle metrics (ack/ok delays, completion rate)
+    - Temporal statistics (alarms per day/hour/10min, days over ISA-18.2 limit)
+    
+    Query Parameters:
+        stale_min: Stale alarm threshold in minutes (default 60)
+        chatter_min: Chattering threshold in minutes (default 10)
+        include_per_source: Include per-source summary (default False)
+        offset: Offset for per-source pagination (default 0)
+        limit: Limit for per-source pagination (default 200)
+        include_cycles: Include alarm lifecycle cycles (default False)
+        raw: Return full cache JSON as-is (default False)
+        force_recompute: Force recomputation ignoring cache (default False)
+    
+    Returns:
+        {
+            plant_folder: "PVC-I",
+            mode: "actual-calc",
+            generated_at: ISO timestamp,
+            params: {stale_min, chatter_min},
+            overall: {avg_ack_delay_min, avg_ok_delay_min, completion_rate_pct, ...},
+            counts: {total_sources, total_alarms, total_stale, total_chattering, total_cycles},
+            sample_range: {start, end},
+            per_source: [...] (when include_per_source=true, paginated),
+            cycles: [...] (when include_cycles=true)
+        }
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(
+            status_code=501,
+            detail="Actual calculation service is not available. Check backend logs."
+        )
+    
+    try:
+        params = {"stale_min": stale_min, "chatter_min": chatter_min}
+        
+        # Try cache first
+        cached_data = None
+        if not force_recompute:
+            cached_data = read_cache(BASE_DIR, params)
+        
+        if cached_data:
+            # Return raw cache if requested
+            if raw:
+                return cached_data
+            
+            # Build compact response
+            result = {
+                "plant_folder": cached_data.get("plant_folder"),
+                "mode": cached_data.get("mode"),
+                "generated_at": cached_data.get("generated_at"),
+                "params": cached_data.get("params"),
+                "overall": cached_data.get("overall"),
+                "counts": cached_data.get("counts"),
+                "sample_range": cached_data.get("sample_range"),
+            }
+            
+            # Add per_source if requested (paginated)
+            if include_per_source:
+                per_source_all = cached_data.get("per_source", [])
+                result["per_source"] = per_source_all[offset:offset + limit]
+                result["per_source_pagination"] = {
+                    "offset": offset,
+                    "limit": limit,
+                    "total": len(per_source_all),
+                    "returned": len(result["per_source"])
+                }
+            
+            # Add cycles if requested
+            if include_cycles:
+                result["cycles"] = cached_data.get("cycles", [])
+            
+            return result
+        
+        # Compute fresh
+        logger.info(f"Computing actual-calc with params: {params}")
+        summary_df, kpis, cycles_df = run_actual_calc(
+            ALARM_DATA_DIR,
+            stale_min=stale_min,
+            chatter_min=chatter_min
+        )
+        
+        # Write to cache
+        try:
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR)
+        except Exception as cache_err:
+            logger.warning(f"Failed to write cache (non-fatal): {cache_err}")
+        
+        # Build response
+        per_source_records = dataframe_to_json_records(summary_df)
+        cycles_records = dataframe_to_json_records(cycles_df)
+        json_safe_kpis = kpis_to_json_safe(kpis)
+        
+        result = {
+            "plant_folder": "PVC-I",
+            "mode": "actual-calc",
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "params": params,
+            "overall": json_safe_kpis,
+            "counts": {
+                "total_sources": len(summary_df),
+                "total_alarms": int(summary_df["Unique_Alarms"].sum()),
+                "total_stale": int(summary_df["Stale_Count"].sum()),
+                "total_chattering": int(summary_df["Chattering_Count"].sum()),
+                "total_cycles": len(cycles_df)
+            },
+        }
+        
+        # Add per_source if requested (paginated)
+        if include_per_source:
+            result["per_source"] = per_source_records[offset:offset + limit]
+            result["per_source_pagination"] = {
+                "offset": offset,
+                "limit": limit,
+                "total": len(per_source_records),
+                "returned": len(result["per_source"])
+            }
+        
+        # Add cycles if requested
+        if include_cycles:
+            result["cycles"] = cycles_records
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in actual-calc overall endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/pvcI-actual-calc/per-source", response_class=ORJSONResponse)
+def get_pvci_actual_calc_per_source(
+    source: str,
+    include_cycles: bool = False,
+    stale_min: int = 60,
+    chatter_min: int = 10
+):
+    """Get actual calculation metrics for a specific source.
+    
+    Query Parameters:
+        source: Source name (required)
+        include_cycles: Include alarm lifecycle cycles for this source (default False)
+        stale_min: Stale threshold (must match cached params, default 60)
+        chatter_min: Chattering threshold (must match cached params, default 10)
+    
+    Returns:
+        {
+            source: str,
+            metrics: {Unique_Alarms, Stale_Count, Chattering_Count},
+            cycles: [...] (when include_cycles=true)
+        }
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(
+            status_code=501,
+            detail="Actual calculation service is not available"
+        )
+    
+    try:
+        params = {"stale_min": stale_min, "chatter_min": chatter_min}
+        
+        # Try to read from cache
+        cached_data = read_cache(BASE_DIR, params)
+        
+        if not cached_data:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No cached data for params {params}. Call /overall?force_recompute=true first."
+            )
+        
+        # Find source in per_source list
+        per_source = cached_data.get("per_source", [])
+        source_record = next((s for s in per_source if s.get("Source") == source), None)
+        
+        if not source_record:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Source '{source}' not found in cached results"
+            )
+        
+        result = {
+            "source": source,
+            "metrics": source_record
+        }
+        
+        # Add cycles if requested
+        if include_cycles:
+            all_cycles = cached_data.get("cycles", [])
+            source_cycles = [c for c in all_cycles if c.get("source") == source]
+            result["cycles"] = source_cycles
+            result["cycles_count"] = len(source_cycles)
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in per-source endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/pvcI-actual-calc/regenerate-cache", response_class=ORJSONResponse)
+def regenerate_pvci_actual_calc_cache(
+    stale_min: int = 60,
+    chatter_min: int = 10
+):
+    """Regenerate the actual calculation cache with specified parameters.
+    
+    This endpoint forces a fresh computation and updates the cache file.
+    Use this for background jobs or when parameters change.
+    
+    Query Parameters:
+        stale_min: Stale alarm threshold in minutes (default 60)
+        chatter_min: Chattering threshold in minutes (default 10)
+    
+    Returns:
+        {
+            status: "success",
+            message: str,
+            params: {stale_min, chatter_min},
+            counts: {...},
+            compute_time_seconds: float,
+            cache_size_mb: float,
+            generated_at: ISO timestamp
+        }
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(
+            status_code=501,
+            detail="Actual calculation service is not available"
+        )
+    
+    try:
+        params = {"stale_min": stale_min, "chatter_min": chatter_min}
+        
+        logger.info(f"Regenerating actual-calc cache with params: {params}")
+        
+        start_time = datetime.now()
+        
+        # Run computation
+        summary_df, kpis, cycles_df = run_actual_calc(
+            ALARM_DATA_DIR,
+            stale_min=stale_min,
+            chatter_min=chatter_min
+        )
+        
+        # Write cache
+        write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR)
+        
+        compute_time = (datetime.now() - start_time).total_seconds()
+        
+        # Get cache file size
+        from actual_calc_service import get_cache_path
+        cache_path = get_cache_path(BASE_DIR)
+        cache_size_mb = os.path.getsize(cache_path) / 1024 / 1024 if os.path.exists(cache_path) else 0
+        
+        return {
+            "status": "success",
+            "message": f"Cache regenerated successfully with {len(summary_df)} sources",
+            "params": params,
+            "counts": {
+                "total_sources": len(summary_df),
+                "total_alarms": int(summary_df["Unique_Alarms"].sum()),
+                "total_stale": int(summary_df["Stale_Count"].sum()),
+                "total_chattering": int(summary_df["Chattering_Count"].sum()),
+                "total_cycles": len(cycles_df)
+            },
+            "compute_time_seconds": round(compute_time, 2),
+            "cache_size_mb": round(cache_size_mb, 2),
+            "generated_at": datetime.utcnow().isoformat() + "Z"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error regenerating cache: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+

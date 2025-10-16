@@ -7,6 +7,10 @@ import { UniqueSourcesCard } from '@/components/dashboard/UniqueSourcesCard';
 import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
 import { EventStatisticsCards } from '@/components/dashboard/EventStatisticsCards';
 import { ErrorState } from '@/components/dashboard/ErrorState';
+import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
+import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
+import { fetchPvciActualCalcOverall } from '@/api/actualCalc';
+import { ActualCalcOverallResponse } from '@/types/actualCalc';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
 import UnhealthySourcesWordCloud from '@/components/UnhealthySourcesWordCloud';
 import UnhealthySourcesBarChart from '@/components/UnhealthySourcesBarChart';
@@ -36,7 +40,7 @@ export default function DashboardPage() {
   const [plants, setPlants] = useState<Plant[]>([]);
   const [plantsLoading, setPlantsLoading] = useState<boolean>(true);
   const [topN, setTopN] = useState<1 | 3>(1);
-  const [mode, setMode] = useState<'perSource' | 'flood'>('flood');
+  const [mode, setMode] = useState<'perSource' | 'flood' | 'actualCalc'>('flood');
   
   
 
@@ -80,6 +84,10 @@ export default function DashboardPage() {
 
   // Event statistics (only for PVC-I Plant-Wide mode)
   const [eventStats, setEventStats] = useState<any>(null);
+
+  // Actual Calc data
+  const [actualCalcData, setActualCalcData] = useState<ActualCalcOverallResponse | null>(null);
+  const [actualCalcLoading, setActualCalcLoading] = useState<boolean>(false);
 
   const toIso = (v?: string) => (v ? new Date(v).toISOString() : undefined);
   const applyIsaRange = () => {
@@ -199,6 +207,40 @@ export default function DashboardPage() {
     load();
     return () => { mounted = false; };
   }, []);
+
+  // Load Actual Calc data when mode is 'actualCalc'
+  useEffect(() => {
+    let mounted = true;
+    async function loadActualCalc() {
+      if (mode !== 'actualCalc' || selectedPlant.id !== 'pvcI') {
+        return;
+      }
+      try {
+        setActualCalcLoading(true);
+        const response = await fetchPvciActualCalcOverall({
+          stale_min: 60,
+          chatter_min: 10,
+          include_per_source: false,
+          include_cycles: false,
+          timeout_ms: 30000,
+        });
+        if (mounted) {
+          setActualCalcData(response);
+        }
+      } catch (err) {
+        console.error('Failed to load actual-calc data:', err);
+        if (mounted) {
+          setActualCalcData(null);
+        }
+      } finally {
+        if (mounted) {
+          setActualCalcLoading(false);
+        }
+      }
+    }
+    loadActualCalc();
+    return () => { mounted = false; };
+  }, [mode, selectedPlant.id]);
 
   // Load Top Bars: per-source or flood mode
   useEffect(() => {
@@ -568,6 +610,9 @@ export default function DashboardPage() {
                 {selectedPlant.id === 'pvcI' && (
                   <SelectItem value="flood">Plant-Wide (ISA 18.2)</SelectItem>
                 )}
+                {selectedPlant.id === 'pvcI' && (
+                  <SelectItem value="actualCalc">Actual Calc</SelectItem>
+                )}
               </SelectContent>
             </Select>
           </div>
@@ -587,29 +632,31 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Insight Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
-          <div className="lg:col-span-4">
-            <InsightCards
-              metrics={data?.metrics || {
-                healthy_percentage: 0,
-                unhealthy_percentage: 0,
-                total_sources: 0,
-                total_files: 0,
-                last_updated: '',
-              }}
-              isLoading={isLoading}
-              mode={mode}
-            />
+        {/* Insight Cards - Hide for Actual Calc mode */}
+        {mode !== 'actualCalc' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+            <div className="lg:col-span-4">
+              <InsightCards
+                metrics={data?.metrics || {
+                  healthy_percentage: 0,
+                  unhealthy_percentage: 0,
+                  total_sources: 0,
+                  total_files: 0,
+                  last_updated: '',
+                }}
+                isLoading={isLoading}
+                mode={mode}
+              />
+            </div>
+            <div className="lg:col-span-1">
+              <UniqueSourcesCard
+                data={uniqueSourcesData}
+                isLoading={unhealthyBarsLoading}
+                mode={mode}
+              />
+            </div>
           </div>
-          <div className="lg:col-span-1">
-            <UniqueSourcesCard
-              data={uniqueSourcesData}
-              isLoading={unhealthyBarsLoading}
-              mode={mode}
-            />
-          </div>
-        </div>
+        )}
 
         {/* Event Statistics Cards - Only for PVC-I Plant-Wide Mode */}
         {selectedPlant.id === 'pvcI' && mode === 'flood' && (
@@ -772,6 +819,88 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Actual Calc Mode - PVC-I only */}
+        {selectedPlant.id === 'pvcI' && mode === 'actualCalc' && (
+          <div className="space-y-6">
+            {actualCalcLoading || !actualCalcData ? (
+              <ActualCalcKPICards
+                kpis={{
+                  avg_ack_delay_min: 0,
+                  avg_ok_delay_min: 0,
+                  completion_rate_pct: 0,
+                  avg_alarms_per_day: 0,
+                  avg_alarms_per_hour: 0,
+                  avg_alarms_per_10min: 0,
+                  days_over_288_alarms_pct: 0,
+                }}
+                counts={{
+                  total_sources: 0,
+                  total_alarms: 0,
+                  total_stale: 0,
+                  total_chattering: 0,
+                  total_cycles: 0,
+                }}
+                isLoading={true}
+              />
+            ) : (
+              <>
+                <ActualCalcKPICards
+                  kpis={actualCalcData.overall}
+                  counts={actualCalcData.counts}
+                  isLoading={false}
+                />
+                {/* Summary Stats Card */}
+                <div className="bg-card rounded-lg border p-6">
+                  <h3 className="text-lg font-semibold mb-4">Summary Statistics</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+                    <div>
+                      <p className="text-muted-foreground">Total Sources</p>
+                      <p className="text-lg font-semibold">{actualCalcData.counts.total_sources.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Total Alarms</p>
+                      <p className="text-lg font-semibold">{actualCalcData.counts.total_alarms.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Stale</p>
+                      <p className="text-lg font-semibold">{actualCalcData.counts.total_stale.toLocaleString()}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {((actualCalcData.counts.total_stale / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Chattering</p>
+                      <p className="text-lg font-semibold">{actualCalcData.counts.total_chattering.toLocaleString()}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {((actualCalcData.counts.total_chattering / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Cycles</p>
+                      <p className="text-lg font-semibold">{actualCalcData.counts.total_cycles.toLocaleString()}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {actualCalcData.overall.completion_rate_pct.toFixed(1)}% complete
+                      </p>
+                    </div>
+                  </div>
+                  {actualCalcData.sample_range?.start && actualCalcData.sample_range?.end && (
+                    <p className="text-xs text-muted-foreground mt-4">
+                      Data range: {new Date(actualCalcData.sample_range.start).toLocaleDateString()} - {new Date(actualCalcData.sample_range.end).toLocaleDateString()}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Generated: {new Date(actualCalcData.generated_at).toLocaleString()} | 
+                    Stale threshold: {actualCalcData.params.stale_min}min | 
+                    Chatter threshold: {actualCalcData.params.chatter_min}min
+                  </p>
+                </div>
+
+                {/* Minimal Flow Tree */}
+                <ActualCalcTree data={actualCalcData} />
+              </>
+            )}
+          </div>
+        )}
         
       </div>
     </PageShell>

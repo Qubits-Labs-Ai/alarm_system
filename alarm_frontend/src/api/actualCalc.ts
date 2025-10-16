@@ -1,0 +1,224 @@
+/**
+ * API functions for PVCI Actual Calculation Mode
+ * Fetches alarm lifecycle KPIs, per-source metrics, and alarm cycles
+ */
+
+import { API_BASE_URL } from './config';
+import {
+  ActualCalcOverallResponse,
+  ActualCalcPerSourceResponse,
+  RegenerateCacheResponse,
+} from '@/types/actualCalc';
+
+// Simple cache reuse from plantHealth.ts pattern
+type CacheEntry<T = any> = { ts: number; data: T };
+const memCache = new Map<string, CacheEntry>();
+const inflight = new Map<string, Promise<any>>();
+const STORAGE_PREFIX = 'ams.apiCache.v1:';
+
+function now() {
+  return Date.now();
+}
+
+function getStorageKey(key: string) {
+  return `${STORAGE_PREFIX}${key}`;
+}
+
+function readLocal<T>(key: string): CacheEntry<T> | null {
+  try {
+    const raw = localStorage.getItem(getStorageKey(key));
+    if (!raw) return null;
+    return JSON.parse(raw) as CacheEntry<T>;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocal<T>(key: string, value: CacheEntry<T>) {
+  try {
+    localStorage.setItem(getStorageKey(key), JSON.stringify(value));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+async function fetchWithCache<T = any>(url: string, ttlMs = 15 * 60 * 1000, timeoutMs?: number): Promise<T> {
+  const key = url;
+
+  // Serve from memory cache if fresh
+  const m = memCache.get(key);
+  if (m && now() - m.ts < ttlMs) {
+    return m.data as T;
+  }
+
+  // Serve from localStorage if fresh
+  const s = readLocal<T>(key);
+  if (s && now() - s.ts < ttlMs) {
+    memCache.set(key, s);
+    return s.data as T;
+  }
+
+  // De-duplicate concurrent requests
+  if (inflight.has(key)) {
+    return inflight.get(key)! as Promise<T>;
+  }
+
+  const p = (async () => {
+    const controller = new AbortController();
+    let timeoutId: any = null;
+    try {
+      if (timeoutMs && timeoutMs > 0) {
+        timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      }
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as T;
+      const entry: CacheEntry<T> = { ts: now(), data };
+      memCache.set(key, entry);
+      writeLocal<T>(key, entry);
+      return data;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  })().finally(() => inflight.delete(key));
+
+  inflight.set(key, p);
+  return p;
+}
+
+/**
+ * Fetch overall actual-calc KPIs for PVCI
+ */
+export async function fetchPvciActualCalcOverall(params?: {
+  stale_min?: number;
+  chatter_min?: number;
+  include_per_source?: boolean;
+  offset?: number;
+  limit?: number;
+  include_cycles?: boolean;
+  raw?: boolean;
+  force_recompute?: boolean;
+  timeout_ms?: number;
+}): Promise<ActualCalcOverallResponse> {
+  const {
+    stale_min = 60,
+    chatter_min = 10,
+    include_per_source = false,
+    offset = 0,
+    limit = 200,
+    include_cycles = false,
+    raw = false,
+    force_recompute = false,
+    timeout_ms,
+  } = params || {};
+
+  const url = new URL(`${API_BASE_URL}/pvcI-actual-calc/overall`);
+  url.searchParams.set('stale_min', String(stale_min));
+  url.searchParams.set('chatter_min', String(chatter_min));
+  url.searchParams.set('include_per_source', String(include_per_source));
+  url.searchParams.set('offset', String(offset));
+  url.searchParams.set('limit', String(limit));
+  url.searchParams.set('include_cycles', String(include_cycles));
+  url.searchParams.set('raw', String(raw));
+  url.searchParams.set('force_recompute', String(force_recompute));
+
+  // Cache for 15 minutes when no per_source, 5 minutes with per_source
+  const ttl = include_per_source ? 5 * 60 * 1000 : 15 * 60 * 1000;
+
+  return fetchWithCache<ActualCalcOverallResponse>(url.toString(), ttl, timeout_ms);
+}
+
+/**
+ * Fetch per-source metrics for a specific source
+ */
+export async function fetchPvciActualCalcPerSource(params: {
+  source: string;
+  include_cycles?: boolean;
+  stale_min?: number;
+  chatter_min?: number;
+  timeout_ms?: number;
+}): Promise<ActualCalcPerSourceResponse> {
+  const {
+    source,
+    include_cycles = false,
+    stale_min = 60,
+    chatter_min = 10,
+    timeout_ms,
+  } = params;
+
+  const url = new URL(`${API_BASE_URL}/pvcI-actual-calc/per-source`);
+  url.searchParams.set('source', source);
+  url.searchParams.set('include_cycles', String(include_cycles));
+  url.searchParams.set('stale_min', String(stale_min));
+  url.searchParams.set('chatter_min', String(chatter_min));
+
+  // Cache per-source queries for 5 minutes
+  return fetchWithCache<ActualCalcPerSourceResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
+}
+
+/**
+ * Regenerate the actual-calc cache (force recomputation)
+ */
+export async function regeneratePvciActualCalcCache(params?: {
+  stale_min?: number;
+  chatter_min?: number;
+  timeout_ms?: number;
+}): Promise<RegenerateCacheResponse> {
+  const {
+    stale_min = 60,
+    chatter_min = 10,
+    timeout_ms = 120000, // 2 minute timeout for compute
+  } = params || {};
+
+  const url = new URL(`${API_BASE_URL}/pvcI-actual-calc/regenerate-cache`);
+  url.searchParams.set('stale_min', String(stale_min));
+  url.searchParams.set('chatter_min', String(chatter_min));
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout_ms);
+
+  try {
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errorText}`);
+    }
+
+    return await res.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Clear actual-calc cache entries
+ */
+export function clearActualCalcCache() {
+  const prefix = `${API_BASE_URL}/pvcI-actual-calc/`;
+  
+  // Clear memory cache
+  for (const k of Array.from(memCache.keys())) {
+    if (k.startsWith(prefix)) memCache.delete(k);
+  }
+
+  // Clear localStorage
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      const isOurKey = k.startsWith(STORAGE_PREFIX);
+      if (!isOurKey) continue;
+      if (k.replace(STORAGE_PREFIX, '').startsWith(prefix)) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
+  } catch {
+    // ignore
+  }
+}
