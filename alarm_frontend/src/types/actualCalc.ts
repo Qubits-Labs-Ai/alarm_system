@@ -16,8 +16,13 @@ export interface ActualCalcKPIs {
 export interface PerSourceRecord {
   Source: string;
   Unique_Alarms: number;
-  Stale_Count: number;
-  Chattering_Count: number;
+  Standing_Alarms?: number; // new
+  Stale_Alarms?: number;    // new (replaces Stale_Count)
+  Instrument_Failure?: number; // new (standing)
+  Instrument_Failure_Chattering?: number; // new (from chattering logic)
+  Repeating_Alarms?: number;  // new
+  Stale_Count?: number;     // legacy (fallback only)
+  Chattering_Count?: number; // renamed in backend from Chattering_Alarms
 }
 
 export interface AlarmCycle {
@@ -32,8 +37,12 @@ export interface AlarmCycle {
 export interface ActualCalcCounts {
   total_sources: number;
   total_alarms: number;
-  total_stale: number;
+  total_standing?: number;             // new
+  total_stale: number;                 // now stale standing subtype
+  total_instrument_failure?: number;   // new
+  total_repeating?: number;                 // new
   total_chattering: number;
+  total_instrument_failure_chattering?: number; // new
   total_cycles: number;
 }
 

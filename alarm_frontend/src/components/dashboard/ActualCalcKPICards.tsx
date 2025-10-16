@@ -3,7 +3,7 @@
  * Shows response times, completion rates, alarm rates, and ISA compliance
  */
 
-import { Clock, CheckCircle2, TrendingUp, AlertTriangle, Activity, Calendar } from 'lucide-react';
+import { Clock, CheckCircle2, TrendingUp, AlertTriangle, Activity, Calendar, ShieldAlert } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ActualCalcKPIs, ActualCalcCounts } from '@/types/actualCalc';
 
@@ -21,6 +21,8 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false }: ActualCa
     const mins = Math.round(minutes % 60);
     return `${hours}h ${mins}m`;
   };
+
+  const total = Math.max(1, Number(counts.total_alarms || 0));
 
   const cards = [
     {
@@ -45,11 +47,25 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false }: ActualCa
       trend: kpis.completion_rate_pct >= 95 ? 'positive' : kpis.completion_rate_pct >= 85 ? 'neutral' : 'negative',
     },
     {
+      title: 'Standing Alarms',
+      value: (counts.total_standing || 0).toLocaleString(),
+      description: 'Alarms standing beyond threshold',
+      icon: ShieldAlert,
+      trend: (counts.total_standing || 0) === 0 ? 'positive' : (counts.total_standing || 0) / total <= 0.05 ? 'neutral' : 'negative',
+    },
+    {
+      title: 'Instruments Faulty',
+      value: (counts.total_instrument_failure || 0).toLocaleString(),
+      description: 'Instrument failure related',
+      icon: AlertTriangle,
+      trend: (counts.total_instrument_failure || 0) === 0 ? 'positive' : (counts.total_instrument_failure || 0) / total <= 0.02 ? 'neutral' : 'negative',
+    },
+    {
       title: 'Stale Alarms',
       value: counts.total_stale.toLocaleString(),
-      description: 'Alarms with no action',
+      description: 'Standing alarms (non-instrument)',
       icon: AlertTriangle,
-      trend: counts.total_stale === 0 ? 'positive' : counts.total_stale / counts.total_alarms <= 0.05 ? 'neutral' : 'negative',
+      trend: counts.total_stale === 0 ? 'positive' : counts.total_stale / total <= 0.05 ? 'neutral' : 'negative',
     },
     {
       title: 'Chattering',

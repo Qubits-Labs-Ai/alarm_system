@@ -9,12 +9,15 @@ import os
 import logging
 from datetime import datetime
 from typing import Tuple, Dict, Any
+from collections import deque
 
 logger = logging.getLogger(__name__)
 
 # Default thresholds (can be overridden via parameters)
-STALE_THRESHOLD_MIN = 60
-CHATTER_THRESHOLD_MIN = 10
+STALE_THRESHOLD_MIN = 60  # minutes until an active alarm is considered standing/stale classification point
+CHATTER_THRESHOLD_MIN = 10  # window size in minutes for chattering detection
+CHATTER_MIN_COUNT = 3       # minimum alarms within window to declare chattering
+INSTRUMENT_KEYWORDS = ["FAIL", "BAD"]
 
 
 # ---------- CORE KPI LOGIC (EXACT FROM NOTEBOOK) ----------
@@ -43,43 +46,145 @@ def count_unique_alarms(group):
     return alarm_count
 
 
-def detect_stale_chatter(group):
-    """Detect stale and chattering alarms within a source group.
-    
-    Stale: alarms with no action for > STALE_THRESHOLD_MIN
-    Chattering: > CHATTER_THRESHOLD_MIN alarms within CHATTER_THRESHOLD_MIN window
+# ---------- Updated Calculation For Chattering (episodes) & Repeating ----------
+def detect_repeating_and_chattering(df: pd.DataFrame) -> pd.DataFrame:
+    """Detect Repeating Alarms, Chattering episodes, and Instrument Failures per source.
+    - Unique alarm starts follow the same verified logic (blank triggers a new alarm when IDLE/ACKED)
+    - Repeating_Alarms: max(0, unique_alarms - 1)
+    - Chattering_Alarms: count of times a sliding window of CHATTER_THRESHOLD_MIN minutes reaches CHATTER_MIN_COUNT alarms; do not double-count while within the same episode
+    - Instrument_Failures: count of unique alarm starts whose Condition contains FAIL/BAD (chattering-specific perspective)
     """
-    group = group.sort_values("Event Time")
-    stale_flags = []
-    chatter_flags = []
+    df = df.copy()
+    df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+    df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+    if "Condition" in df.columns:
+        df["Condition"] = df["Condition"].fillna("").astype(str).str.upper().str.strip()
+    df = df.sort_values(["Source", "Event Time"])
 
-    last_alarm_time = None
-    recent_alarms = []
+    rows = []
+    for src, group in df.groupby("Source"):
+        state = "IDLE"
+        alarm_times: list[pd.Timestamp] = []
+        cond_texts: list[str] = []
 
-    for i, row in group.iterrows():
-        t = row["Event Time"]
-        action = row["Action"]
+        for _, row in group.iterrows():
+            action = row["Action"]
+            t = row["Event Time"]
+            cond = row.get("Condition", "") if "Condition" in group.columns else ""
 
-        # Detect stale alarms
-        if action == "ALARM":
-            if last_alarm_time is None:
-                stale_flags.append(False)
-            else:
-                stale_flags.append((t - last_alarm_time).total_seconds() / 60 > STALE_THRESHOLD_MIN)
-            last_alarm_time = t
-        elif action == "ACK":
-            stale_flags.append(False)
-        else:
-            stale_flags.append(False)
+            if action == "":
+                if state in ("IDLE", "ACKED"):
+                    alarm_times.append(t)
+                    cond_texts.append(cond)
+                    state = "ACTIVE"
+            elif action == "ACK" and state == "ACTIVE":
+                state = "ACKED"
+            elif action == "OK":
+                state = "IDLE"
 
-        # Detect chattering (too many alarms in a short time)
-        recent_alarms = [x for x in recent_alarms if (t - x).total_seconds() / 60 <= CHATTER_THRESHOLD_MIN]
-        recent_alarms.append(t)
-        chatter_flags.append(len(recent_alarms) > CHATTER_THRESHOLD_MIN)
+        unique_alarms = len(alarm_times)
+        repeating_count = max(0, unique_alarms - 1)
 
-    group["is_stale"] = stale_flags
-    group["is_chattering"] = chatter_flags
-    return group
+        instrument_failures = sum(1 for c in cond_texts if any(k in (c or "") for k in INSTRUMENT_KEYWORDS))
+
+        dq: deque = deque()
+        chattering_count = 0
+        in_chatter = False
+        for t in alarm_times:
+            # Evict outside window
+            while dq and (t - dq[0]).total_seconds() / 60 > CHATTER_THRESHOLD_MIN:
+                dq.popleft()
+                if len(dq) < CHATTER_MIN_COUNT:
+                    in_chatter = False  # reset when below threshold
+            dq.append(t)
+            if not in_chatter and len(dq) >= CHATTER_MIN_COUNT:
+                chattering_count += 1
+                in_chatter = True
+
+        rows.append({
+            "Source": src,
+            "Repeating_Alarms": repeating_count,
+            "Chattering_Alarms": chattering_count,
+            "Instrument_Failures": instrument_failures,
+            "Unique_Alarms": unique_alarms,
+        })
+
+    return pd.DataFrame(rows)
+
+
+# ---------- Updated Calculation For Standing Alarms ----------
+def analyze_basic_alarm_states(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    ISO-style alarm state analysis per Source.
+    Calculates per source:
+      - Unique_Alarms
+      - Standing_Alarms (counted once per ACTIVE episode crossing threshold)
+      - Stale_Alarms (standing subtype when condition is not instrument failure)
+      - Instrument_Failure (standing subtype when condition contains FAIL/BAD)
+    """
+    df = df.copy()
+    df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+    df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+    if "Condition" in df.columns:
+        df["Condition"] = df["Condition"].fillna("").astype(str).str.upper().str.strip()
+    df = df.sort_values(["Source", "Event Time"]) 
+
+    results = []
+    for src, group in df.groupby("Source"):
+        state = "IDLE"
+        unique_count = 0
+        standing_count = 0
+        stale_count = 0
+        instrument_failure_count = 0
+
+        active_start = None
+        active_condition = ""
+        standing_flag = False
+
+        for _, row in group.iterrows():
+            action = row["Action"]
+            t = row["Event Time"]
+            cond = row.get("Condition", "") if hasattr(row, "get") else row["Condition"] if "Condition" in group.columns else ""
+
+            # NEW ALARM
+            if action == "" and state in ["IDLE", "ACKED"]:
+                unique_count += 1
+                state = "ACTIVE"
+                active_start = t
+                active_condition = cond
+                standing_flag = False
+
+            # ACK
+            elif action == "ACK" and state == "ACTIVE":
+                state = "ACKED"
+
+            # OK
+            elif action == "OK" and state in ["ACTIVE", "ACKED"]:
+                state = "IDLE"
+                active_start = None
+                active_condition = ""
+                standing_flag = False
+
+            # STANDING CHECK
+            if state == "ACTIVE" and active_start is not None and pd.notna(t):
+                duration_min = (t - active_start).total_seconds() / 60.0
+                if duration_min >= STALE_THRESHOLD_MIN and not standing_flag:
+                    standing_count += 1
+                    standing_flag = True
+                    if any(k in str(active_condition) for k in ["FAIL", "BAD"]):
+                        instrument_failure_count += 1
+                    else:
+                        stale_count += 1
+
+        results.append({
+            "Source": src,
+            "Unique_Alarms": unique_count,
+            "Standing_Alarms": standing_count,
+            "Stale_Alarms": stale_count,
+            "Instrument_Failure": instrument_failure_count,
+        })
+
+    return pd.DataFrame(results)
 
 
 def get_alarm_cycles(df):
@@ -117,7 +222,7 @@ def calculate_alarm_kpis(df):
     """Main KPI calculation function.
     
     Returns:
-        summary (DataFrame): Per-source metrics (Unique_Alarms, Stale_Count, Chattering_Count)
+        summary (DataFrame): Per-source metrics (Unique_Alarms, Standing_Alarms, Stale_Alarms, Instrument_Failure, [optional] Chattering_Count)
         kpis (dict): Overall plant KPIs
         cycles (DataFrame): Alarm lifecycle cycles with delays
     """
@@ -128,14 +233,23 @@ def calculate_alarm_kpis(df):
     # Prepare and clean alarm event data
     df = df.copy()
     df['Event Time'] = pd.to_datetime(df['Event Time'], errors='coerce')
-    df['Action'] = df['Action'].astype(str).str.strip().replace({'nan': ''})
+    df['Action'] = df['Action'].astype(str).str.upper().str.strip().replace({'nan': ''})
+    if 'Condition' in df.columns:
+        df['Condition'] = df['Condition'].astype(str).str.upper().str.strip().replace({'nan': ''})
     df = df.sort_values(["Source", "Event Time"])
 
-    # Per-source metrics
-    unique = df.groupby("Source").apply(count_unique_alarms).reset_index(name="Unique_Alarms")
-    analyzed = df.groupby("Source", group_keys=False).apply(detect_stale_chatter)
-    stale = analyzed.groupby("Source")["is_stale"].sum().reset_index(name="Stale_Count")
-    chat = analyzed.groupby("Source")["is_chattering"].sum().reset_index(name="Chattering_Count")
+    # Per-source metrics (Updated Standing/Instrument Failure/Stale classification)
+    basic = analyze_basic_alarm_states(df)
+
+    # New repeating/chattering and chattering-specific instrument failures
+    rep_chat = detect_repeating_and_chattering(df)
+    # Drop duplicate Unique_Alarms from rep_chat to avoid suffixes; keep 'basic' as source of truth
+    if "Unique_Alarms" in rep_chat.columns:
+        rep_chat = rep_chat.drop(columns=["Unique_Alarms"]) 
+    rep_chat = rep_chat.rename(columns={
+        "Chattering_Alarms": "Chattering_Count",
+        "Instrument_Failures": "Instrument_Failure_Chattering",
+    })
 
     # Alarm cycles and response times
     cycles = get_alarm_cycles(df)
@@ -156,7 +270,8 @@ def calculate_alarm_kpis(df):
     overlimit_pct = (per_day > 288).mean() * 100
 
     # Merge per-source summary
-    summary = unique.merge(stale, on="Source", how="outer").merge(chat, on="Source", how="outer").fillna(0)
+    summary = basic.merge(rep_chat, on="Source", how="left") if isinstance(rep_chat, pd.DataFrame) else basic
+    summary = summary.fillna({"Chattering_Count": 0, "Repeating_Alarms": 0, "Instrument_Failure_Chattering": 0})
     
     # Overall KPIs
     kpis = dict(
@@ -234,7 +349,7 @@ def run_actual_calc(
     
     Args:
         alarm_data_dir: Path to ALARM_DATA_DIR
-        stale_min: Stale alarm threshold in minutes (default 60)
+        stale_min: Standing/stale threshold in minutes (default 60)
         chatter_min: Chattering alarm threshold in minutes (default 10)
         
     Returns:
@@ -263,11 +378,8 @@ def run_actual_calc(
     # Log summary statistics
     total_sources = len(summary)
     total_alarms = summary["Unique_Alarms"].sum()
-    total_stale = summary["Stale_Count"].sum()
-    total_chatter = summary["Chattering_Count"].sum()
     
-    logger.info(f"Results: {total_sources} sources, {total_alarms} unique alarms, "
-                f"{total_stale} stale, {total_chatter} chattering")
+    logger.info(f"Results: {total_sources} sources, {total_alarms} unique alarms")
     logger.info(f"Overall KPIs: avg_ack={kpis['avg_ack_delay_min']:.2f}min, "
                 f"avg_ok={kpis['avg_ok_delay_min']:.2f}min, "
                 f"completion={kpis['completion_rate_pct']:.1f}%")
@@ -409,9 +521,13 @@ def write_cache(
             "cycles": cycles_records,
             "counts": {
                 "total_sources": len(summary_df),
-                "total_alarms": int(summary_df["Unique_Alarms"].sum()),
-                "total_stale": int(summary_df["Stale_Count"].sum()),
-                "total_chattering": int(summary_df["Chattering_Count"].sum()),
+                "total_alarms": int(summary_df.get("Unique_Alarms", pd.Series(dtype=int)).sum() if not summary_df.empty else 0),
+                "total_standing": int(summary_df["Standing_Alarms"].sum()) if "Standing_Alarms" in summary_df.columns else 0,
+                "total_stale": int(summary_df["Stale_Alarms"].sum()) if "Stale_Alarms" in summary_df.columns else 0,
+                "total_instrument_failure": int(summary_df["Instrument_Failure"].sum()) if "Instrument_Failure" in summary_df.columns else 0,
+                "total_repeating": int(summary_df["Repeating_Alarms"].sum()) if "Repeating_Alarms" in summary_df.columns else 0,
+                "total_chattering": int(summary_df["Chattering_Count"].sum()) if "Chattering_Count" in summary_df.columns else 0,
+                "total_instrument_failure_chattering": int(summary_df["Instrument_Failure_Chattering"].sum()) if "Instrument_Failure_Chattering" in summary_df.columns else 0,
                 "total_cycles": len(cycles_df)
             },
             "sample_range": sample_range,

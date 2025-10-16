@@ -1,7 +1,8 @@
 /**
  * ActualCalcTree - Minimal flow/tree view with connectors
- * Root: Total Alarms → Standing Alarm, Nuisance/Repeating → (Instruments Faulty, Chattering)
- * Current placeholders: Standing=0, Instruments Faulty=0; Nuisance = 0 + Chattering
+ * Root: Total Alarms → Standing Alarm, Nuisance/Repeating
+ * Standing → (Instruments Faulty, Stale Alarms)
+ * Nuisance/Repeating → (Chattering Alarms, Instruments Faulty)
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -12,6 +13,8 @@ type Props = {
   data: ActualCalcOverallResponse;
   standingTotal?: number; // optional override
   instrumentsFaultyTotal?: number; // optional override
+  instrumentsFaultyChatteringTotal?: number; // optional override for chattering instruments faulty
+  staleTotal?: number; // optional override
 };
 
 function StatNode({ title, value, nodeRef }: { title: string; value: number; nodeRef: React.RefObject<HTMLDivElement> }) {
@@ -33,10 +36,14 @@ function StatNode({ title, value, nodeRef }: { title: string; value: number; nod
   );
 }
 
-export function ActualCalcTree({ data, standingTotal = 0, instrumentsFaultyTotal = 0 }: Props) {
+export function ActualCalcTree({ data, standingTotal: standingOverride = 0, instrumentsFaultyTotal: faultyOverride = 0, instrumentsFaultyChatteringTotal: faultyChatteringOverride = 0, staleTotal: staleOverride = 0 }: Props) {
   const totalAlarms = Number(data?.counts?.total_alarms || 0);
+  const standingTotal = Number(data?.counts?.total_standing ?? standingOverride ?? 0);
+  const instrumentsFaultyTotal = Number(data?.counts?.total_instrument_failure ?? faultyOverride ?? 0);
+  const staleTotal = Number(data?.counts?.total_stale ?? staleOverride ?? 0);
   const chatteringTotal = Number(data?.counts?.total_chattering || 0);
-  const nuisanceTotal = instrumentsFaultyTotal + chatteringTotal;
+  const instrumentsFaultyChatteringTotal = Number(data?.counts?.total_instrument_failure_chattering ?? faultyChatteringOverride ?? 0);
+  const nuisanceTotal = chatteringTotal + instrumentsFaultyChatteringTotal;
 
   // Refs for nodes
   const containerRef = useRef<HTMLDivElement>(null);
@@ -44,9 +51,11 @@ export function ActualCalcTree({ data, standingTotal = 0, instrumentsFaultyTotal
   const standingRef = useRef<HTMLDivElement>(null);
   const nuisanceRef = useRef<HTMLDivElement>(null);
   const faultyRef = useRef<HTMLDivElement>(null);
+  const staleRef = useRef<HTMLDivElement>(null);
   const chatteringRef = useRef<HTMLDivElement>(null);
 
   const [paths, setPaths] = useState<string[]>([]);
+  const faultyChatteringRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const compute = () => {
@@ -81,9 +90,11 @@ export function ActualCalcTree({ data, standingTotal = 0, instrumentsFaultyTotal
 
       const p1 = makePath(rootRef.current, standingRef.current);
       const p2 = makePath(rootRef.current, nuisanceRef.current);
-      const p3 = makePath(nuisanceRef.current, faultyRef.current);
-      const p4 = makePath(nuisanceRef.current, chatteringRef.current);
-      setPaths([p1, p2, p3, p4].filter(Boolean));
+      const p3 = makePath(standingRef.current, faultyRef.current);
+      const p4 = makePath(standingRef.current, staleRef.current);
+      const p5 = makePath(nuisanceRef.current, chatteringRef.current);
+      const p6 = makePath(nuisanceRef.current, faultyChatteringRef.current);
+      setPaths([p1, p2, p3, p4, p5, p6].filter(Boolean));
     };
 
     // compute after mount and on resize
@@ -119,13 +130,19 @@ export function ActualCalcTree({ data, standingTotal = 0, instrumentsFaultyTotal
         </div>
       </div>
 
-      {/* Row 3: Children of Nuisance */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-16 items-start max-w-4xl mx-auto">
-        <div className="flex justify-center">
+      {/* Row 3: Children of Standing and Nuisance */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-16 items-start max-w-7xl mx-auto">
+        <div className="flex justify-center order-1 md:order-1">
           <StatNode title="Instruments Faulty" value={instrumentsFaultyTotal} nodeRef={faultyRef} />
         </div>
-        <div className="flex justify-center">
+        <div className="flex justify-center order-3 md:order-2">
+          <StatNode title="Stale Alarms" value={staleTotal} nodeRef={staleRef} />
+        </div>
+        <div className="flex justify-center order-2 md:order-3">
           <StatNode title="Chattering Alarms" value={chatteringTotal} nodeRef={chatteringRef} />
+        </div>
+        <div className="flex justify-center order-4 md:order-4">
+          <StatNode title="Instruments Faulty (Chattering)" value={instrumentsFaultyChatteringTotal} nodeRef={faultyChatteringRef} />
         </div>
       </div>
     </div>

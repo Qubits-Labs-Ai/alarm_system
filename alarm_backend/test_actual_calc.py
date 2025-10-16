@@ -65,9 +65,14 @@ def test_actual_calc():
         logger.info(f"\nTop 5 Sources by Unique Alarms:")
         top_sources = summary_df.nlargest(5, "Unique_Alarms")
         for _, row in top_sources.iterrows():
-            logger.info(f"  {row['Source']}: {int(row['Unique_Alarms'])} alarms, "
-                       f"{int(row['Stale_Count'])} stale, "
-                       f"{int(row['Chattering_Count'])} chattering")
+            ua = int(row.get('Unique_Alarms', 0))
+            sa = int(row.get('Standing_Alarms', 0))
+            st = int(row.get('Stale_Alarms', 0))
+            inf_s = int(row.get('Instrument_Failure', 0))
+            rep = int(row.get('Repeating_Alarms', 0))
+            ch = int(row.get('Chattering_Count', 0))
+            inf_c = int(row.get('Instrument_Failure_Chattering', 0))
+            logger.info(f"  {row['Source']}: UA={ua}, SA={sa}, Stale={st}, IF(Standing)={inf_s}, Rep={rep}, Chat={ch}, IF(Chatter)={inf_c}")
         
         # Test cache write
         logger.info("\n" + "=" * 60)

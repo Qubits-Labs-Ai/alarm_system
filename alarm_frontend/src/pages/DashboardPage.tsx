@@ -837,6 +837,8 @@ export default function DashboardPage() {
                   total_sources: 0,
                   total_alarms: 0,
                   total_stale: 0,
+                  total_standing: 0,
+                  total_instrument_failure: 0,
                   total_chattering: 0,
                   total_cycles: 0,
                 }}
@@ -852,7 +854,7 @@ export default function DashboardPage() {
                 {/* Summary Stats Card */}
                 <div className="bg-card rounded-lg border p-6">
                   <h3 className="text-lg font-semibold mb-4">Summary Statistics</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+                  <div className="grid grid-cols-2 md:grid-cols-7 gap-4 text-sm">
                     <div>
                       <p className="text-muted-foreground">Total Sources</p>
                       <p className="text-lg font-semibold">{actualCalcData.counts.total_sources.toLocaleString()}</p>
@@ -862,10 +864,24 @@ export default function DashboardPage() {
                       <p className="text-lg font-semibold">{actualCalcData.counts.total_alarms.toLocaleString()}</p>
                     </div>
                     <div>
+                      <p className="text-muted-foreground">Standing</p>
+                      <p className="text-lg font-semibold">{(actualCalcData.counts.total_standing || 0).toLocaleString()}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {((((actualCalcData.counts.total_standing || 0)) / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
+                      </p>
+                    </div>
+                    <div>
                       <p className="text-muted-foreground">Stale</p>
                       <p className="text-lg font-semibold">{actualCalcData.counts.total_stale.toLocaleString()}</p>
                       <p className="text-xs text-muted-foreground">
                         {((actualCalcData.counts.total_stale / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Instrument Fault</p>
+                      <p className="text-lg font-semibold">{(actualCalcData.counts.total_instrument_failure || 0).toLocaleString()}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {((((actualCalcData.counts.total_instrument_failure || 0)) / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
                       </p>
                     </div>
                     <div>
