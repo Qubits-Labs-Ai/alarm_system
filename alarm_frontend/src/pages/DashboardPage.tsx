@@ -846,11 +846,16 @@ export default function DashboardPage() {
               />
             ) : (
               <>
+                {/* Tree on top */}
+                <ActualCalcTree data={actualCalcData} />
+
+                {/* KPI Cards below tree */}
                 <ActualCalcKPICards
                   kpis={actualCalcData.overall}
                   counts={actualCalcData.counts}
                   isLoading={false}
                 />
+
                 {/* Summary Stats Card */}
                 <div className="bg-card rounded-lg border p-6">
                   <h3 className="text-lg font-semibold mb-4">Summary Statistics</h3>
@@ -875,13 +880,6 @@ export default function DashboardPage() {
                       <p className="text-lg font-semibold">{actualCalcData.counts.total_stale.toLocaleString()}</p>
                       <p className="text-xs text-muted-foreground">
                         {((actualCalcData.counts.total_stale / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Instrument Fault</p>
-                      <p className="text-lg font-semibold">{(actualCalcData.counts.total_instrument_failure || 0).toLocaleString()}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {((((actualCalcData.counts.total_instrument_failure || 0)) / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
                       </p>
                     </div>
                     <div>
@@ -910,9 +908,6 @@ export default function DashboardPage() {
                     Chatter threshold: {actualCalcData.params.chatter_min}min
                   </p>
                 </div>
-
-                {/* Minimal Flow Tree */}
-                <ActualCalcTree data={actualCalcData} />
               </>
             )}
           </div>

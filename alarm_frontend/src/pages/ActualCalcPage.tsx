@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import { fetchPvciActualCalcOverall } from '@/api/actualCalc';
 import { ActualCalcOverallResponse } from '@/types/actualCalc';
 import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
+import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertCircle } from 'lucide-react';
 
@@ -80,6 +81,11 @@ export function ActualCalcPage() {
         )}
       </div>
 
+      {/* Tree view at top */}
+      {data && !isLoading && (
+        <ActualCalcTree data={data} />
+      )}
+
       {/* KPI Cards */}
       {isLoading || !data ? (
         <ActualCalcKPICards 
@@ -139,13 +145,6 @@ export function ActualCalcPage() {
                 <p className="text-lg font-semibold">{data.counts.total_stale.toLocaleString()}</p>
                 <p className="text-xs text-muted-foreground">
                   {((data.counts.total_stale / data.counts.total_alarms) * 100).toFixed(1)}%
-                </p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">Instrument Fault</p>
-                <p className="text-lg font-semibold">{(data.counts.total_instrument_failure || 0).toLocaleString()}</p>
-                <p className="text-xs text-muted-foreground">
-                  {((((data.counts.total_instrument_failure || 0)) / data.counts.total_alarms) * 100).toFixed(1)}%
                 </p>
               </div>
               <div>

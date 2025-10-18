@@ -3,7 +3,7 @@
  * Shows response times, completion rates, alarm rates, and ISA compliance
  */
 
-import { Clock, CheckCircle2, TrendingUp, AlertTriangle, Activity, Calendar, ShieldAlert } from 'lucide-react';
+import { TrendingUp, AlertTriangle, Activity, Calendar, ShieldAlert } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ActualCalcKPIs, ActualCalcCounts } from '@/types/actualCalc';
 
@@ -23,28 +23,15 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false }: ActualCa
   };
 
   const total = Math.max(1, Number(counts.total_alarms || 0));
+  const nuisanceTotal = Number(counts.total_chattering || 0) + Number(counts.total_instrument_failure_chattering || 0);
 
   const cards = [
     {
-      title: 'Avg ACK Time',
-      value: formatTime(kpis.avg_ack_delay_min),
-      description: 'Average acknowledgment delay',
-      icon: Clock,
-      trend: kpis.avg_ack_delay_min <= 15 ? 'positive' : kpis.avg_ack_delay_min <= 60 ? 'neutral' : 'negative',
-    },
-    {
-      title: 'Avg OK Time',
-      value: formatTime(kpis.avg_ok_delay_min),
-      description: 'Average resolution time',
-      icon: CheckCircle2,
-      trend: kpis.avg_ok_delay_min <= 60 ? 'positive' : kpis.avg_ok_delay_min <= 180 ? 'neutral' : 'negative',
-    },
-    {
-      title: 'Completion Rate',
-      value: `${kpis.completion_rate_pct.toFixed(1)}%`,
-      description: 'Alarm cycles completed',
-      icon: TrendingUp,
-      trend: kpis.completion_rate_pct >= 95 ? 'positive' : kpis.completion_rate_pct >= 85 ? 'neutral' : 'negative',
+      title: 'Total Alarms',
+      value: counts.total_alarms.toLocaleString(),
+      description: `From ${counts.total_sources.toLocaleString()} sources`,
+      icon: Activity,
+      trend: 'neutral' as const,
     },
     {
       title: 'Standing Alarms',
@@ -53,26 +40,26 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false }: ActualCa
       icon: ShieldAlert,
       trend: (counts.total_standing || 0) === 0 ? 'positive' : (counts.total_standing || 0) / total <= 0.05 ? 'neutral' : 'negative',
     },
+    // {
+    //   title: 'Stale Alarms',
+    //   value: counts.total_stale.toLocaleString(),
+    //   description: 'Standing alarms (non-instrument)',
+    //   icon: AlertTriangle,
+    //   trend: counts.total_stale === 0 ? 'positive' : counts.total_stale / total <= 0.05 ? 'neutral' : 'negative',
+    // },
     {
-      title: 'Instruments Faulty',
-      value: (counts.total_instrument_failure || 0).toLocaleString(),
-      description: 'Instrument failure related',
-      icon: AlertTriangle,
-      trend: (counts.total_instrument_failure || 0) === 0 ? 'positive' : (counts.total_instrument_failure || 0) / total <= 0.02 ? 'neutral' : 'negative',
-    },
-    {
-      title: 'Stale Alarms',
-      value: counts.total_stale.toLocaleString(),
-      description: 'Standing alarms (non-instrument)',
-      icon: AlertTriangle,
-      trend: counts.total_stale === 0 ? 'positive' : counts.total_stale / total <= 0.05 ? 'neutral' : 'negative',
-    },
-    {
-      title: 'Chattering',
-      value: counts.total_chattering.toLocaleString(),
-      description: 'Rapid repeated alarms',
+      title: 'Nuisance/Repeating Alarms',
+      value: nuisanceTotal.toLocaleString(),
+      description: 'Chattering and instrument-faulty chattering',
       icon: Activity,
-      trend: counts.total_chattering === 0 ? 'positive' : counts.total_chattering / counts.total_alarms <= 0.1 ? 'neutral' : 'negative',
+      trend: nuisanceTotal === 0 ? 'positive' : nuisanceTotal / counts.total_alarms <= 0.1 ? 'neutral' : 'negative',
+    },
+    {
+      title: 'Completion Rate',
+      value: `${kpis.completion_rate_pct.toFixed(1)}%`,
+      description: 'Alarm cycles completed',
+      icon: TrendingUp,
+      trend: kpis.completion_rate_pct >= 95 ? 'positive' : kpis.completion_rate_pct >= 85 ? 'neutral' : 'negative',
     },
     {
       title: 'Alarm Rate',
@@ -88,19 +75,13 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false }: ActualCa
       icon: Calendar,
       trend: kpis.days_over_288_alarms_pct <= 10 ? 'positive' : kpis.days_over_288_alarms_pct <= 30 ? 'neutral' : 'negative',
     },
-    {
-      title: 'Total Alarms',
-      value: counts.total_alarms.toLocaleString(),
-      description: `From ${counts.total_sources.toLocaleString()} sources`,
-      icon: Activity,
-      trend: 'neutral' as const,
-    },
+    
   ];
 
   if (isLoading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
-        {[...Array(8)].map((_, i) => (
+        {[...Array(cards.length)].map((_, i) => (
           <Card key={i} className="shadow-metric-card h-full min-h-[140px] flex flex-col">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <div className="h-4 w-24 bg-muted animate-pulse rounded" />
