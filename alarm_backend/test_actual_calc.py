@@ -13,14 +13,16 @@ sys.path.insert(0, str(backend_dir))
 sys.path.insert(0, str(backend_dir / "PVCI-actual-calc"))
 
 # Import service
-from actual_calc_service import run_actual_calc, write_cache
+from actual_calc_service import run_actual_calc, write_cache, read_cache
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
-def test_actual_calc():
-    """Test actual calculation service."""
+def test_actual_calc(use_cache: bool = False):
+    """Test/regenerate actual calculation cache.
+    - When use_cache=True and matching params exist, skip compute and just report.
+    """
     alarm_data_dir = backend_dir / "ALARM_DATA_DIR"
     
     if not alarm_data_dir.exists():
@@ -34,67 +36,43 @@ def test_actual_calc():
     
     try:
         logger.info("=" * 60)
-        logger.info("Testing PVCI Actual Calculation Service")
+        logger.info("PVCI Actual Calculation — regenerate cache")
         logger.info("=" * 60)
         
-        # Run calculation
-        summary_df, kpis, cycles_df = run_actual_calc(
+        params = {"stale_min": 60, "chatter_min": 10}
+        cached = read_cache(str(backend_dir), params) if use_cache else None
+        if cached:
+            logger.info("Cache exists with matching params; skipping compute.")
+            cache_path = backend_dir / "PVCI-actual-calc" / "actual-calc.json"
+            size_mb = cache_path.stat().st_size / 1024 / 1024 if cache_path.exists() else 0
+            logger.info(f"Cache: {cache_path} ({size_mb:.2f} MB)")
+            return True
+        
+        # Run calculation (new signature returns unhealthy & floods)
+        summary_df, kpis, cycles_df, unhealthy, floods = run_actual_calc(
             str(alarm_data_dir),
             stale_min=60,
             chatter_min=10
         )
         
-        logger.info("\n" + "=" * 60)
-        logger.info("RESULTS SUMMARY")
-        logger.info("=" * 60)
+        logger.info("\nRESULTS (shapes)")
+        logger.info(f"  Summary: {summary_df.shape}")
+        logger.info(f"  Cycles:  {cycles_df.shape}")
+        logger.info(f"  Unhealthy sources: {len(unhealthy.get('per_source', []))}")
+        logger.info(f"  Flood windows:    {len(floods.get('windows', []))}")
         
-        # Validate shapes
-        logger.info(f"\nDataFrame Shapes:")
-        logger.info(f"  Summary: {summary_df.shape} (sources × metrics)")
-        logger.info(f"  Cycles:  {cycles_df.shape} (cycles × fields)")
-        
-        # Overall KPIs
-        logger.info(f"\nOverall KPIs:")
-        for key, value in kpis.items():
-            if isinstance(value, float):
-                logger.info(f"  {key}: {value:.2f}")
-            else:
-                logger.info(f"  {key}: {value}")
-        
-        # Per-source sample
-        logger.info(f"\nTop 5 Sources by Unique Alarms:")
-        top_sources = summary_df.nlargest(5, "Unique_Alarms")
-        for _, row in top_sources.iterrows():
-            ua = int(row.get('Unique_Alarms', 0))
-            sa = int(row.get('Standing_Alarms', 0))
-            st = int(row.get('Stale_Alarms', 0))
-            inf_s = int(row.get('Instrument_Failure', 0))
-            rep = int(row.get('Repeating_Alarms', 0))
-            ch = int(row.get('Chattering_Count', 0))
-            inf_c = int(row.get('Instrument_Failure_Chattering', 0))
-            logger.info(f"  {row['Source']}: UA={ua}, SA={sa}, Stale={st}, IF(Standing)={inf_s}, Rep={rep}, Chat={ch}, IF(Chatter)={inf_c}")
-        
-        # Test cache write
-        logger.info("\n" + "=" * 60)
-        logger.info("Testing Cache Write")
-        logger.info("=" * 60)
-        
-        params = {"stale_min": 60, "chatter_min": 10}
-        write_cache(str(backend_dir), summary_df, kpis, cycles_df, params, str(alarm_data_dir))
+        # Write cache (includes unhealthy & floods)
+        write_cache(str(backend_dir), summary_df, kpis, cycles_df, params, str(alarm_data_dir), unhealthy=unhealthy, floods=floods)
         
         cache_path = backend_dir / "PVCI-actual-calc" / "actual-calc.json"
         if cache_path.exists():
             cache_size_mb = cache_path.stat().st_size / 1024 / 1024
-            logger.info(f"Cache written successfully: {cache_path}")
-            logger.info(f"Cache size: {cache_size_mb:.2f} MB")
+            logger.info(f"Cache written: {cache_path} ({cache_size_mb:.2f} MB)")
         else:
             logger.error("Cache file not created!")
             return False
         
-        logger.info("\n" + "=" * 60)
-        logger.info("✓ All tests passed!")
-        logger.info("=" * 60)
-        
+        logger.info("\n✓ Done")
         return True
         
     except Exception as e:
@@ -103,5 +81,7 @@ def test_actual_calc():
 
 
 if __name__ == "__main__":
-    success = test_actual_calc()
+    # Pass --use-cache to skip recompute when cache matches params
+    use_cache_flag = any(a in ("--use-cache", "-c") for a in sys.argv[1:])
+    success = test_actual_calc(use_cache=use_cache_flag)
     sys.exit(0 if success else 1)

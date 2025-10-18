@@ -2001,15 +2001,15 @@ def get_pvci_actual_calc_overall(
         
         # Compute fresh
         logger.info(f"Computing actual-calc with params: {params}")
-        summary_df, kpis, cycles_df = run_actual_calc(
+        summary_df, kpis, cycles_df, unhealthy, floods = run_actual_calc(
             ALARM_DATA_DIR,
             stale_min=stale_min,
             chatter_min=chatter_min
         )
         
-        # Write to cache
+        # Write to cache (with unhealthy/floods)
         try:
-            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR)
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods)
         except Exception as cache_err:
             logger.warning(f"Failed to write cache (non-fatal): {cache_err}")
         
@@ -2018,19 +2018,30 @@ def get_pvci_actual_calc_overall(
         cycles_records = dataframe_to_json_records(cycles_df)
         json_safe_kpis = kpis_to_json_safe(kpis)
         
+        # Compose counts with unhealthy/flood totals when available
+        counts = {
+            "total_sources": len(summary_df),
+            "total_alarms": int(summary_df["Unique_Alarms"].sum()),
+            "total_stale": int(summary_df.get("Stale_Alarms", 0)).sum() if "Stale_Alarms" in summary_df.columns else int(summary_df.get("Stale_Count", 0)).sum() if "Stale_Count" in summary_df.columns else 0,
+            "total_chattering": int(summary_df["Chattering_Count"].sum()) if "Chattering_Count" in summary_df.columns else 0,
+            "total_cycles": len(cycles_df),
+        }
+        try:
+            counts["total_unhealthy_periods"] = int(unhealthy.get("total_periods") or 0)
+            counts["total_flood_windows"] = int((floods.get("totals") or {}).get("total_windows") or 0)
+            counts["total_flood_count"] = int((floods.get("totals") or {}).get("total_flood_count") or 0)
+        except Exception:
+            pass
+
         result = {
             "plant_folder": "PVC-I",
             "mode": "actual-calc",
             "generated_at": datetime.utcnow().isoformat() + "Z",
             "params": params,
             "overall": json_safe_kpis,
-            "counts": {
-                "total_sources": len(summary_df),
-                "total_alarms": int(summary_df["Unique_Alarms"].sum()),
-                "total_stale": int(summary_df["Stale_Count"].sum()),
-                "total_chattering": int(summary_df["Chattering_Count"].sum()),
-                "total_cycles": len(cycles_df)
-            },
+            "counts": counts,
+            "unhealthy": unhealthy,
+            "floods": floods,
         }
         
         # Add per_source if requested (paginated)
@@ -2166,14 +2177,14 @@ def regenerate_pvci_actual_calc_cache(
         start_time = datetime.now()
         
         # Run computation
-        summary_df, kpis, cycles_df = run_actual_calc(
+        summary_df, kpis, cycles_df, unhealthy, floods = run_actual_calc(
             ALARM_DATA_DIR,
             stale_min=stale_min,
             chatter_min=chatter_min
         )
         
-        # Write cache
-        write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR)
+        # Write cache (with unhealthy/floods)
+        write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods)
         
         compute_time = (datetime.now() - start_time).total_seconds()
         
@@ -2182,17 +2193,25 @@ def regenerate_pvci_actual_calc_cache(
         cache_path = get_cache_path(BASE_DIR)
         cache_size_mb = os.path.getsize(cache_path) / 1024 / 1024 if os.path.exists(cache_path) else 0
         
+        counts = {
+            "total_sources": len(summary_df),
+            "total_alarms": int(summary_df["Unique_Alarms"].sum()),
+            "total_stale": int(summary_df.get("Stale_Alarms", 0)).sum() if "Stale_Alarms" in summary_df.columns else int(summary_df.get("Stale_Count", 0)).sum() if "Stale_Count" in summary_df.columns else 0,
+            "total_chattering": int(summary_df["Chattering_Count"].sum()) if "Chattering_Count" in summary_df.columns else 0,
+            "total_cycles": len(cycles_df),
+        }
+        try:
+            counts["total_unhealthy_periods"] = int(unhealthy.get("total_periods") or 0)
+            counts["total_flood_windows"] = int((floods.get("totals") or {}).get("total_windows") or 0)
+            counts["total_flood_count"] = int((floods.get("totals") or {}).get("total_flood_count") or 0)
+        except Exception:
+            pass
+        
         return {
             "status": "success",
             "message": f"Cache regenerated successfully with {len(summary_df)} sources",
             "params": params,
-            "counts": {
-                "total_sources": len(summary_df),
-                "total_alarms": int(summary_df["Unique_Alarms"].sum()),
-                "total_stale": int(summary_df["Stale_Count"].sum()),
-                "total_chattering": int(summary_df["Chattering_Count"].sum()),
-                "total_cycles": len(cycles_df)
-            },
+            "counts": counts,
             "compute_time_seconds": round(compute_time, 2),
             "cache_size_mb": round(cache_size_mb, 2),
             "generated_at": datetime.utcnow().isoformat() + "Z"
@@ -2202,5 +2221,123 @@ def regenerate_pvci_actual_calc_cache(
         raise
     except Exception as e:
         logger.error(f"Error regenerating cache: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# New: serve unhealthy summary (per source) from actual-calc cache
+@app.get("/pvcI-actual-calc/unhealthy", response_class=ORJSONResponse)
+def get_pvci_actual_calc_unhealthy(
+    stale_min: int = 60,
+    chatter_min: int = 10,
+    offset: int = 0,
+    limit: int = 200,
+    top: int | None = None,
+    raw: bool = False,
+    force_recompute: bool = False,
+):
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service is not available")
+    try:
+        params = {"stale_min": stale_min, "chatter_min": chatter_min}
+        cached = None if force_recompute else read_cache(BASE_DIR, params)
+        unhealthy = None
+        if cached and isinstance(cached.get("unhealthy"), dict):
+            unhealthy = cached["unhealthy"]
+        if unhealthy is None:
+            # Compute and cache
+            summary_df, kpis, cycles_df, uh, floods = run_actual_calc(
+                ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min
+            )
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods)
+            unhealthy = uh
+            cached = {
+                "plant_folder": "PVC-I",
+                "mode": "actual-calc",
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "sample_range": None,
+                "params": params,
+            }
+        per_source_all = unhealthy.get("per_source", []) if isinstance(unhealthy, dict) else []
+        # Sort desc by Unhealthy_Periods
+        try:
+            per_source_all = sorted(per_source_all, key=lambda r: int(r.get("Unhealthy_Periods") or 0), reverse=True)
+        except Exception:
+            pass
+        if isinstance(top, int) and top > 0:
+            per_source_slice = per_source_all[:top]
+        else:
+            per_source_slice = per_source_all[offset: offset + limit]
+        resp = {
+            "plant_folder": cached.get("plant_folder", "PVC-I") if isinstance(cached, dict) else "PVC-I",
+            "mode": "actual-calc",
+            "generated_at": (cached or {}).get("generated_at", datetime.utcnow().isoformat() + "Z"),
+            "params": {"unhealthy_threshold": 10, "window_minutes": 10},
+            "observation_range": (cached or {}).get("sample_range"),
+            "total_periods": int(unhealthy.get("total_periods") or 0) if isinstance(unhealthy, dict) else 0,
+            "per_source_total": len(per_source_all),
+            "per_source": per_source_slice,
+        }
+        if raw:
+            resp["raw"] = unhealthy
+        return resp
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"actual-calc/unhealthy error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# New: serve flood windows from actual-calc cache
+@app.get("/pvcI-actual-calc/floods", response_class=ORJSONResponse)
+def get_pvci_actual_calc_floods(
+    stale_min: int = 60,
+    chatter_min: int = 10,
+    limit: int = 100,
+    raw: bool = False,
+    force_recompute: bool = False,
+):
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service is not available")
+    try:
+        params = {"stale_min": stale_min, "chatter_min": chatter_min}
+        cached = None if force_recompute else read_cache(BASE_DIR, params)
+        floods = None
+        if cached and isinstance(cached.get("floods"), dict):
+            floods = cached["floods"]
+        if floods is None:
+            summary_df, kpis, cycles_df, uh, fl = run_actual_calc(ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min)
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=fl)
+            floods = fl
+            cached = {
+                "plant_folder": "PVC-I",
+                "mode": "actual-calc",
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "sample_range": None,
+                "params": params,
+            }
+        windows_all = floods.get("windows", []) if isinstance(floods, dict) else []
+        # Sort desc by flood_count
+        try:
+            windows_all = sorted(windows_all, key=lambda r: int(r.get("flood_count") or 0), reverse=True)
+        except Exception:
+            pass
+        windows_slice = windows_all[: max(0, int(limit))]
+        resp = {
+            "plant_folder": cached.get("plant_folder", "PVC-I") if isinstance(cached, dict) else "PVC-I",
+            "mode": "actual-calc",
+            "generated_at": (cached or {}).get("generated_at", datetime.utcnow().isoformat() + "Z"),
+            "params": {"window_minutes": 10, "source_threshold": 2},
+            "observation_range": (cached or {}).get("sample_range"),
+            "totals": (floods.get("totals") if isinstance(floods, dict) else {"total_windows": 0, "total_flood_count": 0}),
+            "windows_total": len(windows_all),
+            "windows": windows_slice,
+        }
+        if raw:
+            resp["raw"] = floods
+        return resp
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"actual-calc/floods error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

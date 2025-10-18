@@ -8,6 +8,8 @@ import {
   ActualCalcOverallResponse,
   ActualCalcPerSourceResponse,
   RegenerateCacheResponse,
+  ActualCalcUnhealthyResponse,
+  ActualCalcFloodsResponse,
 } from '@/types/actualCalc';
 
 // Simple cache reuse from plantHealth.ts pattern
@@ -18,6 +20,44 @@ const STORAGE_PREFIX = 'ams.apiCache.v1:';
 
 function now() {
   return Date.now();
+}
+
+/**
+ * Fetch unhealthy periods per source (from actual-calc cache)
+ */
+export async function fetchPvciActualCalcUnhealthy(params?: {
+  stale_min?: number;
+  chatter_min?: number;
+  offset?: number;
+  limit?: number;
+  top?: number;
+  timeout_ms?: number;
+}): Promise<ActualCalcUnhealthyResponse> {
+  const { stale_min = 60, chatter_min = 10, offset = 0, limit = 200, top, timeout_ms } = params || {};
+  const url = new URL(`${API_BASE_URL}/pvcI-actual-calc/unhealthy`);
+  url.searchParams.set('stale_min', String(stale_min));
+  url.searchParams.set('chatter_min', String(chatter_min));
+  url.searchParams.set('offset', String(offset));
+  url.searchParams.set('limit', String(limit));
+  if (typeof top === 'number') url.searchParams.set('top', String(top));
+  return fetchWithCache<ActualCalcUnhealthyResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
+}
+
+/**
+ * Fetch flood windows summary (from actual-calc cache)
+ */
+export async function fetchPvciActualCalcFloods(params?: {
+  stale_min?: number;
+  chatter_min?: number;
+  limit?: number;
+  timeout_ms?: number;
+}): Promise<ActualCalcFloodsResponse> {
+  const { stale_min = 60, chatter_min = 10, limit = 100, timeout_ms } = params || {};
+  const url = new URL(`${API_BASE_URL}/pvcI-actual-calc/floods`);
+  url.searchParams.set('stale_min', String(stale_min));
+  url.searchParams.set('chatter_min', String(chatter_min));
+  url.searchParams.set('limit', String(limit));
+  return fetchWithCache<ActualCalcFloodsResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
 }
 
 function getStorageKey(key: string) {

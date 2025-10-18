@@ -7,7 +7,7 @@ Logic ported from Data_Calculations.ipynb with exact preservation of calculation
 import pandas as pd
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Tuple, Dict, Any
 from collections import deque
 
@@ -18,6 +18,11 @@ STALE_THRESHOLD_MIN = 60  # minutes until an active alarm is considered standing
 CHATTER_THRESHOLD_MIN = 10  # window size in minutes for chattering detection
 CHATTER_MIN_COUNT = 3       # minimum alarms within window to declare chattering
 INSTRUMENT_KEYWORDS = ["FAIL", "BAD"]
+
+# New (unhealthy/flood) defaults — aligned with notebook pasted by user
+UNHEALTHY_THRESHOLD = 10
+WINDOW_MINUTES = 10
+FLOOD_SOURCE_THRESHOLD = 2
 
 
 # ---------- CORE KPI LOGIC (EXACT FROM NOTEBOOK) ----------
@@ -286,6 +291,121 @@ def calculate_alarm_kpis(df):
     return summary, kpis, cycles
 
 
+# ---------- UNHEALTHY + FLOOD DETECTION (from notebook) ----------
+
+def detect_unhealthy_and_flood(
+    df: pd.DataFrame,
+    unhealthy_threshold: int = UNHEALTHY_THRESHOLD,
+    window_minutes: int = WINDOW_MINUTES,
+    flood_source_threshold: int = FLOOD_SOURCE_THRESHOLD,
+):
+    """
+    Returns activations_df, unhealthy_summary_df, flood_summary_df.
+    Logic mirrors the notebook pasted by the user.
+    """
+    df = df.copy()
+    df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+    df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+    df = df.sort_values(["Source", "Event Time"])
+
+    # 2) Extract unique activations (blank when IDLE/ACKED)
+    activations = []
+    for src, g in df.groupby("Source"):
+        state = "IDLE"
+        for _, r in g.iterrows():
+            action = r["Action"]
+            t = r["Event Time"]
+            if action == "" and state in ("IDLE", "ACKED"):
+                activations.append({"Source": src, "StartTime": t})
+                state = "ACTIVE"
+            elif action == "ACK":
+                state = "ACKED"
+            elif action == "OK":
+                state = "IDLE"
+    activations_df = pd.DataFrame(activations).sort_values("StartTime")
+    if activations_df.empty:
+        return activations_df, pd.DataFrame(), pd.DataFrame()
+
+    # 3) Unhealthy windows per source (>= threshold in window)
+    window = timedelta(minutes=window_minutes)
+    unhealthy_periods = []
+    for src, g in activations_df.groupby("Source"):
+        times = g["StartTime"].sort_values().tolist()
+        start = 0
+        for end, t_end in enumerate(times):
+            while times[start] < t_end - window:
+                start += 1
+            count = end - start + 1
+            if count >= unhealthy_threshold:
+                unhealthy_periods.append({
+                    "Source": src,
+                    "Window_Start": times[start],
+                    "Window_End": t_end,
+                    "Count": count,
+                })
+    unhealthy_df = pd.DataFrame(unhealthy_periods)
+    if unhealthy_df.empty:
+        return activations_df, pd.DataFrame(), pd.DataFrame()
+
+    # 4) Merge same-source unhealthy periods into continuous spans
+    merged = []
+    for src, g in unhealthy_df.groupby("Source"):
+        g = g.sort_values("Window_Start")
+        s = e = None
+        for _, row in g.iterrows():
+            if s is None:
+                s, e = row["Window_Start"], row["Window_End"]
+            elif row["Window_Start"] <= e:
+                e = max(e, row["Window_End"])
+            else:
+                merged.append({"Source": src, "Start": s, "End": e})
+                s, e = row["Window_Start"], row["Window_End"]
+        if s is not None:
+            merged.append({"Source": src, "Start": s, "End": e})
+    merged_unhealthy_df = pd.DataFrame(merged)
+
+    # 5) Flood detection: overlapping unhealthy from >= N sources
+    flood_windows = []
+    for _, row in merged_unhealthy_df.iterrows():
+        s1, e1 = row["Start"], row["End"]
+        overlapping = merged_unhealthy_df[(merged_unhealthy_df["Start"] <= e1) & (merged_unhealthy_df["End"] >= s1)]
+        sources = set(overlapping["Source"])
+        if len(sources) >= flood_source_threshold:
+            flood_windows.append({
+                "Flood_Start": s1,
+                "Flood_End": e1,
+                "Sources_Involved": list(sources),
+                "Source_Count": len(sources),
+            })
+    flood_df = pd.DataFrame(flood_windows)
+    if not flood_df.empty:
+        flood_df = flood_df.drop_duplicates(subset=["Flood_Start", "Flood_End"]) 
+
+    # 6) Per-window contributions within flood span
+    flood_summary = []
+    for _, row in (flood_df if not flood_df.empty else []).iterrows():
+        s, e = row["Flood_Start"], row["Flood_End"]
+        involved = row["Sources_Involved"]
+        acts = activations_df[
+            (activations_df["StartTime"] >= s)
+            & (activations_df["StartTime"] <= e)
+            & (activations_df["Source"].isin(involved))
+        ]
+        counts = acts["Source"].value_counts().to_dict()
+        flood_summary.append({
+            "Flood_Start": s,
+            "Flood_End": e,
+            "Sources_Involved": counts,
+            "Source_Count": len(counts),
+        })
+    flood_summary_df = pd.DataFrame(flood_summary)
+
+    # 7) Unhealthy summary per source (number of merged periods)
+    unhealthy_summary = merged_unhealthy_df.groupby("Source").size().reset_index(name="Unhealthy_Periods")
+
+    return activations_df, unhealthy_summary, flood_summary_df
+
+
 # ---------- DATA LOADING ----------
 
 def load_pvci_merged_csv(alarm_data_dir: str) -> pd.DataFrame:
@@ -343,25 +463,38 @@ def load_pvci_merged_csv(alarm_data_dir: str) -> pd.DataFrame:
 def run_actual_calc(
     alarm_data_dir: str,
     stale_min: int = 60,
-    chatter_min: int = 10
-) -> Tuple[pd.DataFrame, Dict[str, Any], pd.DataFrame]:
+    chatter_min: int = 10,
+    unhealthy_threshold: int = UNHEALTHY_THRESHOLD,
+    window_minutes: int = WINDOW_MINUTES,
+    flood_source_threshold: int = FLOOD_SOURCE_THRESHOLD,
+) -> Tuple[pd.DataFrame, Dict[str, Any], pd.DataFrame, Dict[str, Any], Dict[str, Any]]:
     """Run actual calculation with specified thresholds.
     
     Args:
         alarm_data_dir: Path to ALARM_DATA_DIR
         stale_min: Standing/stale threshold in minutes (default 60)
         chatter_min: Chattering alarm threshold in minutes (default 10)
+        unhealthy_threshold: Activations threshold for unhealthy (default 10)
+        window_minutes: Sliding window minutes (default 10)
+        flood_source_threshold: Minimum overlapping unhealthy sources for flood (default 2)
         
     Returns:
-        Tuple of (summary_df, kpis_dict, cycles_df)
+        Tuple of (summary_df, kpis_dict, cycles_df, unhealthy_dict, floods_dict)
     """
-    global STALE_THRESHOLD_MIN, CHATTER_THRESHOLD_MIN
+    global STALE_THRESHOLD_MIN, CHATTER_THRESHOLD_MIN, UNHEALTHY_THRESHOLD, WINDOW_MINUTES, FLOOD_SOURCE_THRESHOLD
     
     # Update thresholds
     STALE_THRESHOLD_MIN = stale_min
     CHATTER_THRESHOLD_MIN = chatter_min
+    UNHEALTHY_THRESHOLD = unhealthy_threshold
+    WINDOW_MINUTES = window_minutes
+    FLOOD_SOURCE_THRESHOLD = flood_source_threshold
     
-    logger.info(f"Running actual calculation with stale_min={stale_min}, chatter_min={chatter_min}")
+    logger.info(
+        f"Running actual calculation with stale_min={stale_min}, chatter_min={chatter_min}, "
+        f"unhealthy_threshold={unhealthy_threshold}, window_minutes={window_minutes}, "
+        f"flood_source_threshold={flood_source_threshold}"
+    )
     
     # Load data
     start_time = datetime.now()
@@ -374,17 +507,65 @@ def run_actual_calc(
     summary, kpis, cycles = calculate_alarm_kpis(df)
     calc_duration = (datetime.now() - calc_start).total_seconds()
     logger.info(f"KPIs calculated in {calc_duration:.2f}s")
-    
+
+    # Unhealthy + Floods (from notebook)
+    ua_start = datetime.now()
+    activations_df, unhealthy_df, flood_df = detect_unhealthy_and_flood(
+        df,
+        unhealthy_threshold=unhealthy_threshold,
+        window_minutes=window_minutes,
+        flood_source_threshold=flood_source_threshold,
+    )
+    ua_dur = (datetime.now() - ua_start).total_seconds()
+    logger.info(f"Unhealthy/Flood computed in {ua_dur:.2f}s: {len(unhealthy_df)} sources, {len(flood_df)} windows")
+
+    # Build JSON-ready dicts for cache consumers
+    total_unhealthy_periods = int(unhealthy_df["Unhealthy_Periods"].sum()) if not unhealthy_df.empty else 0
+
+    unhealthy_dict: Dict[str, Any] = {
+        "params": {"threshold": unhealthy_threshold, "window_minutes": window_minutes},
+        "per_source": unhealthy_df.sort_values("Unhealthy_Periods", ascending=False).to_dict(orient="records") if not unhealthy_df.empty else [],
+        "total_periods": total_unhealthy_periods,
+    }
+
+    windows_list: list[Dict[str, Any]] = []
+    total_flood_count = 0
+    if not flood_df.empty:
+        for _, row in flood_df.iterrows():
+            s = row["Flood_Start"]
+            e = row["Flood_End"]
+            counts = row.get("Sources_Involved", {}) or {}
+            # counts is dict {source: count}
+            try:
+                flood_count = int(sum(int(v) for v in counts.values()))
+            except Exception:
+                flood_count = 0
+            total_flood_count += flood_count
+            top_sources = sorted(({"source": str(k), "count": int(v)} for k, v in counts.items()), key=lambda x: x["count"], reverse=True)
+            windows_list.append({
+                "id": f"{pd.to_datetime(s).isoformat()}_{pd.to_datetime(e).isoformat()}",
+                "start": pd.to_datetime(s).isoformat() if pd.notna(s) else None,
+                "end": pd.to_datetime(e).isoformat() if pd.notna(e) else None,
+                "source_count": int(row.get("Source_Count", len(counts) or 0)),
+                "flood_count": int(flood_count),
+                "rate_per_min": float(flood_count) / float(window_minutes) if window_minutes else None,
+                "sources_involved": counts,
+                "top_sources": top_sources,
+            })
+    floods_dict: Dict[str, Any] = {
+        "params": {"window_minutes": window_minutes, "source_threshold": flood_source_threshold},
+        "windows": windows_list,
+        "totals": {"total_windows": len(windows_list), "total_flood_count": int(total_flood_count)},
+    }
+
     # Log summary statistics
     total_sources = len(summary)
     total_alarms = summary["Unique_Alarms"].sum()
     
     logger.info(f"Results: {total_sources} sources, {total_alarms} unique alarms")
-    logger.info(f"Overall KPIs: avg_ack={kpis['avg_ack_delay_min']:.2f}min, "
-                f"avg_ok={kpis['avg_ok_delay_min']:.2f}min, "
-                f"completion={kpis['completion_rate_pct']:.1f}%")
+    logger.info(f"Overall KPIs: avg_ack={kpis['avg_ack_delay_min']:.2f}min, avg_ok={kpis['avg_ok_delay_min']:.2f}min, completion={kpis['completion_rate_pct']:.1f}%")
     
-    return summary, kpis, cycles
+    return summary, kpis, cycles, unhealthy_dict, floods_dict
 
 
 # ---------- UTILITY: CONVERT TO JSON-SAFE TYPES ----------
@@ -475,7 +656,9 @@ def write_cache(
     kpis: Dict[str, Any],
     cycles_df: pd.DataFrame,
     params: Dict[str, Any],
-    alarm_data_dir: str
+    alarm_data_dir: str,
+    unhealthy: Dict[str, Any] | None = None,
+    floods: Dict[str, Any] | None = None,
 ) -> None:
     """Write calculation results to cache JSON.
     
@@ -486,6 +669,8 @@ def write_cache(
         cycles_df: Alarm cycles DataFrame
         params: Calculation parameters
         alarm_data_dir: Path to ALARM_DATA_DIR for metadata
+        unhealthy: Optional unhealthy periods dictionary (from detect_unhealthy_and_flood)
+        floods: Optional floods windows dictionary (from detect_unhealthy_and_flood)
     """
     cache_path = get_cache_path(base_dir)
     
@@ -528,11 +713,27 @@ def write_cache(
                 "total_repeating": int(summary_df["Repeating_Alarms"].sum()) if "Repeating_Alarms" in summary_df.columns else 0,
                 "total_chattering": int(summary_df["Chattering_Count"].sum()) if "Chattering_Count" in summary_df.columns else 0,
                 "total_instrument_failure_chattering": int(summary_df["Instrument_Failure_Chattering"].sum()) if "Instrument_Failure_Chattering" in summary_df.columns else 0,
-                "total_cycles": len(cycles_df)
+                "total_cycles": len(cycles_df),
             },
             "sample_range": sample_range,
-            "_version": "1.0"
+            "_version": "1.1"
         }
+
+        # Attach unhealthy & floods if provided
+        if isinstance(unhealthy, dict):
+            cache_data["unhealthy"] = unhealthy
+            try:
+                cache_data["counts"]["total_unhealthy_periods"] = int(unhealthy.get("total_periods") or 0)
+            except Exception:
+                cache_data["counts"]["total_unhealthy_periods"] = 0
+        if isinstance(floods, dict):
+            cache_data["floods"] = floods
+            try:
+                cache_data["counts"]["total_flood_windows"] = int((floods.get("totals") or {}).get("total_windows") or 0)
+                cache_data["counts"]["total_flood_count"] = int((floods.get("totals") or {}).get("total_flood_count") or 0)
+            except Exception:
+                cache_data["counts"].setdefault("total_flood_windows", 0)
+                cache_data["counts"].setdefault("total_flood_count", 0)
         
         # Write atomically (write to temp, then rename)
         temp_path = cache_path + ".tmp"

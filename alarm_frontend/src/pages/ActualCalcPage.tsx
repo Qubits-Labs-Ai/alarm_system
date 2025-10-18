@@ -3,18 +3,31 @@
  * Displays alarm lifecycle KPIs: response times, stale/chattering, ISA compliance
  */
 
-import { useState, useEffect } from 'react';
-import { fetchPvciActualCalcOverall } from '@/api/actualCalc';
-import { ActualCalcOverallResponse } from '@/types/actualCalc';
+import { useMemo, useState, useEffect } from 'react';
+import { fetchPvciActualCalcOverall, fetchPvciActualCalcUnhealthy, fetchPvciActualCalcFloods } from '@/api/actualCalc';
+import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse } from '@/types/actualCalc';
 import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
 import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertCircle } from 'lucide-react';
+import TopFloodWindowsChart, { TopFloodWindowRow } from '@/components/dashboard/TopFloodWindowsChart';
+import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
+import { UnhealthyBar } from '@/types/dashboard';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 
 export function ActualCalcPage() {
   const [data, setData] = useState<ActualCalcOverallResponse | null>(null);
+  const [unhealthy, setUnhealthy] = useState<ActualCalcUnhealthyResponse | null>(null);
+  const [floods, setFloods] = useState<ActualCalcFloodsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Shared UI state
+  const [includeSystem, setIncludeSystem] = useState(true);
+  const [topN, setTopN] = useState<1 | 3>(1);
+  const [topK, setTopK] = useState<5 | 10 | 15>(10);
+  const [selectedWindow, setSelectedWindow] = useState<TopFloodWindowRow | null>(null);
 
   useEffect(() => {
     loadData();
@@ -25,14 +38,15 @@ export function ActualCalcPage() {
       setIsLoading(true);
       setError(null);
       
-      const response = await fetchPvciActualCalcOverall({
-        stale_min: 60,
-        chatter_min: 10,
-        include_per_source: false,
-        include_cycles: false,
-      });
+      const [overall, unhealthyResp, floodsResp] = await Promise.all([
+        fetchPvciActualCalcOverall({ stale_min: 60, chatter_min: 10, include_per_source: false, include_cycles: false }),
+        fetchPvciActualCalcUnhealthy({ stale_min: 60, chatter_min: 10, limit: 500 }),
+        fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200 }),
+      ]);
       
-      setData(response);
+      setData(overall);
+      setUnhealthy(unhealthyResp);
+      setFloods(floodsResp);
     } catch (err) {
       console.error('Failed to load actual-calc data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load data');
@@ -61,6 +75,85 @@ export function ActualCalcPage() {
       </div>
     );
   }
+
+  // Derived: threshold and time domain
+  const unhealthyThreshold = unhealthy?.params?.unhealthy_threshold ?? 10;
+  const timeDomain = useMemo(() => {
+    const start = data?.sample_range?.start || null;
+    const end = data?.sample_range?.end || null;
+    // If floods exists, optionally compute peak window
+    const peak = floods?.windows?.[0];
+    return {
+      start,
+      end,
+      peakStart: peak?.start,
+      peakEnd: peak?.end,
+    } as { start: string | null; end: string | null; peakStart?: string; peakEnd?: string };
+  }, [data, floods]);
+
+  // Map floods to TopFloodWindowRow[]
+  const topFloodRows: TopFloodWindowRow[] = useMemo(() => {
+    const list = floods?.windows || [];
+    const rows = list.map((w, idx) => {
+      const id = w.id;
+      const label = `${new Date(w.start).toLocaleString()} — ${new Date(w.end).toLocaleString()}`;
+      const top_sources = w.top_sources || [];
+      return {
+        id,
+        label,
+        flood_count: w.flood_count,
+        start: w.start,
+        end: w.end,
+        short_label: idx < 3 ? undefined : new Date(w.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        rate_per_min: w.rate_per_min,
+        top_sources,
+      } as TopFloodWindowRow;
+    });
+    return rows;
+  }, [floods]);
+
+  // Map unhealthy summary to UnhealthyBar[] (aggregate across all unhealthy windows)
+  const aggregatedUnhealthyBars: UnhealthyBar[] = useMemo(() => {
+    const list = unhealthy?.per_source || [];
+    const start = timeDomain.start || new Date().toISOString();
+    const end = timeDomain.end || new Date().toISOString();
+    const bars = list.map((s) => {
+      const hits = s.Unhealthy_Periods;
+      return {
+        id: s.Source,
+        source: s.Source,
+        hits,
+        threshold: unhealthyThreshold,
+        over_by: Math.max(0, hits - unhealthyThreshold),
+        bin_start: start,
+        bin_end: end,
+      } as UnhealthyBar;
+    }).sort((a, b) => b.hits - a.hits);
+    return bars;
+  }, [unhealthy, timeDomain, unhealthyThreshold]);
+
+  // If a specific flood window is selected, compute per-source bars from contributions for that window
+  const windowUnhealthyBars: UnhealthyBar[] | null = useMemo(() => {
+    if (!selectedWindow) return null;
+    const list = floods?.windows || [];
+    const match = list.find(w => w.id === selectedWindow.id);
+    if (!match) return null;
+    const entries = Object.entries(match.sources_involved || {}) as Array<[string, number]>;
+    const bars = entries.map(([source, count]) => ({
+      id: `${selectedWindow.id}:${source}`,
+      source,
+      hits: Number(count || 0),
+      threshold: unhealthyThreshold,
+      over_by: Math.max(0, Number(count || 0) - unhealthyThreshold),
+      bin_start: match.start,
+      bin_end: match.end,
+    } as UnhealthyBar)).sort((a, b) => b.hits - a.hits);
+    return bars;
+  }, [selectedWindow, floods, unhealthyThreshold]);
+
+  const activeWindowLabel = selectedWindow ? selectedWindow.label : undefined;
+  const activeWindowStart = selectedWindow?.start;
+  const activeWindowEnd = selectedWindow?.end;
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -114,6 +207,13 @@ export function ActualCalcPage() {
           kpis={data.overall}
           counts={data.counts}
           isLoading={false}
+          totals={{
+            total_unhealthy_periods: unhealthy?.total_periods ?? 0,
+            total_flood_windows: floods?.totals?.total_windows ?? 0,
+            total_flood_count: floods?.totals?.total_flood_count ?? 0,
+          }}
+          unhealthyData={unhealthy}
+          floodsData={floods}
         />
       )}
 
@@ -165,6 +265,41 @@ export function ActualCalcPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Include system toggle (applies to both charts) */}
+      <div className="flex items-center gap-2">
+        <Switch checked={includeSystem} onCheckedChange={setIncludeSystem} id="toggle-include-system" />
+        <Label htmlFor="toggle-include-system" className="text-sm text-muted-foreground">Include system/meta sources</Label>
+      </div>
+
+      {/* Top Flood Windows */}
+      <TopFloodWindowsChart
+        data={topFloodRows}
+        threshold={unhealthyThreshold}
+        topK={topK}
+        onTopKChange={setTopK}
+        isLoading={isLoading || !floods}
+        onSelectWindow={(row) => setSelectedWindow(row)}
+        selectedWindowId={selectedWindow?.id}
+        includeSystem={includeSystem}
+      />
+
+      {/* Unhealthy Bar Chart: aggregate across unhealthy (or selected window) */}
+      <UnhealthyBarChart
+        data={windowUnhealthyBars ?? aggregatedUnhealthyBars}
+        threshold={unhealthyThreshold}
+        topN={topN}
+        onTopNChange={setTopN}
+        isLoading={isLoading || !unhealthy}
+        plantId="pvcI"
+        mode="flood"
+        activeWindowLabel={activeWindowLabel}
+        activeWindowStart={activeWindowStart}
+        activeWindowEnd={activeWindowEnd}
+        timePickerDomain={timeDomain.start && timeDomain.end ? { start: timeDomain.start, end: timeDomain.end, peakStart: timeDomain.peakStart, peakEnd: timeDomain.peakEnd } : undefined}
+        includeSystem={includeSystem}
+        onClearWindow={() => setSelectedWindow(null)}
+      />
     </div>
   );
 }

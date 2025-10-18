@@ -93,3 +93,54 @@ export interface RegenerateCacheResponse {
   cache_size_mb: number;
   generated_at: string;
 }
+
+export interface ActualCalcUnhealthyResponse {
+  plant_folder: string;
+  mode: string;
+  generated_at: string;
+  params: {
+    unhealthy_threshold: number;
+    window_minutes: number;
+  };
+  observation_range?: {
+    start: string | null;
+    end: string | null;
+  };
+  total_periods: number;
+  per_source_total: number;
+  per_source: Array<{
+    Source: string;
+    Unhealthy_Periods: number;
+  }>;
+  raw?: any;
+}
+
+export interface ActualCalcFloodsResponse {
+  plant_folder: string;
+  mode: string;
+  generated_at: string;
+  params: {
+    window_minutes: number;
+    source_threshold: number;
+  };
+  observation_range?: {
+    start: string | null;
+    end: string | null;
+  };
+  totals: {
+    total_windows: number;
+    total_flood_count: number;
+  };
+  windows_total: number;
+  windows: Array<{
+    id: string;
+    start: string;
+    end: string;
+    source_count: number;
+    flood_count: number;
+    rate_per_min: number | null;
+    sources_involved: Record<string, number>;
+    top_sources: Array<{ source: string; count: number }>;
+  }>;
+  raw?: any;
+}

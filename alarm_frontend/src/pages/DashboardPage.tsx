@@ -9,8 +9,8 @@ import { EventStatisticsCards } from '@/components/dashboard/EventStatisticsCard
 import { ErrorState } from '@/components/dashboard/ErrorState';
 import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
 import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
-import { fetchPvciActualCalcOverall } from '@/api/actualCalc';
-import { ActualCalcOverallResponse } from '@/types/actualCalc';
+import { fetchPvciActualCalcOverall, fetchPvciActualCalcUnhealthy, fetchPvciActualCalcFloods } from '@/api/actualCalc';
+import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse } from '@/types/actualCalc';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
 import UnhealthySourcesWordCloud from '@/components/UnhealthySourcesWordCloud';
 import UnhealthySourcesBarChart from '@/components/UnhealthySourcesBarChart';
@@ -87,6 +87,8 @@ export default function DashboardPage() {
 
   // Actual Calc data
   const [actualCalcData, setActualCalcData] = useState<ActualCalcOverallResponse | null>(null);
+  const [actualCalcUnhealthy, setActualCalcUnhealthy] = useState<ActualCalcUnhealthyResponse | null>(null);
+  const [actualCalcFloods, setActualCalcFloods] = useState<ActualCalcFloodsResponse | null>(null);
   const [actualCalcLoading, setActualCalcLoading] = useState<boolean>(false);
 
   const toIso = (v?: string) => (v ? new Date(v).toISOString() : undefined);
@@ -217,20 +219,28 @@ export default function DashboardPage() {
       }
       try {
         setActualCalcLoading(true);
-        const response = await fetchPvciActualCalcOverall({
-          stale_min: 60,
-          chatter_min: 10,
-          include_per_source: false,
-          include_cycles: false,
-          timeout_ms: 30000,
-        });
+        const [overall, unhealthyResp, floodsResp] = await Promise.all([
+          fetchPvciActualCalcOverall({
+            stale_min: 60,
+            chatter_min: 10,
+            include_per_source: false,
+            include_cycles: false,
+            timeout_ms: 30000,
+          }),
+          fetchPvciActualCalcUnhealthy({ stale_min: 60, chatter_min: 10, limit: 500, timeout_ms: 30000 }),
+          fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200, timeout_ms: 30000 }),
+        ]);
         if (mounted) {
-          setActualCalcData(response);
+          setActualCalcData(overall);
+          setActualCalcUnhealthy(unhealthyResp);
+          setActualCalcFloods(floodsResp);
         }
       } catch (err) {
         console.error('Failed to load actual-calc data:', err);
         if (mounted) {
           setActualCalcData(null);
+          setActualCalcUnhealthy(null);
+          setActualCalcFloods(null);
         }
       } finally {
         if (mounted) {
@@ -248,6 +258,11 @@ export default function DashboardPage() {
     async function loadBars() {
       try {
         setUnhealthyBarsLoading(true);
+        if (mode === 'actualCalc') {
+          // In Actual Calc mode, bars are handled by dedicated endpoints; skip here
+          setUnhealthyBarsLoading(false);
+          return;
+        }
         if (mode === 'flood' && selectedPlant.id === 'pvcI') {
           // Start bars and windows in parallel so bars don't wait on summary
           const barsPromise = (async () => {
@@ -854,6 +869,13 @@ export default function DashboardPage() {
                   kpis={actualCalcData.overall}
                   counts={actualCalcData.counts}
                   isLoading={false}
+                  totals={{
+                    total_unhealthy_periods: actualCalcUnhealthy?.total_periods ?? 0,
+                    total_flood_windows: actualCalcFloods?.totals?.total_windows ?? 0,
+                    total_flood_count: actualCalcFloods?.totals?.total_flood_count ?? 0,
+                  }}
+                  unhealthyData={actualCalcUnhealthy}
+                  floodsData={actualCalcFloods}
                 />
 
                 {/* Summary Stats Card */}
@@ -908,6 +930,78 @@ export default function DashboardPage() {
                     Chatter threshold: {actualCalcData.params.chatter_min}min
                   </p>
                 </div>
+
+                {/* Actual Calc: Top Flood Windows + Per-source bars */}
+                {(() => {
+                  const threshold = actualCalcUnhealthy?.params?.unhealthy_threshold ?? 10;
+                  const timeStart = actualCalcData.sample_range?.start || new Date().toISOString();
+                  const timeEnd = actualCalcData.sample_range?.end || new Date().toISOString();
+
+                  // Map floods -> rows
+                  const floodRows = (actualCalcFloods?.windows || []).map((w, idx) => {
+                    const id = w.id;
+                    const label = `${new Date(w.start).toLocaleString()} — ${new Date(w.end).toLocaleString()}`;
+                    const top_sources = w.top_sources || [];
+                    return { id, label, flood_count: w.flood_count, start: w.start, end: w.end, short_label: idx < 3 ? undefined : new Date(w.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), rate_per_min: w.rate_per_min, top_sources } as TopFloodWindowRow;
+                  });
+
+                  // Aggregate unhealthy per source across all unhealthy windows
+                  const aggBars = (actualCalcUnhealthy?.per_source || []).map((s) => {
+                    const hits = s.Unhealthy_Periods;
+                    return { id: s.Source, source: s.Source, hits, threshold, over_by: Math.max(0, hits - threshold), bin_start: timeStart, bin_end: timeEnd } as UnhealthyBar;
+                  }).sort((a, b) => b.hits - a.hits);
+
+                  // If a window is selected, build bars from contributions of that window
+                  let windowBars: UnhealthyBar[] | null = null;
+                  if (selectedWindow) {
+                    const match = (actualCalcFloods?.windows || []).find(w => w.id === selectedWindow.id);
+                    if (match) {
+                      windowBars = Object.entries(match.sources_involved || {}).map(([source, count]) => ({
+                        id: `${selectedWindow.id}:${source}`,
+                        source,
+                        hits: Number(count || 0),
+                        threshold,
+                        over_by: Math.max(0, Number(count || 0) - threshold),
+                        bin_start: match.start,
+                        bin_end: match.end,
+                      } as UnhealthyBar)).sort((a, b) => b.hits - a.hits);
+                    }
+                  }
+
+                  return (
+                    <div className="space-y-6">
+                      <TopFloodWindowsChart
+                        data={floodRows}
+                        threshold={threshold}
+                        topK={topWindowsTopK}
+                        onTopKChange={setTopWindowsTopK}
+                        isLoading={actualCalcLoading || !actualCalcFloods}
+                        includeSystem={includeSystem}
+                        onSelectWindow={(row) => {
+                          if (!row) { setSelectedWindow(null); return; }
+                          setSelectedWindow({ id: row.id, label: row.label, start: row.start, end: row.end });
+                        }}
+                        selectedWindowId={selectedWindow?.id}
+                      />
+
+                      <UnhealthyBarChart
+                        data={windowBars ?? aggBars}
+                        threshold={threshold}
+                        topN={topN}
+                        onTopNChange={setTopN}
+                        isLoading={actualCalcLoading || !actualCalcUnhealthy}
+                        plantId={selectedPlant.id}
+                        mode={'flood'}
+                        includeSystem={includeSystem}
+                        activeWindowLabel={selectedWindow?.label}
+                        activeWindowStart={selectedWindow?.start}
+                        activeWindowEnd={selectedWindow?.end}
+                        timePickerDomain={actualCalcData.sample_range?.start && actualCalcData.sample_range?.end ? { start: actualCalcData.sample_range.start, end: actualCalcData.sample_range.end } : undefined}
+                        onClearWindow={() => setSelectedWindow(null)}
+                      />
+                    </div>
+                  );
+                })()}
               </>
             )}
           </div>
