@@ -2001,15 +2001,15 @@ def get_pvci_actual_calc_overall(
         
         # Compute fresh
         logger.info(f"Computing actual-calc with params: {params}")
-        summary_df, kpis, cycles_df, unhealthy, floods = run_actual_calc(
+        summary_df, kpis, cycles_df, unhealthy, floods, bad_actors = run_actual_calc(
             ALARM_DATA_DIR,
             stale_min=stale_min,
             chatter_min=chatter_min
         )
         
-        # Write to cache (with unhealthy/floods)
+        # Write to cache (with unhealthy/floods/bad_actors)
         try:
-            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods)
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods, bad_actors=bad_actors)
         except Exception as cache_err:
             logger.warning(f"Failed to write cache (non-fatal): {cache_err}")
         
@@ -2030,6 +2030,7 @@ def get_pvci_actual_calc_overall(
             counts["total_unhealthy_periods"] = int(unhealthy.get("total_periods") or 0)
             counts["total_flood_windows"] = int((floods.get("totals") or {}).get("total_windows") or 0)
             counts["total_flood_count"] = int((floods.get("totals") or {}).get("total_flood_count") or 0)
+            counts["total_bad_actors"] = int(bad_actors.get("total_actors") or 0)
         except Exception:
             pass
 
@@ -2042,6 +2043,7 @@ def get_pvci_actual_calc_overall(
             "counts": counts,
             "unhealthy": unhealthy,
             "floods": floods,
+            "bad_actors": bad_actors,
         }
         
         # Add per_source if requested (paginated)
@@ -2177,14 +2179,14 @@ def regenerate_pvci_actual_calc_cache(
         start_time = datetime.now()
         
         # Run computation
-        summary_df, kpis, cycles_df, unhealthy, floods = run_actual_calc(
+        summary_df, kpis, cycles_df, unhealthy, floods, bad_actors = run_actual_calc(
             ALARM_DATA_DIR,
             stale_min=stale_min,
             chatter_min=chatter_min
         )
         
-        # Write cache (with unhealthy/floods)
-        write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods)
+        # Write cache (with unhealthy/floods/bad_actors)
+        write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods, bad_actors=bad_actors)
         
         compute_time = (datetime.now() - start_time).total_seconds()
         
@@ -2204,6 +2206,7 @@ def regenerate_pvci_actual_calc_cache(
             counts["total_unhealthy_periods"] = int(unhealthy.get("total_periods") or 0)
             counts["total_flood_windows"] = int((floods.get("totals") or {}).get("total_windows") or 0)
             counts["total_flood_count"] = int((floods.get("totals") or {}).get("total_flood_count") or 0)
+            counts["total_bad_actors"] = int(bad_actors.get("total_actors") or 0)
         except Exception:
             pass
         
@@ -2245,10 +2248,10 @@ def get_pvci_actual_calc_unhealthy(
             unhealthy = cached["unhealthy"]
         if unhealthy is None:
             # Compute and cache
-            summary_df, kpis, cycles_df, uh, floods = run_actual_calc(
+            summary_df, kpis, cycles_df, uh, floods, ba = run_actual_calc(
                 ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min
             )
-            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods)
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods, bad_actors=ba)
             unhealthy = uh
             cached = {
                 "plant_folder": "PVC-I",
@@ -2305,8 +2308,8 @@ def get_pvci_actual_calc_floods(
         if cached and isinstance(cached.get("floods"), dict):
             floods = cached["floods"]
         if floods is None:
-            summary_df, kpis, cycles_df, uh, fl = run_actual_calc(ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min)
-            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=fl)
+            summary_df, kpis, cycles_df, uh, fl, ba = run_actual_calc(ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min)
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=fl, bad_actors=ba)
             floods = fl
             cached = {
                 "plant_folder": "PVC-I",
@@ -2339,5 +2342,89 @@ def get_pvci_actual_calc_floods(
         raise
     except Exception as e:
         logger.error(f"actual-calc/floods error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# New: serve bad actors from actual-calc cache
+@app.get("/pvcI-actual-calc/bad-actors", response_class=ORJSONResponse)
+def get_pvci_actual_calc_bad_actors(
+    stale_min: int = 60,
+    chatter_min: int = 10,
+    limit: int = 10,
+    raw: bool = False,
+    force_recompute: bool = False,
+):
+    """Get bad actor sources - those contributing most alarms during flood events.
+    
+    Bad actors are identified from flood windows and ranked by:
+    - Total_Alarm_In_Floods: Total alarm activations during all flood periods
+    - Flood_Involvement_Count: Number of flood windows they participated in
+    
+    Query Parameters:
+        stale_min: Stale threshold (must match cached params, default 60)
+        chatter_min: Chattering threshold (must match cached params, default 10)
+        limit: Maximum number of bad actors to return (default 10)
+        raw: Include raw bad_actors data (default False)
+        force_recompute: Force recomputation ignoring cache (default False)
+    
+    Returns:
+        {
+            plant_folder: "PVC-I",
+            mode: "actual-calc",
+            generated_at: ISO timestamp,
+            observation_range: {start, end},
+            total_actors: int,
+            top_actors: [
+                {
+                    Source: str,
+                    Total_Alarm_In_Floods: int,
+                    Flood_Involvement_Count: int
+                }
+            ]
+        }
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service is not available")
+    try:
+        params = {"stale_min": stale_min, "chatter_min": chatter_min}
+        cached = None if force_recompute else read_cache(BASE_DIR, params)
+        bad_actors = None
+        if cached and isinstance(cached.get("bad_actors"), dict):
+            bad_actors = cached["bad_actors"]
+        if bad_actors is None:
+            # Compute and cache
+            summary_df, kpis, cycles_df, uh, floods, ba = run_actual_calc(
+                ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min
+            )
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods, bad_actors=ba)
+            bad_actors = ba
+            cached = {
+                "plant_folder": "PVC-I",
+                "mode": "actual-calc",
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "sample_range": None,
+                "params": params,
+            }
+        
+        actors_all = bad_actors.get("top_actors", []) if isinstance(bad_actors, dict) else []
+        # Already sorted by Total_Alarm_In_Floods desc in identify_bad_actors function
+        actors_slice = actors_all[: max(0, int(limit))]
+        
+        resp = {
+            "plant_folder": cached.get("plant_folder", "PVC-I") if isinstance(cached, dict) else "PVC-I",
+            "mode": "actual-calc",
+            "generated_at": (cached or {}).get("generated_at", datetime.utcnow().isoformat() + "Z"),
+            "observation_range": (cached or {}).get("sample_range"),
+            "total_actors": int(bad_actors.get("total_actors") or 0) if isinstance(bad_actors, dict) else 0,
+            "actors_total": len(actors_all),
+            "top_actors": actors_slice,
+        }
+        if raw:
+            resp["raw"] = bad_actors
+        return resp
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"actual-calc/bad-actors error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

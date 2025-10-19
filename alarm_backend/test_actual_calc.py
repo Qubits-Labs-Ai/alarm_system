@@ -48,11 +48,14 @@ def test_actual_calc(use_cache: bool = False):
             logger.info(f"Cache: {cache_path} ({size_mb:.2f} MB)")
             return True
         
-        # Run calculation (new signature returns unhealthy & floods)
-        summary_df, kpis, cycles_df, unhealthy, floods = run_actual_calc(
+        # Run calculation (signature returns unhealthy, floods, and bad_actors)
+        summary_df, kpis, cycles_df, unhealthy, floods, bad_actors = run_actual_calc(
             str(alarm_data_dir),
             stale_min=60,
-            chatter_min=10
+            chatter_min=10,
+            unhealthy_threshold=10,
+            window_minutes=10,
+            flood_source_threshold=2
         )
         
         logger.info("\nRESULTS (shapes)")
@@ -61,8 +64,8 @@ def test_actual_calc(use_cache: bool = False):
         logger.info(f"  Unhealthy sources: {len(unhealthy.get('per_source', []))}")
         logger.info(f"  Flood windows:    {len(floods.get('windows', []))}")
         
-        # Write cache (includes unhealthy & floods)
-        write_cache(str(backend_dir), summary_df, kpis, cycles_df, params, str(alarm_data_dir), unhealthy=unhealthy, floods=floods)
+        # Write cache (includes unhealthy, floods, bad_actors)
+        write_cache(str(backend_dir), summary_df, kpis, cycles_df, params, str(alarm_data_dir), unhealthy=unhealthy, floods=floods, bad_actors=bad_actors)
         
         cache_path = backend_dir / "PVCI-actual-calc" / "actual-calc.json"
         if cache_path.exists():

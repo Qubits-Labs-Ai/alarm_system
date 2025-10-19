@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import LandingPage from "./pages/LandingPage";
 import SignInPage from "./pages/SignInPage";
 import DashboardPage from "./pages/DashboardPage";
+import { ActualCalcPage } from "./pages/ActualCalcPage";
 import NotFound from "./pages/NotFound";
 import AgentPage from "./pages/AgentPage";
 
@@ -38,6 +39,7 @@ const App = () => (
           <Route path="/" element={<LandingPage />} />
           <Route path="/signin" element={<SignInPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/actual-calc" element={<ActualCalcPage />} />
           <Route path="/:plant/agent" element={<AgentPage />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />

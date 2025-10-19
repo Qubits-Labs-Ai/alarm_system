@@ -6,9 +6,10 @@
 import { useState } from 'react';
 import { TrendingUp, AlertTriangle, Activity, Calendar, ShieldAlert } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ActualCalcKPIs, ActualCalcCounts, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse } from '@/types/actualCalc';
+import { ActualCalcKPIs, ActualCalcCounts, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
 import { UnhealthyPeriodsModal } from './UnhealthyPeriodsModal';
 import { FloodWindowsModal } from './FloodWindowsModal';
+import { BadActorsModal } from './BadActorsModal';
 
 interface ActualCalcKPICardsProps {
   kpis: ActualCalcKPIs;
@@ -21,11 +22,13 @@ interface ActualCalcKPICardsProps {
   };
   unhealthyData?: ActualCalcUnhealthyResponse | null;
   floodsData?: ActualCalcFloodsResponse | null;
+  badActorsData?: ActualCalcBadActorsResponse | null;
 }
 
-export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, unhealthyData, floodsData }: ActualCalcKPICardsProps) {
+export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, unhealthyData, floodsData, badActorsData }: ActualCalcKPICardsProps) {
   const [unhealthyModalOpen, setUnhealthyModalOpen] = useState(false);
   const [floodsModalOpen, setFloodsModalOpen] = useState(false);
+  const [badActorsModalOpen, setBadActorsModalOpen] = useState(false);
   // Format minutes to hours:minutes
   const formatTime = (minutes: number): string => {
     if (minutes < 60) return `${minutes.toFixed(1)}m`;
@@ -44,6 +47,13 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
       description: `From ${counts.total_sources.toLocaleString()} sources`,
       icon: Activity,
       trend: 'neutral' as const,
+    },
+    {
+        title: 'Total Flood Alarms',
+        value: Number(totals?.total_flood_count || 0).toLocaleString(),
+        description: 'Sum of alarms within flood windows',
+        icon: Activity,
+        trend: 'neutral' as const,
     },
     {
       title: 'Standing Alarms',
@@ -84,23 +94,23 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
     ...(totals ? [
       {
         title: 'Unhealthy Periods',
-        value: Number(totals.total_unhealthy_periods || 0).toLocaleString(),
+        value: Number(totals?.total_unhealthy_periods || 0).toLocaleString(),
         description: '10‑min windows per source over threshold',
         icon: AlertTriangle,
         trend: 'neutral' as const,
       },
       {
         title: 'Flood Windows',
-        value: Number(totals.total_flood_windows || 0).toLocaleString(),
+        value: Number(totals?.total_flood_windows || 0).toLocaleString(),
         description: 'Windows with ≥2 sources unhealthy',
         icon: Calendar,
         trend: 'neutral' as const,
       },
       {
-        title: 'Total Flood Alarms',
-        value: Number(totals.total_flood_count || 0).toLocaleString(),
-        description: 'Sum of alarms within flood windows',
-        icon: Activity,
+        title: 'Bad Actors',
+        value: Number(badActorsData?.total_actors || 0).toLocaleString(),
+        description: 'Top sources driving flood alarms',
+        icon: ShieldAlert,
         trend: 'neutral' as const,
       }
     ] : []),
@@ -132,7 +142,8 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
           const Icon = card.icon;
           const isUnhealthyCard = card.title === 'Unhealthy Periods';
           const isFloodCard = card.title === 'Flood Windows';
-          const isClickable = (isUnhealthyCard && unhealthyData && !isLoading) || (isFloodCard && floodsData && !isLoading);
+          const isBadActorsCard = card.title === 'Bad Actors';
+          const isClickable = (isUnhealthyCard && unhealthyData && !isLoading) || (isFloodCard && floodsData && !isLoading) || (isBadActorsCard && badActorsData && !isLoading);
           
           return (
             <Card 
@@ -145,6 +156,8 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
                   setUnhealthyModalOpen(true);
                 } else if (isFloodCard && floodsData && !isLoading) {
                   setFloodsModalOpen(true);
+                } else if (isBadActorsCard && badActorsData && !isLoading) {
+                  setBadActorsModalOpen(true);
                 }
               }}
             >
@@ -197,6 +210,17 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
           totals: floodsData.totals,
           windows: floodsData.windows,
           params: floodsData.params,
+        } : null}
+      />
+
+      {/* Bad Actors Modal */}
+      <BadActorsModal
+        open={badActorsModalOpen}
+        onOpenChange={setBadActorsModalOpen}
+        data={badActorsData ? {
+          total_actors: badActorsData.total_actors,
+          top_actors: badActorsData.top_actors,
+          totalFloodCount: totals?.total_flood_count || floodsData?.totals?.total_flood_count,
         } : null}
       />
     </>

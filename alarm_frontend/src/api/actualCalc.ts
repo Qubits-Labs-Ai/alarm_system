@@ -10,6 +10,7 @@ import {
   RegenerateCacheResponse,
   ActualCalcUnhealthyResponse,
   ActualCalcFloodsResponse,
+  ActualCalcBadActorsResponse,
 } from '@/types/actualCalc';
 
 // Simple cache reuse from plantHealth.ts pattern
@@ -58,6 +59,23 @@ export async function fetchPvciActualCalcFloods(params?: {
   url.searchParams.set('chatter_min', String(chatter_min));
   url.searchParams.set('limit', String(limit));
   return fetchWithCache<ActualCalcFloodsResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
+}
+
+/**
+ * Fetch bad actors (from actual-calc cache)
+ */
+export async function fetchPvciActualCalcBadActors(params?: {
+  stale_min?: number;
+  chatter_min?: number;
+  limit?: number;
+  timeout_ms?: number;
+}): Promise<ActualCalcBadActorsResponse> {
+  const { stale_min = 60, chatter_min = 10, limit = 10, timeout_ms } = params || {};
+  const url = new URL(`${API_BASE_URL}/pvcI-actual-calc/bad-actors`);
+  url.searchParams.set('stale_min', String(stale_min));
+  url.searchParams.set('chatter_min', String(chatter_min));
+  url.searchParams.set('limit', String(limit));
+  return fetchWithCache<ActualCalcBadActorsResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
 }
 
 function getStorageKey(key: string) {

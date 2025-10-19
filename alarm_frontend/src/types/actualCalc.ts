@@ -144,3 +144,18 @@ export interface ActualCalcFloodsResponse {
   }>;
   raw?: any;
 }
+
+export interface ActualCalcBadActorsResponse {
+  plant_folder: string;
+  mode: string;
+  generated_at: string;
+  observation_range?: { start: string | null; end: string | null };
+  total_actors: number;
+  actors_total?: number;
+  top_actors: Array<{
+    Source: string;
+    Total_Alarm_In_Floods: number;
+    Flood_Involvement_Count: number;
+  }>;
+  raw?: any;
+}

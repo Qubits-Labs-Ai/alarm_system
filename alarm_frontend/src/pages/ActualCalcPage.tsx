@@ -4,8 +4,8 @@
  */
 
 import { useMemo, useState, useEffect } from 'react';
-import { fetchPvciActualCalcOverall, fetchPvciActualCalcUnhealthy, fetchPvciActualCalcFloods } from '@/api/actualCalc';
-import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse } from '@/types/actualCalc';
+import { fetchPvciActualCalcOverall, fetchPvciActualCalcUnhealthy, fetchPvciActualCalcFloods, fetchPvciActualCalcBadActors } from '@/api/actualCalc';
+import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
 import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
 import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,6 +20,7 @@ export function ActualCalcPage() {
   const [data, setData] = useState<ActualCalcOverallResponse | null>(null);
   const [unhealthy, setUnhealthy] = useState<ActualCalcUnhealthyResponse | null>(null);
   const [floods, setFloods] = useState<ActualCalcFloodsResponse | null>(null);
+  const [badActors, setBadActors] = useState<ActualCalcBadActorsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,15 +39,17 @@ export function ActualCalcPage() {
       setIsLoading(true);
       setError(null);
       
-      const [overall, unhealthyResp, floodsResp] = await Promise.all([
+      const [overall, unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
         fetchPvciActualCalcOverall({ stale_min: 60, chatter_min: 10, include_per_source: false, include_cycles: false }),
         fetchPvciActualCalcUnhealthy({ stale_min: 60, chatter_min: 10, limit: 500 }),
         fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200 }),
+        fetchPvciActualCalcBadActors({ stale_min: 60, chatter_min: 10, limit: 10 }),
       ]);
       
       setData(overall);
       setUnhealthy(unhealthyResp);
       setFloods(floodsResp);
+      setBadActors(badActorsResp);
     } catch (err) {
       console.error('Failed to load actual-calc data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load data');
@@ -214,6 +217,7 @@ export function ActualCalcPage() {
           }}
           unhealthyData={unhealthy}
           floodsData={floods}
+          badActorsData={badActors}
         />
       )}
 

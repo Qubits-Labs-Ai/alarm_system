@@ -9,8 +9,8 @@ import { EventStatisticsCards } from '@/components/dashboard/EventStatisticsCard
 import { ErrorState } from '@/components/dashboard/ErrorState';
 import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
 import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
-import { fetchPvciActualCalcOverall, fetchPvciActualCalcUnhealthy, fetchPvciActualCalcFloods } from '@/api/actualCalc';
-import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse } from '@/types/actualCalc';
+import { fetchPvciActualCalcOverall, fetchPvciActualCalcUnhealthy, fetchPvciActualCalcFloods, fetchPvciActualCalcBadActors } from '@/api/actualCalc';
+import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
 import UnhealthySourcesWordCloud from '@/components/UnhealthySourcesWordCloud';
 import UnhealthySourcesBarChart from '@/components/UnhealthySourcesBarChart';
@@ -90,6 +90,7 @@ export default function DashboardPage() {
   const [actualCalcUnhealthy, setActualCalcUnhealthy] = useState<ActualCalcUnhealthyResponse | null>(null);
   const [actualCalcFloods, setActualCalcFloods] = useState<ActualCalcFloodsResponse | null>(null);
   const [actualCalcLoading, setActualCalcLoading] = useState<boolean>(false);
+  const [actualCalcBadActors, setActualCalcBadActors] = useState<ActualCalcBadActorsResponse | null>(null);
 
   const toIso = (v?: string) => (v ? new Date(v).toISOString() : undefined);
   const applyIsaRange = () => {
@@ -219,7 +220,7 @@ export default function DashboardPage() {
       }
       try {
         setActualCalcLoading(true);
-        const [overall, unhealthyResp, floodsResp] = await Promise.all([
+        const [overall, unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
           fetchPvciActualCalcOverall({
             stale_min: 60,
             chatter_min: 10,
@@ -229,11 +230,13 @@ export default function DashboardPage() {
           }),
           fetchPvciActualCalcUnhealthy({ stale_min: 60, chatter_min: 10, limit: 500, timeout_ms: 30000 }),
           fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200, timeout_ms: 30000 }),
+          fetchPvciActualCalcBadActors({ stale_min: 60, chatter_min: 10, limit: 10, timeout_ms: 30000 }),
         ]);
         if (mounted) {
           setActualCalcData(overall);
           setActualCalcUnhealthy(unhealthyResp);
           setActualCalcFloods(floodsResp);
+          setActualCalcBadActors(badActorsResp);
         }
       } catch (err) {
         console.error('Failed to load actual-calc data:', err);
@@ -876,6 +879,7 @@ export default function DashboardPage() {
                   }}
                   unhealthyData={actualCalcUnhealthy}
                   floodsData={actualCalcFloods}
+                  badActorsData={actualCalcBadActors}
                 />
 
                 {/* Summary Stats Card */}

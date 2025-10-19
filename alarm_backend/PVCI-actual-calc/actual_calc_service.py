@@ -406,6 +406,46 @@ def detect_unhealthy_and_flood(
     return activations_df, unhealthy_summary, flood_summary_df
 
 
+def identify_bad_actors(flood_summary_df: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
+    """
+    Identify 'Bad Actor' sources — those contributing the most alarms during floods.
+    
+    Args:
+        flood_summary_df: DataFrame with columns:
+            ['Flood_Start', 'Flood_End', 'Sources_Involved', 'Source_Count']
+            where 'Sources_Involved' is a dict {source: frequency}
+        top_n: number of top contributors to return
+    
+    Returns:
+        DataFrame with columns:
+            ['Source', 'Total_Alarm_In_Floods', 'Flood_Involvement_Count']
+    """
+    from collections import defaultdict
+
+    source_alarm_counts = defaultdict(int)
+    flood_participation = defaultdict(int)
+
+    for _, row in flood_summary_df.iterrows():
+        sources_dict = row.get("Sources_Involved", {}) or {}
+        for src, count in sources_dict.items():
+            source_alarm_counts[src] += count
+            flood_participation[src] += 1
+
+    data = []
+    for src in source_alarm_counts:
+        data.append({
+            "Source": src,
+            "Total_Alarm_In_Floods": source_alarm_counts[src],
+            "Flood_Involvement_Count": flood_participation[src],
+        })
+
+    bad_actors_df = pd.DataFrame(data).sort_values(
+        "Total_Alarm_In_Floods", ascending=False
+    ).reset_index(drop=True)
+
+    return bad_actors_df.head(top_n)
+
+
 # ---------- DATA LOADING ----------
 
 def load_pvci_merged_csv(alarm_data_dir: str) -> pd.DataFrame:
@@ -467,7 +507,7 @@ def run_actual_calc(
     unhealthy_threshold: int = UNHEALTHY_THRESHOLD,
     window_minutes: int = WINDOW_MINUTES,
     flood_source_threshold: int = FLOOD_SOURCE_THRESHOLD,
-) -> Tuple[pd.DataFrame, Dict[str, Any], pd.DataFrame, Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[pd.DataFrame, Dict[str, Any], pd.DataFrame, Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     """Run actual calculation with specified thresholds.
     
     Args:
@@ -479,7 +519,7 @@ def run_actual_calc(
         flood_source_threshold: Minimum overlapping unhealthy sources for flood (default 2)
         
     Returns:
-        Tuple of (summary_df, kpis_dict, cycles_df, unhealthy_dict, floods_dict)
+        Tuple of (summary_df, kpis_dict, cycles_df, unhealthy_dict, floods_dict, bad_actors_dict)
     """
     global STALE_THRESHOLD_MIN, CHATTER_THRESHOLD_MIN, UNHEALTHY_THRESHOLD, WINDOW_MINUTES, FLOOD_SOURCE_THRESHOLD
     
@@ -558,6 +598,14 @@ def run_actual_calc(
         "totals": {"total_windows": len(windows_list), "total_flood_count": int(total_flood_count)},
     }
 
+    # Bad Actors identification (from notebook)
+    bad_actors_df = identify_bad_actors(flood_df, top_n=10) if not flood_df.empty else pd.DataFrame()
+    bad_actors_dict: Dict[str, Any] = {
+        "top_actors": bad_actors_df.to_dict(orient="records") if not bad_actors_df.empty else [],
+        "total_actors": len(bad_actors_df),
+    }
+    logger.info(f"Bad Actors identified: {len(bad_actors_df)} sources")
+
     # Log summary statistics
     total_sources = len(summary)
     total_alarms = summary["Unique_Alarms"].sum()
@@ -565,7 +613,7 @@ def run_actual_calc(
     logger.info(f"Results: {total_sources} sources, {total_alarms} unique alarms")
     logger.info(f"Overall KPIs: avg_ack={kpis['avg_ack_delay_min']:.2f}min, avg_ok={kpis['avg_ok_delay_min']:.2f}min, completion={kpis['completion_rate_pct']:.1f}%")
     
-    return summary, kpis, cycles, unhealthy_dict, floods_dict
+    return summary, kpis, cycles, unhealthy_dict, floods_dict, bad_actors_dict
 
 
 # ---------- UTILITY: CONVERT TO JSON-SAFE TYPES ----------
@@ -659,6 +707,7 @@ def write_cache(
     alarm_data_dir: str,
     unhealthy: Dict[str, Any] | None = None,
     floods: Dict[str, Any] | None = None,
+    bad_actors: Dict[str, Any] | None = None,
 ) -> None:
     """Write calculation results to cache JSON.
     
@@ -671,6 +720,7 @@ def write_cache(
         alarm_data_dir: Path to ALARM_DATA_DIR for metadata
         unhealthy: Optional unhealthy periods dictionary (from detect_unhealthy_and_flood)
         floods: Optional floods windows dictionary (from detect_unhealthy_and_flood)
+        bad_actors: Optional bad actors dictionary (from identify_bad_actors)
     """
     cache_path = get_cache_path(base_dir)
     
@@ -719,7 +769,7 @@ def write_cache(
             "_version": "1.1"
         }
 
-        # Attach unhealthy & floods if provided
+        # Attach unhealthy & floods & bad_actors if provided
         if isinstance(unhealthy, dict):
             cache_data["unhealthy"] = unhealthy
             try:
@@ -734,6 +784,12 @@ def write_cache(
             except Exception:
                 cache_data["counts"].setdefault("total_flood_windows", 0)
                 cache_data["counts"].setdefault("total_flood_count", 0)
+        if isinstance(bad_actors, dict):
+            cache_data["bad_actors"] = bad_actors
+            try:
+                cache_data["counts"]["total_bad_actors"] = int(bad_actors.get("total_actors") or 0)
+            except Exception:
+                cache_data["counts"]["total_bad_actors"] = 0
         
         # Write atomically (write to temp, then rename)
         temp_path = cache_path + ".tmp"
