@@ -265,30 +265,121 @@ def calculate_alarm_kpis(df):
         avg_ok = cycles["ok_delay"].mean()
         completion = cycles["ok_time"].notnull().mean() * 100
 
-    # Temporal KPIs
-    df["Date"] = df["Event Time"].dt.date
-    per_day = df.groupby("Date").size()
-    hrs = (df["Event Time"].max() - df["Event Time"].min()).total_seconds() / 3600
-    avg_day = per_day.mean()
-    avg_hr = len(df) / hrs if hrs else 0
-    avg_10m = avg_hr / 6
-    overlimit_pct = (per_day > 288).mean() * 100
-
     # Merge per-source summary
     summary = basic.merge(rep_chat, on="Source", how="left") if isinstance(rep_chat, pd.DataFrame) else basic
     summary = summary.fillna({"Chattering_Count": 0, "Repeating_Alarms": 0, "Instrument_Failure_Chattering": 0})
     
-    # Overall KPIs
+    # Overall KPIs (response times only - frequency metrics handled separately)
     kpis = dict(
         avg_ack_delay_min=avg_ack,
         avg_ok_delay_min=avg_ok,
         completion_rate_pct=completion,
-        avg_alarms_per_day=avg_day,
-        avg_alarms_per_hour=avg_hr,
-        avg_alarms_per_10min=avg_10m,
-        days_over_288_alarms_pct=overlimit_pct,
     )
     return summary, kpis, cycles
+
+
+# ---------- ISO/EEMUA 191 ALARM FREQUENCY METRICS ----------
+
+def calculate_alarm_frequency_metrics(
+    df: pd.DataFrame,
+    iso_threshold: int = 288,
+    unacceptable_threshold: int = 720,
+) -> Dict[str, Any]:
+    """
+    ISO/EEMUA 191-compliant alarm frequency metrics based on unique alarm activations.
+    
+    Calculates:
+      • Unique alarm activations (Blank → ACK/OK)
+      • Average alarms per day / hour / 10 minutes
+      • % days > 288 (overloaded per ISO 18.2)
+      • % days ≥ 720 (unacceptable/critical overload)
+      • Lists of those days and counts
+
+    Parameters:
+        df: DataFrame with columns ['Source', 'Action', 'Event Time']
+        iso_threshold: int, default 288 alarms/day (ISO 18.2 reference)
+        unacceptable_threshold: int, default 720 alarms/day (critical overload)
+        
+    Returns:
+        Dict with keys: Summary, Alarms_Per_Day, Days_Over_288, Days_Unacceptable
+    """
+    # ---------- Step 1: Clean ----------
+    df = df.copy()
+    df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+    df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+    df = df.sort_values(["Source", "Event Time"]).reset_index(drop=True)
+
+    # ---------- Step 2: Identify Unique Alarms (Activations) ----------
+    activations = []
+    for src, group in df.groupby("Source"):
+        state = "IDLE"
+        for _, row in group.iterrows():
+            action = row["Action"]
+            t = row["Event Time"]
+
+            # New alarm trigger
+            if action == "" and state in ["IDLE", "ACKED"]:
+                activations.append({"Source": src, "StartTime": t})
+                state = "ACTIVE"
+
+            # Acknowledged
+            elif action == "ACK" and state == "ACTIVE":
+                state = "ACKED"
+
+            # Cleared (OK)
+            elif action == "OK":
+                # Handles Blank→OK and Blank→OK→ACK
+                state = "IDLE"
+
+    activations_df = pd.DataFrame(activations)
+    if activations_df.empty:
+        return {
+            "Summary": {"message": "No valid alarm activations found."},
+            "Alarms_Per_Day": pd.DataFrame(),
+            "Days_Over_288": pd.DataFrame(),
+            "Days_Unacceptable": pd.DataFrame(),
+        }
+
+    # ---------- Step 3: Time-based Calculations ----------
+    activations_df["Date"] = activations_df["StartTime"].dt.date
+    alarms_per_day = activations_df.groupby("Date").size().reset_index(name="Alarm_Count")
+
+    total_alarms = len(activations_df)
+    total_days = (activations_df["StartTime"].max() - activations_df["StartTime"].min()).days + 1
+    total_hours = (activations_df["StartTime"].max() - activations_df["StartTime"].min()).total_seconds() / 3600
+
+    avg_per_day = total_alarms / total_days if total_days > 0 else 0
+    avg_per_hour = total_alarms / total_hours if total_hours > 0 else 0
+    avg_per_10min = total_alarms / (total_hours * 6) if total_hours > 0 else 0
+
+    # ---------- Step 4: ISO KPI Analysis ----------
+    days_over_iso = alarms_per_day[alarms_per_day["Alarm_Count"] > iso_threshold].copy()
+    days_unacceptable = alarms_per_day[alarms_per_day["Alarm_Count"] >= unacceptable_threshold].copy()
+
+    percent_days_over_iso = (len(days_over_iso) / len(alarms_per_day)) * 100 if len(alarms_per_day) > 0 else 0
+    percent_days_unacceptable = (len(days_unacceptable) / len(alarms_per_day)) * 100 if len(alarms_per_day) > 0 else 0
+
+    # ---------- Step 5: Return Structured Results ----------
+    summary = {
+        "avg_alarms_per_day": round(avg_per_day, 2),
+        "avg_alarms_per_hour": round(avg_per_hour, 2),
+        "avg_alarms_per_10min": round(avg_per_10min, 2),
+        "days_over_288_count": len(days_over_iso),
+        "days_over_288_alarms_pct": round(percent_days_over_iso, 2),
+        "days_unacceptable_count": len(days_unacceptable),
+        "days_unacceptable_pct": round(percent_days_unacceptable, 2),
+        "total_days_analyzed": len(alarms_per_day),
+        "total_unique_alarms": total_alarms,
+        "start_date": activations_df["StartTime"].min(),
+        "end_date": activations_df["StartTime"].max(),
+    }
+
+    return {
+        "Summary": summary,
+        "Alarms_Per_Day": alarms_per_day,
+        "Days_Over_288": days_over_iso,
+        "Days_Unacceptable": days_unacceptable,
+    }
 
 
 # ---------- UNHEALTHY + FLOOD DETECTION (from notebook) ----------
@@ -507,7 +598,9 @@ def run_actual_calc(
     unhealthy_threshold: int = UNHEALTHY_THRESHOLD,
     window_minutes: int = WINDOW_MINUTES,
     flood_source_threshold: int = FLOOD_SOURCE_THRESHOLD,
-) -> Tuple[pd.DataFrame, Dict[str, Any], pd.DataFrame, Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    iso_threshold: int = 288,
+    unacceptable_threshold: int = 720,
+) -> Tuple[pd.DataFrame, Dict[str, Any], pd.DataFrame, Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     """Run actual calculation with specified thresholds.
     
     Args:
@@ -517,9 +610,11 @@ def run_actual_calc(
         unhealthy_threshold: Activations threshold for unhealthy (default 10)
         window_minutes: Sliding window minutes (default 10)
         flood_source_threshold: Minimum overlapping unhealthy sources for flood (default 2)
+        iso_threshold: ISO 18.2 alarm rate threshold per day (default 288)
+        unacceptable_threshold: Unacceptable alarm rate threshold per day (default 720)
         
     Returns:
-        Tuple of (summary_df, kpis_dict, cycles_df, unhealthy_dict, floods_dict, bad_actors_dict)
+        Tuple of (summary_df, kpis_dict, cycles_df, unhealthy_dict, floods_dict, bad_actors_dict, frequency_dict)
     """
     global STALE_THRESHOLD_MIN, CHATTER_THRESHOLD_MIN, UNHEALTHY_THRESHOLD, WINDOW_MINUTES, FLOOD_SOURCE_THRESHOLD
     
@@ -606,14 +701,47 @@ def run_actual_calc(
     }
     logger.info(f"Bad Actors identified: {len(bad_actors_df)} sources")
 
+    # ISO/EEMUA 191 Frequency Metrics (activation-based)
+    freq_start = datetime.now()
+    frequency_result = calculate_alarm_frequency_metrics(
+        df,
+        iso_threshold=iso_threshold,
+        unacceptable_threshold=unacceptable_threshold,
+    )
+    freq_dur = (datetime.now() - freq_start).total_seconds()
+    logger.info(f"Frequency metrics computed in {freq_dur:.2f}s")
+    
+    freq_summary = frequency_result.get("Summary", {})
+    frequency_dict: Dict[str, Any] = {
+        "params": {"iso_threshold": iso_threshold, "unacceptable_threshold": unacceptable_threshold},
+        "summary": freq_summary,
+        "alarms_per_day": dataframe_to_json_records(frequency_result.get("Alarms_Per_Day", pd.DataFrame())),
+        "days_over_288": dataframe_to_json_records(frequency_result.get("Days_Over_288", pd.DataFrame())),
+        "days_unacceptable": dataframe_to_json_records(frequency_result.get("Days_Unacceptable", pd.DataFrame())),
+    }
+    
+    # Merge frequency summary into overall KPIs (replacing event-based with activation-based)
+    kpis.update({
+        "avg_alarms_per_day": freq_summary.get("avg_alarms_per_day", 0),
+        "avg_alarms_per_hour": freq_summary.get("avg_alarms_per_hour", 0),
+        "avg_alarms_per_10min": freq_summary.get("avg_alarms_per_10min", 0),
+        "days_over_288_count": freq_summary.get("days_over_288_count", 0),
+        "days_over_288_alarms_pct": freq_summary.get("days_over_288_alarms_pct", 0),
+        "days_unacceptable_count": freq_summary.get("days_unacceptable_count", 0),
+        "days_unacceptable_pct": freq_summary.get("days_unacceptable_pct", 0),
+        "total_days_analyzed": freq_summary.get("total_days_analyzed", 0),
+        "total_unique_alarms": freq_summary.get("total_unique_alarms", 0),
+    })
+
     # Log summary statistics
     total_sources = len(summary)
     total_alarms = summary["Unique_Alarms"].sum()
     
     logger.info(f"Results: {total_sources} sources, {total_alarms} unique alarms")
     logger.info(f"Overall KPIs: avg_ack={kpis['avg_ack_delay_min']:.2f}min, avg_ok={kpis['avg_ok_delay_min']:.2f}min, completion={kpis['completion_rate_pct']:.1f}%")
+    logger.info(f"Frequency KPIs: avg_alarms_per_day={kpis['avg_alarms_per_day']:.2f}, days_over_288={kpis['days_over_288_alarms_pct']:.1f}%, days_unacceptable={kpis['days_unacceptable_pct']:.1f}%")
     
-    return summary, kpis, cycles, unhealthy_dict, floods_dict, bad_actors_dict
+    return summary, kpis, cycles, unhealthy_dict, floods_dict, bad_actors_dict, frequency_dict
 
 
 # ---------- UTILITY: CONVERT TO JSON-SAFE TYPES ----------
@@ -708,6 +836,7 @@ def write_cache(
     unhealthy: Dict[str, Any] | None = None,
     floods: Dict[str, Any] | None = None,
     bad_actors: Dict[str, Any] | None = None,
+    frequency: Dict[str, Any] | None = None,
 ) -> None:
     """Write calculation results to cache JSON.
     
@@ -721,6 +850,7 @@ def write_cache(
         unhealthy: Optional unhealthy periods dictionary (from detect_unhealthy_and_flood)
         floods: Optional floods windows dictionary (from detect_unhealthy_and_flood)
         bad_actors: Optional bad actors dictionary (from identify_bad_actors)
+        frequency: Optional frequency metrics dictionary (from calculate_alarm_frequency_metrics)
     """
     cache_path = get_cache_path(base_dir)
     
@@ -769,7 +899,7 @@ def write_cache(
             "_version": "1.1"
         }
 
-        # Attach unhealthy & floods & bad_actors if provided
+        # Attach unhealthy & floods & bad_actors & frequency if provided
         if isinstance(unhealthy, dict):
             cache_data["unhealthy"] = unhealthy
             try:
@@ -790,6 +920,8 @@ def write_cache(
                 cache_data["counts"]["total_bad_actors"] = int(bad_actors.get("total_actors") or 0)
             except Exception:
                 cache_data["counts"]["total_bad_actors"] = 0
+        if isinstance(frequency, dict):
+            cache_data["frequency"] = frequency
         
         # Write atomically (write to temp, then rename)
         temp_path = cache_path + ".tmp"

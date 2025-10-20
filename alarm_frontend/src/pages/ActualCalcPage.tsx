@@ -8,6 +8,7 @@ import { fetchPvciActualCalcOverall, fetchPvciActualCalcUnhealthy, fetchPvciActu
 import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
 import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
 import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
+import { AlarmFrequencyTrendChart } from '@/components/dashboard/AlarmFrequencyTrendChart';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertCircle } from 'lucide-react';
 import TopFloodWindowsChart, { TopFloodWindowRow } from '@/components/dashboard/TopFloodWindowsChart';
@@ -30,6 +31,7 @@ export function ActualCalcPage() {
   const [topK, setTopK] = useState<5 | 10 | 15>(10);
   const [selectedWindow, setSelectedWindow] = useState<TopFloodWindowRow | null>(null);
 
+  // Load data on mount
   useEffect(() => {
     loadData();
   }, []);
@@ -58,28 +60,7 @@ export function ActualCalcPage() {
     }
   };
 
-  if (error) {
-    return (
-      <div className="container mx-auto p-6">
-        <Card className="border-destructive">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-destructive">
-              <AlertCircle className="h-5 w-5" />
-              Error Loading Data
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">{error}</p>
-            <p className="text-xs text-muted-foreground mt-2">
-              The cache may not be generated yet. Run the regeneration endpoint or check backend logs.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  // Derived: threshold and time domain
+  // Derived: threshold and time domain (hooks must be before early returns)
   const unhealthyThreshold = unhealthy?.params?.unhealthy_threshold ?? 10;
   const timeDomain = useMemo(() => {
     const start = data?.sample_range?.start || null;
@@ -158,13 +139,51 @@ export function ActualCalcPage() {
   const activeWindowStart = selectedWindow?.start;
   const activeWindowEnd = selectedWindow?.end;
 
+  // Transform frequency data for chart
+  const frequencyChartData = useMemo(() => {
+    if (!data?.frequency?.alarms_per_day) return [];
+    
+    const over288Dates = new Set(data.frequency.days_over_288?.map(d => d.Date) || []);
+    const over720Dates = new Set(data.frequency.days_unacceptable?.map(d => d.Date) || []);
+    
+    return data.frequency.alarms_per_day.map(item => ({
+      date: item.Date,
+      ts: new Date(item.Date).getTime(),
+      alarm_count: item.Alarm_Count,
+      is_over_288: over288Dates.has(item.Date),
+      is_over_720: over720Dates.has(item.Date),
+    }));
+  }, [data]);
+
+  // Error state rendering
+  if (error) {
+    return (
+      <div className="container mx-auto p-6">
+        <Card className="border-destructive">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-destructive">
+              <AlertCircle className="h-5 w-5" />
+              Error Loading Data
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">{error}</p>
+            <p className="text-xs text-muted-foreground mt-2">
+              The cache may not be generated yet. Run the regeneration endpoint or check backend logs.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="container mx-auto p-6 space-y-6">
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Actual Calculation Mode</h1>
         <p className="text-muted-foreground mt-2">
-          Alarm lifecycle KPIs: response times, stale/chattering detection, ISA-18.2 compliance
+          ISO/EEMUA 191-compliant alarm lifecycle KPIs: activation-based frequency metrics, response times, stale/chattering detection
         </p>
         {data && (
           <p className="text-xs text-muted-foreground mt-1">
@@ -172,6 +191,9 @@ export function ActualCalcPage() {
             Stale: {data.params.stale_min}min | Chatter: {data.params.chatter_min}min
             {data.sample_range?.start && data.sample_range?.end && (
               <> | Data: {new Date(data.sample_range.start).toLocaleDateString()} - {new Date(data.sample_range.end).toLocaleDateString()}</>
+            )}
+            {data.overall.total_unique_alarms && (
+              <> | Total Unique Alarms: {data.overall.total_unique_alarms.toLocaleString()}</>
             )}
           </p>
         )}
@@ -192,7 +214,12 @@ export function ActualCalcPage() {
             avg_alarms_per_day: 0,
             avg_alarms_per_hour: 0,
             avg_alarms_per_10min: 0,
+            days_over_288_count: 0,
             days_over_288_alarms_pct: 0,
+            days_unacceptable_count: 0,
+            days_unacceptable_pct: 0,
+            total_days_analyzed: 0,
+            total_unique_alarms: 0,
           }}
           counts={{
             total_sources: 0,
@@ -218,6 +245,17 @@ export function ActualCalcPage() {
           unhealthyData={unhealthy}
           floodsData={floods}
           badActorsData={badActors}
+        />
+      )}
+
+      {/* Daily Alarm Frequency Trend Chart */}
+      {data && data.frequency && !isLoading && (
+        <AlarmFrequencyTrendChart
+          data={frequencyChartData}
+          isLoading={false}
+          totalDays={data.frequency.summary.total_days_analyzed}
+          daysOver288={data.frequency.summary.days_over_288_count}
+          daysOver720={data.frequency.summary.days_unacceptable_count}
         />
       )}
 

@@ -9,6 +9,7 @@ import { EventStatisticsCards } from '@/components/dashboard/EventStatisticsCard
 import { ErrorState } from '@/components/dashboard/ErrorState';
 import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
 import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
+import { AlarmFrequencyTrendChart } from '@/components/dashboard/AlarmFrequencyTrendChart';
 import { fetchPvciActualCalcOverall, fetchPvciActualCalcUnhealthy, fetchPvciActualCalcFloods, fetchPvciActualCalcBadActors } from '@/api/actualCalc';
 import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
@@ -849,7 +850,12 @@ export default function DashboardPage() {
                   avg_alarms_per_day: 0,
                   avg_alarms_per_hour: 0,
                   avg_alarms_per_10min: 0,
+                  days_over_288_count: 0,
                   days_over_288_alarms_pct: 0,
+                  days_unacceptable_count: 0,
+                  days_unacceptable_pct: 0,
+                  total_days_analyzed: 0,
+                  total_unique_alarms: 0,
                 }}
                 counts={{
                   total_sources: 0,
@@ -881,6 +887,28 @@ export default function DashboardPage() {
                   floodsData={actualCalcFloods}
                   badActorsData={actualCalcBadActors}
                 />
+
+                {/* Daily Alarm Frequency Trend Chart */}
+                {actualCalcData.frequency && (() => {
+                  const over288Dates = new Set(actualCalcData.frequency.days_over_288?.map(d => d.Date) || []);
+                  const over720Dates = new Set(actualCalcData.frequency.days_unacceptable?.map(d => d.Date) || []);
+                  const chartData = actualCalcData.frequency.alarms_per_day.map(item => ({
+                    date: item.Date,
+                    alarm_count: item.Alarm_Count,
+                    is_over_288: over288Dates.has(item.Date),
+                    is_over_720: over720Dates.has(item.Date),
+                  }));
+                  
+                  return (
+                    <AlarmFrequencyTrendChart
+                      data={chartData}
+                      isLoading={false}
+                      totalDays={actualCalcData.frequency.summary.total_days_analyzed}
+                      daysOver288={actualCalcData.frequency.summary.days_over_288_count}
+                      daysOver720={actualCalcData.frequency.summary.days_unacceptable_count}
+                    />
+                  );
+                })()}
 
                 {/* Summary Stats Card */}
                 <div className="bg-card rounded-lg border p-6">

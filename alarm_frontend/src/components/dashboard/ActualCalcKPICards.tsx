@@ -4,12 +4,20 @@
  */
 
 import { useState } from 'react';
-import { TrendingUp, AlertTriangle, Activity, Calendar, ShieldAlert } from 'lucide-react';
+import { TrendingUp, AlertTriangle, Activity, Calendar, ShieldAlert, LucideIcon } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ActualCalcKPIs, ActualCalcCounts, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
 import { UnhealthyPeriodsModal } from './UnhealthyPeriodsModal';
 import { FloodWindowsModal } from './FloodWindowsModal';
 import { BadActorsModal } from './BadActorsModal';
+
+interface KPICard {
+  title: string;
+  value: string;
+  description: string;
+  icon: LucideIcon;
+  trend: 'positive' | 'neutral' | 'negative';
+}
 
 interface ActualCalcKPICardsProps {
   kpis: ActualCalcKPIs;
@@ -40,7 +48,8 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
   const total = Math.max(1, Number(counts.total_alarms || 0));
   const nuisanceTotal = Number(counts.total_chattering || 0) + Number(counts.total_instrument_failure_chattering || 0);
 
-  const cards = [
+  // Section 1: Alarm Summary
+  const alarmSummaryCards = [
     {
       title: 'Total Alarms',
       value: counts.total_alarms.toLocaleString(),
@@ -69,29 +78,49 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
       icon: Activity,
       trend: nuisanceTotal === 0 ? 'positive' : nuisanceTotal / counts.total_alarms <= 0.1 ? 'neutral' : 'negative',
     },
+  ];
+
+  // Section 2: Frequency Metrics (Time-based)
+  const frequencyMetricsCards = [
     {
-      title: 'Completion Rate',
-      value: `${kpis.completion_rate_pct.toFixed(1)}%`,
-      description: 'Alarm cycles completed',
-      icon: TrendingUp,
-      trend: kpis.completion_rate_pct >= 95 ? 'positive' : kpis.completion_rate_pct >= 85 ? 'neutral' : 'negative',
+      title: 'Alarm Rate (Daily)',
+      value: `${kpis.avg_alarms_per_day.toFixed(1)}/day`,
+      description: 'ISO/EEMUA 191 - Average per day',
+      icon: Calendar,
+      trend: kpis.avg_alarms_per_day <= 288 ? 'positive' : kpis.avg_alarms_per_day <= 720 ? 'neutral' : 'negative',
     },
     {
-      title: 'Alarm Rate',
+      title: 'Alarm Rate (Hourly)',
+      value: `${kpis.avg_alarms_per_hour.toFixed(1)}/hour`,
+      description: 'ISO/EEMUA 191 - Average per hour',
+      icon: Activity,
+      trend: kpis.avg_alarms_per_hour <= 12 ? 'positive' : kpis.avg_alarms_per_hour <= 30 ? 'neutral' : 'negative',
+    },
+    {
+      title: 'Alarm Rate (10min)',
       value: `${kpis.avg_alarms_per_10min.toFixed(1)}/10min`,
-      description: 'Average alarm frequency',
+      description: 'ISO/EEMUA 191 - Average per 10 minutes',
       icon: TrendingUp,
       trend: kpis.avg_alarms_per_10min <= 10 ? 'positive' : kpis.avg_alarms_per_10min <= 50 ? 'neutral' : 'negative',
     },
     {
       title: 'ISA Compliance',
       value: `${(100 - kpis.days_over_288_alarms_pct).toFixed(1)}%`,
-      description: 'Days under 288 alarms/day',
+      description: `Days under 288 alarms/day${kpis.total_days_analyzed ? ` (${kpis.total_days_analyzed} days analyzed)` : ''}`,
       icon: Calendar,
       trend: kpis.days_over_288_alarms_pct <= 10 ? 'positive' : kpis.days_over_288_alarms_pct <= 30 ? 'neutral' : 'negative',
     },
-    // New Actual-Calc totals (optional)
-    ...(totals ? [
+    ...(typeof kpis.days_unacceptable_pct === 'number' ? [{
+      title: 'Critical Overload',
+      value: `${kpis.days_unacceptable_pct.toFixed(1)}%`,
+      description: `Days ≥720 alarms/day (${kpis.days_unacceptable_count || 0} days)`,
+      icon: AlertTriangle,
+      trend: kpis.days_unacceptable_pct === 0 ? 'positive' : kpis.days_unacceptable_pct <= 5 ? 'neutral' : 'negative' as const,
+    }] : []),
+  ];
+
+  // Section 3: Detailed Analytics (Clickable)
+  const detailedAnalyticsCards = totals ? [
       {
         title: 'Unhealthy Periods',
         value: Number(totals?.total_unhealthy_periods || 0).toLocaleString(),
@@ -113,31 +142,15 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
         icon: ShieldAlert,
         trend: 'neutral' as const,
       }
-    ] : []),
-  ];
+    ] : [];
 
-  if (isLoading) {
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
-        {[...Array(cards.length)].map((_, i) => (
-          <Card key={i} className="shadow-metric-card h-full min-h-[140px] flex flex-col">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <div className="h-4 w-24 bg-muted animate-pulse rounded" />
-              <div className="h-4 w-4 bg-muted animate-pulse rounded" />
-            </CardHeader>
-            <CardContent className="mt-auto">
-              <div className="h-8 w-16 bg-muted animate-pulse rounded mb-2" />
-              <div className="h-3 w-32 bg-muted animate-pulse rounded" />
-            </CardContent>
-          </Card>
-        ))}
+  const renderCardSection = (cards: KPICard[], sectionTitle: string) => (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <h3 className="text-lg font-semibold text-foreground">{sectionTitle}</h3>
+        <div className="flex-1 h-px bg-border"></div>
       </div>
-    );
-  }
-
-  return (
-    <>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {cards.map((card) => {
           const Icon = card.icon;
           const isUnhealthyCard = card.title === 'Unhealthy Periods';
@@ -189,6 +202,42 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
             </Card>
           );
         })}
+      </div>
+    </div>
+  );
+
+  if (isLoading) {
+    return (
+      <div className="space-y-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          {[...Array(5)].map((_, i) => (
+            <Card key={i} className="shadow-metric-card h-full min-h-[140px] flex flex-col">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <div className="h-4 w-24 bg-muted animate-pulse rounded" />
+                <div className="h-4 w-4 bg-muted animate-pulse rounded" />
+              </CardHeader>
+              <CardContent className="mt-auto">
+                <div className="h-8 w-16 bg-muted animate-pulse rounded mb-2" />
+                <div className="h-3 w-32 bg-muted animate-pulse rounded" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="space-y-8">
+        {/* Section 1: Alarm Summary */}
+        {renderCardSection(alarmSummaryCards, 'Alarm Summary')}
+
+        {/* Section 2: Frequency Metrics */}
+        {renderCardSection(frequencyMetricsCards, 'Frequency Metrics')}
+
+        {/* Section 3: Detailed Analytics */}
+        {detailedAnalyticsCards.length > 0 && renderCardSection(detailedAnalyticsCards, 'Detailed Analytics')}
       </div>
 
       {/* Unhealthy Periods Modal */}

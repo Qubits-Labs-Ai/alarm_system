@@ -7,10 +7,15 @@ export interface ActualCalcKPIs {
   avg_ack_delay_min: number;
   avg_ok_delay_min: number;
   completion_rate_pct: number;
-  avg_alarms_per_day: number;
-  avg_alarms_per_hour: number;
-  avg_alarms_per_10min: number;
-  days_over_288_alarms_pct: number;
+  avg_alarms_per_day: number;           // ISO/EEMUA 191 - activation-based
+  avg_alarms_per_hour: number;          // ISO/EEMUA 191 - activation-based
+  avg_alarms_per_10min: number;         // ISO/EEMUA 191 - activation-based
+  days_over_288_count?: number;         // NEW: Number of days exceeding ISO threshold
+  days_over_288_alarms_pct: number;     // ISO/EEMUA 191 - activation-based
+  days_unacceptable_count?: number;     // NEW: Number of critically overloaded days (≥720/day)
+  days_unacceptable_pct?: number;       // NEW: Percentage of critically overloaded days
+  total_days_analyzed?: number;         // NEW: Total days in dataset
+  total_unique_alarms?: number;         // NEW: Total unique alarm activations
 }
 
 export interface PerSourceRecord {
@@ -58,6 +63,38 @@ export interface ActualCalcPagination {
   returned: number;
 }
 
+export interface FrequencyMetrics {
+  params: {
+    iso_threshold: number;
+    unacceptable_threshold: number;
+  };
+  summary: {
+    avg_alarms_per_day: number;
+    avg_alarms_per_hour: number;
+    avg_alarms_per_10min: number;
+    days_over_288_count: number;
+    days_over_288_alarms_pct: number;
+    days_unacceptable_count: number;
+    days_unacceptable_pct: number;
+    total_days_analyzed: number;
+    total_unique_alarms: number;
+    start_date: string;
+    end_date: string;
+  };
+  alarms_per_day: Array<{
+    Date: string;
+    Alarm_Count: number;
+  }>;
+  days_over_288: Array<{
+    Date: string;
+    Alarm_Count: number;
+  }>;
+  days_unacceptable: Array<{
+    Date: string;
+    Alarm_Count: number;
+  }>;
+}
+
 export interface ActualCalcOverallResponse {
   plant_folder: string;
   mode: string;
@@ -69,6 +106,7 @@ export interface ActualCalcOverallResponse {
   overall: ActualCalcKPIs;
   counts: ActualCalcCounts;
   sample_range: ActualCalcSampleRange;
+  frequency?: FrequencyMetrics;  // New frequency block
   per_source?: PerSourceRecord[];
   per_source_pagination?: ActualCalcPagination;
   cycles?: AlarmCycle[];

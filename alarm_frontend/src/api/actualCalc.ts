@@ -179,6 +179,8 @@ export async function fetchPvciActualCalcOverall(params?: {
   url.searchParams.set('include_cycles', String(include_cycles));
   url.searchParams.set('raw', String(raw));
   url.searchParams.set('force_recompute', String(force_recompute));
+  // Cache-bust to ensure clients receive frequency-enabled payloads after backend update
+  url.searchParams.set('api_version', '2');
 
   // Cache for 15 minutes when no per_source, 5 minutes with per_source
   const ttl = include_per_source ? 5 * 60 * 1000 : 15 * 60 * 1000;

@@ -1980,6 +1980,7 @@ def get_pvci_actual_calc_overall(
                 "overall": cached_data.get("overall"),
                 "counts": cached_data.get("counts"),
                 "sample_range": cached_data.get("sample_range"),
+                "frequency": cached_data.get("frequency"),  # Include frequency metrics
             }
             
             # Add per_source if requested (paginated)
@@ -2001,15 +2002,15 @@ def get_pvci_actual_calc_overall(
         
         # Compute fresh
         logger.info(f"Computing actual-calc with params: {params}")
-        summary_df, kpis, cycles_df, unhealthy, floods, bad_actors = run_actual_calc(
+        summary_df, kpis, cycles_df, unhealthy, floods, bad_actors, frequency = run_actual_calc(
             ALARM_DATA_DIR,
             stale_min=stale_min,
             chatter_min=chatter_min
         )
         
-        # Write to cache (with unhealthy/floods/bad_actors)
+        # Write to cache (with unhealthy/floods/bad_actors/frequency)
         try:
-            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods, bad_actors=bad_actors)
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods, bad_actors=bad_actors, frequency=frequency)
         except Exception as cache_err:
             logger.warning(f"Failed to write cache (non-fatal): {cache_err}")
         
@@ -2044,6 +2045,7 @@ def get_pvci_actual_calc_overall(
             "unhealthy": unhealthy,
             "floods": floods,
             "bad_actors": bad_actors,
+            "frequency": frequency,  # Include ISO/EEMUA 191 frequency metrics
         }
         
         # Add per_source if requested (paginated)
@@ -2179,14 +2181,14 @@ def regenerate_pvci_actual_calc_cache(
         start_time = datetime.now()
         
         # Run computation
-        summary_df, kpis, cycles_df, unhealthy, floods, bad_actors = run_actual_calc(
+        summary_df, kpis, cycles_df, unhealthy, floods, bad_actors, frequency = run_actual_calc(
             ALARM_DATA_DIR,
             stale_min=stale_min,
             chatter_min=chatter_min
         )
         
-        # Write cache (with unhealthy/floods/bad_actors)
-        write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods, bad_actors=bad_actors)
+        # Write cache (with unhealthy/floods/bad_actors/frequency)
+        write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods, bad_actors=bad_actors, frequency=frequency)
         
         compute_time = (datetime.now() - start_time).total_seconds()
         
@@ -2248,10 +2250,10 @@ def get_pvci_actual_calc_unhealthy(
             unhealthy = cached["unhealthy"]
         if unhealthy is None:
             # Compute and cache
-            summary_df, kpis, cycles_df, uh, floods, ba = run_actual_calc(
+            summary_df, kpis, cycles_df, uh, floods, ba, freq = run_actual_calc(
                 ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min
             )
-            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods, bad_actors=ba)
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods, bad_actors=ba, frequency=freq)
             unhealthy = uh
             cached = {
                 "plant_folder": "PVC-I",
@@ -2308,8 +2310,8 @@ def get_pvci_actual_calc_floods(
         if cached and isinstance(cached.get("floods"), dict):
             floods = cached["floods"]
         if floods is None:
-            summary_df, kpis, cycles_df, uh, fl, ba = run_actual_calc(ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min)
-            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=fl, bad_actors=ba)
+            summary_df, kpis, cycles_df, uh, fl, ba, freq = run_actual_calc(ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min)
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=fl, bad_actors=ba, frequency=freq)
             floods = fl
             cached = {
                 "plant_folder": "PVC-I",
@@ -2393,10 +2395,10 @@ def get_pvci_actual_calc_bad_actors(
             bad_actors = cached["bad_actors"]
         if bad_actors is None:
             # Compute and cache
-            summary_df, kpis, cycles_df, uh, floods, ba = run_actual_calc(
+            summary_df, kpis, cycles_df, uh, floods, ba, freq = run_actual_calc(
                 ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min
             )
-            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods, bad_actors=ba)
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods, bad_actors=ba, frequency=freq)
             bad_actors = ba
             cached = {
                 "plant_folder": "PVC-I",
