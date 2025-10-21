@@ -20,14 +20,14 @@ type Props = {
 function StatNode({ title, value, nodeRef }: { title: string; value: number; nodeRef: React.RefObject<HTMLDivElement> }) {
   return (
     <div ref={nodeRef} className="inline-block relative">
-      <Card className="shadow-metric-card bg-dashboard-metric-card-bg min-w-[220px]">
+      <Card className="shadow-metric-card bg-dashboard-metric-card-bg min-w-[160px] sm:min-w-[200px] md:min-w-[220px]">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium text-muted-foreground text-center truncate">
             {title}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold text-center">
+          <div className="text-xl sm:text-2xl font-bold text-center">
             {Number(value || 0).toLocaleString()}
           </div>
         </CardContent>
@@ -63,16 +63,14 @@ export function ActualCalcTree({ data, standingTotal: standingOverride = 0, inst
       if (!c) return;
 
       const rectC = c.getBoundingClientRect();
-      const centerBottom = (el: HTMLElement | null) => {
-        if (!el) return null as any;
+      const centerBottom = (el: HTMLElement): { x: number; y: number } => {
         const r = el.getBoundingClientRect();
         return {
           x: r.left - rectC.left + r.width / 2,
           y: r.bottom - rectC.top,
         };
       };
-      const centerTop = (el: HTMLElement | null) => {
-        if (!el) return null as any;
+      const centerTop = (el: HTMLElement): { x: number; y: number } => {
         const r = el.getBoundingClientRect();
         return {
           x: r.left - rectC.left + r.width / 2,
@@ -107,7 +105,7 @@ export function ActualCalcTree({ data, standingTotal: standingOverride = 0, inst
   }, [totalAlarms, standingTotal, instrumentsFaultyTotal, chatteringTotal]);
 
   return (
-    <div ref={containerRef} className="relative w-full mx-auto">
+    <div ref={containerRef} className="relative w-full mx-auto overflow-hidden px-2 sm:px-0">
       {/* SVG connectors */}
       <svg className="absolute inset-0 w-full h-full pointer-events-none" stroke="#94a3b8" fill="none" strokeWidth={1.5}>
         {paths.map((d, i) => (
@@ -121,7 +119,7 @@ export function ActualCalcTree({ data, standingTotal: standingOverride = 0, inst
       </div>
 
       {/* Row 2: Standing | Nuisance */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-16 items-start max-w-5xl mx-auto mb-10">
+      <div className="grid grid-cols-2 gap-6 md:grid-cols-2 md:gap-16 items-start max-w-5xl mx-auto mb-10">
         <div className="flex justify-center">
           <StatNode title="Standing Alarm" value={standingTotal} nodeRef={standingRef} />
         </div>
@@ -131,7 +129,7 @@ export function ActualCalcTree({ data, standingTotal: standingOverride = 0, inst
       </div>
 
       {/* Row 3: Children of Standing and Nuisance */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-16 items-start max-w-7xl mx-auto">
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-2 md:grid-cols-4 md:gap-16 items-start max-w-7xl mx-auto">
         <div className="flex justify-center order-1 md:order-1">
           <StatNode title="Instruments Faulty" value={instrumentsFaultyTotal} nodeRef={faultyRef} />
         </div>

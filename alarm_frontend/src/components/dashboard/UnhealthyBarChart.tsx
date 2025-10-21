@@ -240,7 +240,7 @@ export function UnhealthyBarChart({
   return (
     <Card className="shadow-metric-card bg-dashboard-metric-card-bg">
       <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <CardTitle className="text-lg font-semibold text-foreground">
                 Unhealthy Bar Chart
@@ -265,7 +265,7 @@ export function UnhealthyBarChart({
                 )}
               </CardDescription>
             </div>
-            <div className="flex gap-2 items-center">
+            <div className="flex flex-wrap items-center gap-2">
               {mode === 'flood' && activeWindowLabel && (
                 <div className="flex items-center gap-2">
                   <div className="text-xs px-2 py-1 rounded bg-muted text-foreground border">
@@ -383,7 +383,8 @@ export function UnhealthyBarChart({
           </div>
         ) : (
           <>
-          <div className="h-80">
+          <div className="h-80 overflow-x-auto">
+            <div className="h-full min-w-[640px] md:min-w-0">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={displayData}
@@ -456,6 +457,7 @@ export function UnhealthyBarChart({
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </div>
           <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
             <div className="flex items-center gap-2">

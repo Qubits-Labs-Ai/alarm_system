@@ -120,21 +120,23 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
         ) : isEmpty ? (
           <div className="h-80 flex items-center justify-center text-muted-foreground">No flood windows in selection.</div>
         ) : (
-          <div className="h-96">
+          <div className="h-96 overflow-x-auto">
+            <div className="h-full min-w-[520px] md:min-w-0">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={displayRows} margin={{ top: 24, right: 24, bottom: 24, left: 24 }}>
                 {/* Per-bar gradients to visualize top 3 sources contribution within each bar */}
                 <defs>
                   {displayRows.map((r) => {
-                    const tsAll = Array.isArray(r.top_sources)
-                      ? [...r.top_sources].sort((a, b) => b.count - a.count)
+                    const tsAll: Array<{ source: string; count: number }> = Array.isArray(r.top_sources)
+                      ? [...(r.top_sources as Array<{ source: string; count: number }>)]
                       : [];
+                    tsAll.sort((a, b) => b.count - a.count);
                     // Apply includeSystem toggle and unhealthy-only filter (count >= 10)
                     const ts = (includeSystem ? tsAll : tsAll.filter(s => !isMetaSource(s.source)));
                     const c1 = ts[0]?.count ?? 0; // highest
                     const c2 = ts[1]?.count ?? 0; // middle
                     const c3 = ts[2]?.count ?? 0; // lowest of the shown top 3
-                    const totalVisible = Math.max(1, Number((r as any).flood_visible ?? r.flood_count ?? 0));
+                    const totalVisible = Math.max(1, Number((r as { flood_visible?: number; flood_count?: number }).flood_visible ?? r.flood_count ?? 0));
                     const others = Math.max(0, totalVisible - (c1 + c2 + c3));
                     const pctLowEnd = ((others + c3) / totalVisible) * 100; // bottom section end
                     const pctMedEnd = ((others + c3 + c2) / totalVisible) * 100; // middle section end
@@ -261,6 +263,7 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </div>
         )}
       </CardContent>

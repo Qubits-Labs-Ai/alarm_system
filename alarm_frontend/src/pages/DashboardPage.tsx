@@ -41,7 +41,7 @@ export default function DashboardPage() {
   const [plants, setPlants] = useState<Plant[]>([]);
   const [plantsLoading, setPlantsLoading] = useState<boolean>(true);
   const [topN, setTopN] = useState<1 | 3>(1);
-  const [mode, setMode] = useState<'perSource' | 'flood' | 'actualCalc'>('flood');
+  const [mode, setMode] = useState<'perSource' | 'flood' | 'actualCalc'>('actualCalc');
   
   
 
@@ -599,8 +599,8 @@ export default function DashboardPage() {
     >
       <div className="space-y-6">
         {/* Plant Selector + Agent (PVC-I only) */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <PlantSelector
               plants={plants}
               selectedPlant={selectedPlant}
@@ -618,10 +618,10 @@ export default function DashboardPage() {
               </Button>
             )}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
             <span className="text-sm text-muted-foreground">Mode</span>
             <Select value={mode} onValueChange={(v) => setMode(v as any)} disabled={selectedPlant.id !== 'pvcI'}>
-              <SelectTrigger className="w-56">
+              <SelectTrigger className="w-full sm:w-56">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

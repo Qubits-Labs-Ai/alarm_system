@@ -182,6 +182,8 @@ export function AlarmFrequencyTrendChart({
       </CardHeader>
       
       <CardContent>
+        <div className="overflow-x-auto">
+          <div className="min-w-[560px] md:min-w-0">
         <ResponsiveContainer width="100%" height={400}>
           <ComposedChart
             data={sortedData}
@@ -280,6 +282,8 @@ export function AlarmFrequencyTrendChart({
 
           </ComposedChart>
         </ResponsiveContainer>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );
