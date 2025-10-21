@@ -24,6 +24,13 @@ UNHEALTHY_THRESHOLD = 10
 WINDOW_MINUTES = 10
 FLOOD_SOURCE_THRESHOLD = 2
 
+# Centralized activation-window overload thresholds (used everywhere)
+# Change these once and they apply across all calculations and outputs
+ACT_WINDOW_OVERLOAD_OP = ">"      # comparison operator for overload window (e.g., ">" or ">=")
+ACT_WINDOW_OVERLOAD_THRESHOLD = 2   # unique activations per 10-min window
+ACT_WINDOW_UNACCEPTABLE_OP = ">="  # comparison operator for unacceptable window
+ACT_WINDOW_UNACCEPTABLE_THRESHOLD = 5
+
 
 # ---------- CORE KPI LOGIC (EXACT FROM NOTEBOOK) ----------
 
@@ -537,6 +544,207 @@ def identify_bad_actors(flood_summary_df: pd.DataFrame, top_n: int = 10) -> pd.D
     return bad_actors_df.head(top_n)
 
 
+# ---------- ACTIVATION-BASED ISA-STYLE WINDOW METRICS ----------
+
+def _apply_op(value: int, op: str, threshold: int) -> bool:
+    """Apply a simple comparison operator between value and threshold."""
+    if op == ">":
+        return value > threshold
+    if op == ">=":
+        return value >= threshold
+    if op == "<":
+        return value < threshold
+    if op == "<=":
+        return value <= threshold
+    if op == "==":
+        return value == threshold
+    raise ValueError(f"Unsupported operator: {op}")
+
+
+def compute_activation_window_metrics(
+    activations_df: pd.DataFrame,
+    window_minutes: int,
+    overload_op: str,
+    overload_threshold: int,
+    unacceptable_op: str,
+    unacceptable_threshold: int,
+) -> Dict[str, Any]:
+    """
+    Compute ISA-style overall health metrics using UNIQUE activations per fixed 10-min window.
+    Returns dict with:
+      - total_windows
+      - overload_windows_count
+      - unacceptable_windows_count
+      - activation_time_in_overload_windows_pct
+      - activation_time_in_unacceptable_windows_pct
+      - activation_overall_health_pct (100 - overload_pct)
+      - peak_10min_activation_count, peak_10min_window_start, peak_10min_window_end
+    """
+    if activations_df is None or activations_df.empty:
+        return {
+            "total_windows": 0,
+            "overload_windows_count": 0,
+            "unacceptable_windows_count": 0,
+            "activation_time_in_overload_windows_pct": 0.0,
+            "activation_time_in_unacceptable_windows_pct": 0.0,
+            "activation_overall_health_pct": 100.0,
+            "peak_10min_activation_count": 0,
+            "peak_10min_window_start": None,
+            "peak_10min_window_end": None,
+        }
+
+    df = activations_df.copy()
+    df["StartTime"] = pd.to_datetime(df["StartTime"], errors="coerce")
+    df = df.dropna(subset=["StartTime"]).sort_values("StartTime")
+    if df.empty:
+        return {
+            "total_windows": 0,
+            "overload_windows_count": 0,
+            "unacceptable_windows_count": 0,
+            "activation_time_in_overload_windows_pct": 0.0,
+            "activation_time_in_unacceptable_windows_pct": 0.0,
+            "activation_overall_health_pct": 100.0,
+            "peak_10min_activation_count": 0,
+            "peak_10min_window_start": None,
+            "peak_10min_window_end": None,
+        }
+
+    # Align to fixed windows
+    freq = f"{int(window_minutes)}T"
+    start = df["StartTime"].min().floor(freq)
+    end = (df["StartTime"].max() + pd.Timedelta(minutes=window_minutes)).ceil(freq)
+    # All window starts in range [start, end)
+    window_starts = pd.date_range(start=start, end=end, freq=freq, inclusive="left")
+    counts = df.groupby(df["StartTime"].dt.floor(freq)).size().reindex(window_starts, fill_value=0)
+
+    total_windows = int(len(counts))
+    if total_windows == 0:
+        return {
+            "total_windows": 0,
+            "overload_windows_count": 0,
+            "unacceptable_windows_count": 0,
+            "activation_time_in_overload_windows_pct": 0.0,
+            "activation_time_in_unacceptable_windows_pct": 0.0,
+            "activation_overall_health_pct": 100.0,
+            "peak_10min_activation_count": 0,
+            "peak_10min_window_start": None,
+            "peak_10min_window_end": None,
+        }
+
+    overload_mask = counts.apply(lambda x: _apply_op(int(x), overload_op, int(overload_threshold)))
+    unacceptable_mask = counts.apply(lambda x: _apply_op(int(x), unacceptable_op, int(unacceptable_threshold)))
+
+    overload_windows = int(overload_mask.sum())
+    unacceptable_windows = int(unacceptable_mask.sum())
+
+    overload_pct = round((overload_windows / total_windows) * 100.0, 2)
+    unacceptable_pct = round((unacceptable_windows / total_windows) * 100.0, 2)
+    overall_health_pct = round(100.0 - overload_pct, 2)
+
+    peak_count = int(counts.max()) if not counts.empty else 0
+    if peak_count > 0:
+        peak_start = counts.idxmax()
+        peak_end = peak_start + pd.Timedelta(minutes=window_minutes)
+        peak_start_iso = peak_start.isoformat()
+        peak_end_iso = peak_end.isoformat()
+    else:
+        peak_start_iso = None
+        peak_end_iso = None
+
+    return {
+        "total_windows": total_windows,
+        "overload_windows_count": overload_windows,
+        "unacceptable_windows_count": unacceptable_windows,
+        "activation_time_in_overload_windows_pct": overload_pct,
+        "activation_time_in_unacceptable_windows_pct": unacceptable_pct,
+        "activation_overall_health_pct": overall_health_pct,
+        "peak_10min_activation_count": peak_count,
+        "peak_10min_window_start": peak_start_iso,
+        "peak_10min_window_end": peak_end_iso,
+    }
+
+
+def get_activation_peak_details(alarm_data_dir: str, start_iso: str, end_iso: str) -> Dict[str, Any]:
+    """Return per-source UNIQUE activation counts within [start, end).
+
+    Uses the same unique activation logic as the actual-calc pipeline (Blank when IDLE/ACKED → activation).
+    This is intended for verifying the peak 10-minute window shown in the frontend.
+    """
+    try:
+        start = pd.to_datetime(start_iso, utc=False, errors="coerce")
+        end = pd.to_datetime(end_iso, utc=False, errors="coerce")
+        # Normalize timezone-aware inputs to naive (to match dataset which is naive)
+        try:
+            if hasattr(start, "tzinfo") and start.tzinfo is not None:
+                start = start.tz_convert(None)
+        except Exception:
+            try:
+                start = start.tz_localize(None)
+            except Exception:
+                pass
+        try:
+            if hasattr(end, "tzinfo") and end.tzinfo is not None:
+                end = end.tz_convert(None)
+        except Exception:
+            try:
+                end = end.tz_localize(None)
+            except Exception:
+                pass
+        if pd.isna(start) or pd.isna(end) or start >= end:
+            raise ValueError("Invalid start/end time range")
+
+        df = load_pvci_merged_csv(alarm_data_dir)
+        df = df.copy()
+        df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+        df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+        df = df.sort_values(["Source", "Event Time"]).dropna(subset=["Event Time", "Source"])
+
+        # Build unique activations (same state machine trigger as elsewhere)
+        activations = []
+        for src, g in df.groupby("Source"):
+            state = "IDLE"
+            for _, r in g.iterrows():
+                a = r["Action"]
+                t = r["Event Time"]
+                if a == "" and state in ("IDLE", "ACKED"):
+                    activations.append({"Source": src, "StartTime": t})
+                    state = "ACTIVE"
+                elif a == "ACK" and state == "ACTIVE":
+                    state = "ACKED"
+                elif a == "OK":
+                    state = "IDLE"
+
+        acts_df = pd.DataFrame(activations)
+        if acts_df.empty:
+            return {"window": {"start": start_iso, "end": end_iso}, "total": 0, "top_sources": []}
+
+        # Filter to [start, end). If empty, try inclusive end and slight widen to be robust against rounding.
+        filt = (acts_df["StartTime"] >= start) & (acts_df["StartTime"] < end)
+        filtered = acts_df[filt]
+        if filtered.empty:
+            filt2 = (acts_df["StartTime"] >= start) & (acts_df["StartTime"] <= end)
+            filtered = acts_df[filt2]
+        if filtered.empty:
+            widened_end = end + pd.Timedelta(seconds=1)
+            filt3 = (acts_df["StartTime"] >= start) & (acts_df["StartTime"] < widened_end)
+            filtered = acts_df[filt3]
+        if filtered.empty:
+            return {"window": {"start": start_iso, "end": end_iso}, "total": 0, "top_sources": []}
+
+        counts = filtered["Source"].value_counts()
+        total = int(counts.sum())
+        top_sources = [{"source": k, "count": int(v)} for k, v in counts.head(50).items()]
+
+        return {
+            "window": {"start": start_iso, "end": end_iso},
+            "total": total,
+            "top_sources": top_sources,
+        }
+    except Exception as e:
+        logger.error(f"get_activation_peak_details error: {e}")
+        raise
+
+
 # ---------- DATA LOADING ----------
 
 def load_pvci_merged_csv(alarm_data_dir: str) -> pd.DataFrame:
@@ -600,6 +808,11 @@ def run_actual_calc(
     flood_source_threshold: int = FLOOD_SOURCE_THRESHOLD,
     iso_threshold: int = 288,
     unacceptable_threshold: int = 720,
+    # Activation-window ISA-style healthy metrics (centralized overrides)
+    act_window_overload_op: str = ACT_WINDOW_OVERLOAD_OP,
+    act_window_overload_threshold: int = ACT_WINDOW_OVERLOAD_THRESHOLD,
+    act_window_unacceptable_op: str = ACT_WINDOW_UNACCEPTABLE_OP,
+    act_window_unacceptable_threshold: int = ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
 ) -> Tuple[pd.DataFrame, Dict[str, Any], pd.DataFrame, Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     """Run actual calculation with specified thresholds.
     
@@ -617,6 +830,7 @@ def run_actual_calc(
         Tuple of (summary_df, kpis_dict, cycles_df, unhealthy_dict, floods_dict, bad_actors_dict, frequency_dict)
     """
     global STALE_THRESHOLD_MIN, CHATTER_THRESHOLD_MIN, UNHEALTHY_THRESHOLD, WINDOW_MINUTES, FLOOD_SOURCE_THRESHOLD
+    global ACT_WINDOW_OVERLOAD_OP, ACT_WINDOW_OVERLOAD_THRESHOLD, ACT_WINDOW_UNACCEPTABLE_OP, ACT_WINDOW_UNACCEPTABLE_THRESHOLD
     
     # Update thresholds
     STALE_THRESHOLD_MIN = stale_min
@@ -624,11 +838,17 @@ def run_actual_calc(
     UNHEALTHY_THRESHOLD = unhealthy_threshold
     WINDOW_MINUTES = window_minutes
     FLOOD_SOURCE_THRESHOLD = flood_source_threshold
+    ACT_WINDOW_OVERLOAD_OP = act_window_overload_op
+    ACT_WINDOW_OVERLOAD_THRESHOLD = act_window_overload_threshold
+    ACT_WINDOW_UNACCEPTABLE_OP = act_window_unacceptable_op
+    ACT_WINDOW_UNACCEPTABLE_THRESHOLD = act_window_unacceptable_threshold
     
     logger.info(
         f"Running actual calculation with stale_min={stale_min}, chatter_min={chatter_min}, "
         f"unhealthy_threshold={unhealthy_threshold}, window_minutes={window_minutes}, "
-        f"flood_source_threshold={flood_source_threshold}"
+        f"flood_source_threshold={flood_source_threshold}, "
+        f"act_overload=({ACT_WINDOW_OVERLOAD_OP} {ACT_WINDOW_OVERLOAD_THRESHOLD}), "
+        f"act_unacceptable=({ACT_WINDOW_UNACCEPTABLE_OP} {ACT_WINDOW_UNACCEPTABLE_THRESHOLD})"
     )
     
     # Load data
@@ -653,6 +873,16 @@ def run_actual_calc(
     )
     ua_dur = (datetime.now() - ua_start).total_seconds()
     logger.info(f"Unhealthy/Flood computed in {ua_dur:.2f}s: {len(unhealthy_df)} sources, {len(flood_df)} windows")
+
+    # Activation-based ISA-style window metrics (using centralized thresholds)
+    act_metrics = compute_activation_window_metrics(
+        activations_df=activations_df,
+        window_minutes=window_minutes,
+        overload_op=ACT_WINDOW_OVERLOAD_OP,
+        overload_threshold=ACT_WINDOW_OVERLOAD_THRESHOLD,
+        unacceptable_op=ACT_WINDOW_UNACCEPTABLE_OP,
+        unacceptable_threshold=ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+    )
 
     # Build JSON-ready dicts for cache consumers
     total_unhealthy_periods = int(unhealthy_df["Unhealthy_Periods"].sum()) if not unhealthy_df.empty else 0
@@ -733,6 +963,19 @@ def run_actual_calc(
         "total_unique_alarms": freq_summary.get("total_unique_alarms", 0),
     })
 
+    # Merge activation window metrics into overall KPIs
+    kpis.update({
+        "activation_time_in_overload_windows_pct": act_metrics.get("activation_time_in_overload_windows_pct", 0.0),
+        "activation_time_in_unacceptable_windows_pct": act_metrics.get("activation_time_in_unacceptable_windows_pct", 0.0),
+        "activation_overall_health_pct": act_metrics.get("activation_overall_health_pct", 100.0),
+        "total_activation_windows": act_metrics.get("total_windows", 0),
+        "overload_windows_count": act_metrics.get("overload_windows_count", 0),
+        "unacceptable_windows_count": act_metrics.get("unacceptable_windows_count", 0),
+        "peak_10min_activation_count": act_metrics.get("peak_10min_activation_count", 0),
+        "peak_10min_window_start": act_metrics.get("peak_10min_window_start"),
+        "peak_10min_window_end": act_metrics.get("peak_10min_window_end"),
+    })
+
     # Log summary statistics
     total_sources = len(summary)
     total_alarms = summary["Unique_Alarms"].sum()
@@ -740,6 +983,11 @@ def run_actual_calc(
     logger.info(f"Results: {total_sources} sources, {total_alarms} unique alarms")
     logger.info(f"Overall KPIs: avg_ack={kpis['avg_ack_delay_min']:.2f}min, avg_ok={kpis['avg_ok_delay_min']:.2f}min, completion={kpis['completion_rate_pct']:.1f}%")
     logger.info(f"Frequency KPIs: avg_alarms_per_day={kpis['avg_alarms_per_day']:.2f}, days_over_288={kpis['days_over_288_alarms_pct']:.1f}%, days_unacceptable={kpis['days_unacceptable_pct']:.1f}%")
+    logger.info(
+        f"Activation Window KPIs: overload_pct={kpis['activation_time_in_overload_windows_pct']:.2f}%, "
+        f"unacceptable_pct={kpis['activation_time_in_unacceptable_windows_pct']:.2f}%, "
+        f"overall_health_pct={kpis['activation_overall_health_pct']:.2f}%"
+    )
     
     return summary, kpis, cycles, unhealthy_dict, floods_dict, bad_actors_dict, frequency_dict
 
@@ -809,17 +1057,30 @@ def read_cache(base_dir: str, params: Dict[str, Any]) -> Dict[str, Any] | None:
         with open(cache_path, 'r', encoding='utf-8') as f:
             cached_data = json.load(f)
         
-        # Validate params match
         cached_params = cached_data.get("params", {})
-        if (
-            cached_params.get("stale_min") == params.get("stale_min")
-            and cached_params.get("chatter_min") == params.get("chatter_min")
-        ):
-            logger.info(f"Cache hit with matching params: {params}")
+
+        # Build the effective-current params including centralized activation/flood thresholds
+        current_params = {
+            "stale_min": STALE_THRESHOLD_MIN,
+            "chatter_min": CHATTER_THRESHOLD_MIN,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
+        # Overlay any explicit caller-provided params on top of current
+        effective_requested = {**current_params, **(params or {})}
+
+        # All keys in effective_requested must match cached_params
+        matches = all(cached_params.get(k) == v for k, v in effective_requested.items())
+        if matches:
+            logger.info(f"Cache hit with matching params: {effective_requested}")
             return cached_data
-        else:
-            logger.info(f"Cache params mismatch. Cached: {cached_params}, Requested: {params}")
-            return None
+        logger.info(f"Cache params mismatch. Cached: {cached_params}, Requested: {effective_requested}")
+        return None
             
     except Exception as e:
         logger.warning(f"Failed to read cache: {str(e)}")

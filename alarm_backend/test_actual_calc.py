@@ -13,7 +13,12 @@ sys.path.insert(0, str(backend_dir))
 sys.path.insert(0, str(backend_dir / "PVCI-actual-calc"))
 
 # Import service
-from actual_calc_service import run_actual_calc, write_cache, read_cache
+from actual_calc_service import (
+    run_actual_calc, write_cache, read_cache,
+    UNHEALTHY_THRESHOLD, WINDOW_MINUTES, FLOOD_SOURCE_THRESHOLD,
+    ACT_WINDOW_OVERLOAD_OP, ACT_WINDOW_OVERLOAD_THRESHOLD,
+    ACT_WINDOW_UNACCEPTABLE_OP, ACT_WINDOW_UNACCEPTABLE_THRESHOLD
+)
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -39,7 +44,17 @@ def test_actual_calc(use_cache: bool = False):
         logger.info("PVCI Actual Calculation — regenerate cache")
         logger.info("=" * 60)
         
-        params = {"stale_min": 60, "chatter_min": 10}
+        params = {
+            "stale_min": 60,
+            "chatter_min": 10,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
         cached = read_cache(str(backend_dir), params) if use_cache else None
         if cached:
             logger.info("Cache exists with matching params; skipping compute.")
@@ -53,6 +68,13 @@ def test_actual_calc(use_cache: bool = False):
             str(alarm_data_dir),
             stale_min=60,
             chatter_min=10,
+            unhealthy_threshold=UNHEALTHY_THRESHOLD,
+            window_minutes=WINDOW_MINUTES,
+            flood_source_threshold=FLOOD_SOURCE_THRESHOLD,
+            act_window_overload_op=ACT_WINDOW_OVERLOAD_OP,
+            act_window_overload_threshold=ACT_WINDOW_OVERLOAD_THRESHOLD,
+            act_window_unacceptable_op=ACT_WINDOW_UNACCEPTABLE_OP,
+            act_window_unacceptable_threshold=ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
         )
         
         # Validate results

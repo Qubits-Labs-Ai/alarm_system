@@ -11,6 +11,7 @@ import {
   ActualCalcUnhealthyResponse,
   ActualCalcFloodsResponse,
   ActualCalcBadActorsResponse,
+  PeakDetailsResponse,
 } from '@/types/actualCalc';
 
 // Simple cache reuse from plantHealth.ts pattern
@@ -21,6 +22,25 @@ const STORAGE_PREFIX = 'ams.apiCache.v1:';
 
 function now() {
   return Date.now();
+}
+
+/**
+ * Fetch activation peak details (per-source unique activations in a given window)
+ */
+export async function fetchPvciActualCalcPeakDetails(params?: {
+  start_iso?: string;
+  end_iso?: string;
+  stale_min?: number;
+  chatter_min?: number;
+  timeout_ms?: number;
+}): Promise<PeakDetailsResponse> {
+  const { start_iso, end_iso, stale_min = 60, chatter_min = 10, timeout_ms } = params || {};
+  const url = new URL(`${API_BASE_URL}/pvcI-actual-calc/peak-details`);
+  url.searchParams.set('stale_min', String(stale_min));
+  url.searchParams.set('chatter_min', String(chatter_min));
+  if (start_iso) url.searchParams.set('start_iso', start_iso);
+  if (end_iso) url.searchParams.set('end_iso', end_iso);
+  return fetchWithCache<PeakDetailsResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
 }
 
 /**

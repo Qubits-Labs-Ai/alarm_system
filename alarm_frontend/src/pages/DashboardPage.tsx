@@ -10,6 +10,7 @@ import { ErrorState } from '@/components/dashboard/ErrorState';
 import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
 import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
 import { AlarmFrequencyTrendChart } from '@/components/dashboard/AlarmFrequencyTrendChart';
+import ActivationOverloadSummary from '@/components/dashboard/ActivationOverloadSummary';
 import { fetchPvciActualCalcOverall, fetchPvciActualCalcUnhealthy, fetchPvciActualCalcFloods, fetchPvciActualCalcBadActors } from '@/api/actualCalc';
 import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
@@ -227,11 +228,11 @@ export default function DashboardPage() {
             chatter_min: 10,
             include_per_source: false,
             include_cycles: false,
-            timeout_ms: 30000,
+            timeout_ms: 120000, // Increased to 120s for activation window calculations
           }),
-          fetchPvciActualCalcUnhealthy({ stale_min: 60, chatter_min: 10, limit: 500, timeout_ms: 30000 }),
-          fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200, timeout_ms: 30000 }),
-          fetchPvciActualCalcBadActors({ stale_min: 60, chatter_min: 10, limit: 10, timeout_ms: 30000 }),
+          fetchPvciActualCalcUnhealthy({ stale_min: 60, chatter_min: 10, limit: 500, timeout_ms: 120000 }),
+          fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200, timeout_ms: 120000 }),
+          fetchPvciActualCalcBadActors({ stale_min: 60, chatter_min: 10, limit: 10, timeout_ms: 120000 }),
         ]);
         if (mounted) {
           setActualCalcData(overall);
@@ -873,7 +874,10 @@ export default function DashboardPage() {
                 {/* Tree on top */}
                 <ActualCalcTree data={actualCalcData} />
 
-                {/* KPI Cards below tree */}
+                {/* Activation-based Health Summary */}
+                <ActivationOverloadSummary overall={actualCalcData.overall} params={actualCalcData.params} />
+
+                {/* KPI Cards below health summary */}
                 <ActualCalcKPICards
                   kpis={actualCalcData.overall}
                   counts={actualCalcData.counts}

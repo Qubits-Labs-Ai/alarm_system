@@ -289,6 +289,54 @@ def get_pvcI_overall_health(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/pvcI-actual-calc/peak-details", response_class=ORJSONResponse)
+def get_pvci_actual_calc_peak_details(
+    start_iso: str | None = None,
+    end_iso: str | None = None,
+    stale_min: int = 60,
+    chatter_min: int = 10,
+):
+    """Return per-source UNIQUE activation counts within a 10-min window.
+
+    - If start/end are omitted, use the peak window from cached overall (activation-based), if available.
+    - This verifies the activation peak shown in actual-calc mode comes from unique activations.
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service is not available")
+    try:
+        params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
+        cached = read_cache(BASE_DIR, params)
+
+        s = start_iso
+        e = end_iso
+        if (s is None or e is None) and cached:
+            try:
+                overall = (cached or {}).get("overall", {})
+                s = s or overall.get("peak_10min_window_start")
+                e = e or overall.get("peak_10min_window_end")
+            except Exception:
+                pass
+        if not s or not e:
+            raise HTTPException(status_code=400, detail="Provide start_iso and end_iso, or generate overall cache first")
+
+        details = get_activation_peak_details(ALARM_DATA_DIR, s, e)
+        return details
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"peak-details error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/pvcI-health/overall/weighted")
 def get_pvcI_overall_health_weighted_endpoint(
@@ -1901,7 +1949,16 @@ try:
         read_cache,
         write_cache,
         dataframe_to_json_records,
-        kpis_to_json_safe
+        kpis_to_json_safe,
+        # Centralized activation/flood thresholds for cache params
+        ACT_WINDOW_OVERLOAD_OP,
+        ACT_WINDOW_OVERLOAD_THRESHOLD,
+        ACT_WINDOW_UNACCEPTABLE_OP,
+        ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        UNHEALTHY_THRESHOLD,
+        WINDOW_MINUTES,
+        FLOOD_SOURCE_THRESHOLD,
+        get_activation_peak_details,
     )
     ACTUAL_CALC_AVAILABLE = True
 except ImportError as ie:
@@ -1959,7 +2016,17 @@ def get_pvci_actual_calc_overall(
         )
     
     try:
-        params = {"stale_min": stale_min, "chatter_min": chatter_min}
+        params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
         
         # Try cache first
         cached_data = None
@@ -2005,7 +2072,14 @@ def get_pvci_actual_calc_overall(
         summary_df, kpis, cycles_df, unhealthy, floods, bad_actors, frequency = run_actual_calc(
             ALARM_DATA_DIR,
             stale_min=stale_min,
-            chatter_min=chatter_min
+            chatter_min=chatter_min,
+            unhealthy_threshold=UNHEALTHY_THRESHOLD,
+            window_minutes=WINDOW_MINUTES,
+            flood_source_threshold=FLOOD_SOURCE_THRESHOLD,
+            act_window_overload_op=ACT_WINDOW_OVERLOAD_OP,
+            act_window_overload_threshold=ACT_WINDOW_OVERLOAD_THRESHOLD,
+            act_window_unacceptable_op=ACT_WINDOW_UNACCEPTABLE_OP,
+            act_window_unacceptable_threshold=ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
         )
         
         # Write to cache (with unhealthy/floods/bad_actors/frequency)
@@ -2100,7 +2174,17 @@ def get_pvci_actual_calc_per_source(
         )
     
     try:
-        params = {"stale_min": stale_min, "chatter_min": chatter_min}
+        params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
         
         # Try to read from cache
         cached_data = read_cache(BASE_DIR, params)
@@ -2174,7 +2258,17 @@ def regenerate_pvci_actual_calc_cache(
         )
     
     try:
-        params = {"stale_min": stale_min, "chatter_min": chatter_min}
+        params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
         
         logger.info(f"Regenerating actual-calc cache with params: {params}")
         
@@ -2184,7 +2278,14 @@ def regenerate_pvci_actual_calc_cache(
         summary_df, kpis, cycles_df, unhealthy, floods, bad_actors, frequency = run_actual_calc(
             ALARM_DATA_DIR,
             stale_min=stale_min,
-            chatter_min=chatter_min
+            chatter_min=chatter_min,
+            unhealthy_threshold=UNHEALTHY_THRESHOLD,
+            window_minutes=WINDOW_MINUTES,
+            flood_source_threshold=FLOOD_SOURCE_THRESHOLD,
+            act_window_overload_op=ACT_WINDOW_OVERLOAD_OP,
+            act_window_overload_threshold=ACT_WINDOW_OVERLOAD_THRESHOLD,
+            act_window_unacceptable_op=ACT_WINDOW_UNACCEPTABLE_OP,
+            act_window_unacceptable_threshold=ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
         )
         
         # Write cache (with unhealthy/floods/bad_actors/frequency)
@@ -2243,7 +2344,17 @@ def get_pvci_actual_calc_unhealthy(
     if not ACTUAL_CALC_AVAILABLE:
         raise HTTPException(status_code=501, detail="Actual calculation service is not available")
     try:
-        params = {"stale_min": stale_min, "chatter_min": chatter_min}
+        params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
         cached = None if force_recompute else read_cache(BASE_DIR, params)
         unhealthy = None
         if cached and isinstance(cached.get("unhealthy"), dict):
@@ -2251,7 +2362,16 @@ def get_pvci_actual_calc_unhealthy(
         if unhealthy is None:
             # Compute and cache
             summary_df, kpis, cycles_df, uh, floods, ba, freq = run_actual_calc(
-                ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min
+                ALARM_DATA_DIR,
+                stale_min=stale_min,
+                chatter_min=chatter_min,
+                unhealthy_threshold=UNHEALTHY_THRESHOLD,
+                window_minutes=WINDOW_MINUTES,
+                flood_source_threshold=FLOOD_SOURCE_THRESHOLD,
+                act_window_overload_op=ACT_WINDOW_OVERLOAD_OP,
+                act_window_overload_threshold=ACT_WINDOW_OVERLOAD_THRESHOLD,
+                act_window_unacceptable_op=ACT_WINDOW_UNACCEPTABLE_OP,
+                act_window_unacceptable_threshold=ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
             )
             write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods, bad_actors=ba, frequency=freq)
             unhealthy = uh
@@ -2304,13 +2424,34 @@ def get_pvci_actual_calc_floods(
     if not ACTUAL_CALC_AVAILABLE:
         raise HTTPException(status_code=501, detail="Actual calculation service is not available")
     try:
-        params = {"stale_min": stale_min, "chatter_min": chatter_min}
+        params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
         cached = None if force_recompute else read_cache(BASE_DIR, params)
         floods = None
         if cached and isinstance(cached.get("floods"), dict):
             floods = cached["floods"]
         if floods is None:
-            summary_df, kpis, cycles_df, uh, fl, ba, freq = run_actual_calc(ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min)
+            summary_df, kpis, cycles_df, uh, fl, ba, freq = run_actual_calc(
+                ALARM_DATA_DIR,
+                stale_min=stale_min,
+                chatter_min=chatter_min,
+                unhealthy_threshold=UNHEALTHY_THRESHOLD,
+                window_minutes=WINDOW_MINUTES,
+                flood_source_threshold=FLOOD_SOURCE_THRESHOLD,
+                act_window_overload_op=ACT_WINDOW_OVERLOAD_OP,
+                act_window_overload_threshold=ACT_WINDOW_OVERLOAD_THRESHOLD,
+                act_window_unacceptable_op=ACT_WINDOW_UNACCEPTABLE_OP,
+                act_window_unacceptable_threshold=ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+            )
             write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=fl, bad_actors=ba, frequency=freq)
             floods = fl
             cached = {

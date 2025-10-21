@@ -16,6 +16,21 @@ export interface ActualCalcKPIs {
   days_unacceptable_pct?: number;       // NEW: Percentage of critically overloaded days
   total_days_analyzed?: number;         // NEW: Total days in dataset
   total_unique_alarms?: number;         // NEW: Total unique alarm activations
+  activation_time_in_overload_windows_pct?: number;
+  activation_time_in_unacceptable_windows_pct?: number;
+  activation_overall_health_pct?: number;
+  total_activation_windows?: number;
+  overload_windows_count?: number;
+  unacceptable_windows_count?: number;
+  peak_10min_activation_count?: number;
+  peak_10min_window_start?: string | null;
+  peak_10min_window_end?: string | null;
+}
+
+export interface PeakDetailsResponse {
+  window: { start: string; end: string };
+  total: number; // sum of unique activations across sources within the window
+  top_sources: Array<{ source: string; count: number }>;
 }
 
 export interface PerSourceRecord {
@@ -102,6 +117,13 @@ export interface ActualCalcOverallResponse {
   params: {
     stale_min: number;
     chatter_min: number;
+    unhealthy_threshold?: number;
+    window_minutes?: number;
+    flood_source_threshold?: number;
+    act_window_overload_op?: string;
+    act_window_overload_threshold?: number;
+    act_window_unacceptable_op?: string;
+    act_window_unacceptable_threshold?: number;
   };
   overall: ActualCalcKPIs;
   counts: ActualCalcCounts;
@@ -150,7 +172,7 @@ export interface ActualCalcUnhealthyResponse {
     Source: string;
     Unhealthy_Periods: number;
   }>;
-  raw?: any;
+  raw?: unknown;
 }
 
 export interface ActualCalcFloodsResponse {
@@ -180,7 +202,7 @@ export interface ActualCalcFloodsResponse {
     sources_involved: Record<string, number>;
     top_sources: Array<{ source: string; count: number }>;
   }>;
-  raw?: any;
+  raw?: unknown;
 }
 
 export interface ActualCalcBadActorsResponse {
@@ -195,5 +217,5 @@ export interface ActualCalcBadActorsResponse {
     Total_Alarm_In_Floods: number;
     Flood_Involvement_Count: number;
   }>;
-  raw?: any;
+  raw?: unknown;
 }
