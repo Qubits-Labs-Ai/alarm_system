@@ -13,6 +13,9 @@ import ActivationOverloadSummary from './ActivationOverloadSummary';
 import { ActualCalcKPICards } from './ActualCalcKPICards';
 import { ActualCalcTree } from './ActualCalcTree';
 import { AlarmFrequencyTrendChart } from './AlarmFrequencyTrendChart';
+import { BadActorsParetoChart } from '../actualCalc/BadActorsParetoChart';
+import { UnhealthyPeriodsBarChart } from '../actualCalc/UnhealthyPeriodsBarChart';
+import FloodsBubbleChart from '../actualCalc/FloodsBubbleChart';
 import TopFloodWindowsChart, { TopFloodWindowRow } from './TopFloodWindowsChart';
 import { UnhealthyBarChart } from './UnhealthyBarChart';
 import { 
@@ -46,6 +49,17 @@ interface ActualCalcTabsProps {
   plantId: string;
 }
 
+// Additional state needed for new charts
+const useBadActorsTopN = () => {
+  const [badActorsTopN, setBadActorsTopN] = useState<5 | 10 | 15 | 20>(10);
+  return { badActorsTopN, setBadActorsTopN };
+};
+
+const useUnhealthyPeriodsTopN = () => {
+  const [unhealthyPeriodsTopN, setUnhealthyPeriodsTopN] = useState<10 | 15 | 20 | 25>(15);
+  return { unhealthyPeriodsTopN, setUnhealthyPeriodsTopN };
+};
+
 export default function ActualCalcTabs({
   actualCalcData,
   actualCalcUnhealthy,
@@ -62,6 +76,8 @@ export default function ActualCalcTabs({
   plantId,
 }: ActualCalcTabsProps) {
   const [activeTab, setActiveTab] = useState<'alarm' | 'frequency' | 'analytics'>('alarm');
+  const { badActorsTopN, setBadActorsTopN } = useBadActorsTopN();
+  const { unhealthyPeriodsTopN, setUnhealthyPeriodsTopN } = useUnhealthyPeriodsTopN();
 
   // Loading state skeleton for KPIs
   const loadingKPIs = {
@@ -142,10 +158,21 @@ export default function ActualCalcTabs({
     // If a window is selected, build bars from contributions of that window
     let windowBars: UnhealthyBar[] | null = null;
     if (selectedWindow) {
-      const match = (actualCalcFloods?.windows || []).find(w => w.id === selectedWindow.id);
+      let match = (actualCalcFloods?.windows || []).find(w => w.id === selectedWindow.id);
+      if (!match) {
+        const sMs = new Date(selectedWindow.start).getTime();
+        const eMs = new Date(selectedWindow.end).getTime();
+        let bestOverlap = -1;
+        for (const w of (actualCalcFloods?.windows || [])) {
+          const ws = new Date(w.start).getTime();
+          const we = new Date(w.end).getTime();
+          const overlap = Math.max(0, Math.min(eMs, we) - Math.max(sMs, ws));
+          if (overlap > bestOverlap) { bestOverlap = overlap; match = w; }
+        }
+      }
       if (match) {
         windowBars = Object.entries(match.sources_involved || {}).map(([source, count]) => ({
-          id: `${selectedWindow.id}:${source}`,
+          id: `${match!.id}:${source}`,
           source,
           hits: Number(count || 0),
           threshold,
@@ -389,6 +416,25 @@ export default function ActualCalcTabs({
                 selectedWindowId={selectedWindow?.id}
               />
 
+              {/* Floods Bubble Chart */}
+              {actualCalcFloods && (
+                <FloodsBubbleChart
+                  windows={actualCalcFloods.windows}
+                  includeSystem={includeSystem}
+                  isLoading={actualCalcLoading}
+                  selectedWindowId={selectedWindow?.id}
+                  onSelectWindow={(row) => {
+                    if (!row) { onWindowChange(null); return; }
+                    onWindowChange({
+                      id: row.id,
+                      label: `${new Date(row.start).toLocaleString()} — ${new Date(row.end).toLocaleString()}`,
+                      start: row.start,
+                      end: row.end,
+                    });
+                  }}
+                />
+              )}
+
               {/* Unhealthy Bar Chart */}
               <UnhealthyBarChart
                 data={detailedAnalyticsData.windowBars ?? detailedAnalyticsData.aggBars}
@@ -404,7 +450,58 @@ export default function ActualCalcTabs({
                 activeWindowEnd={selectedWindow?.end}
                 timePickerDomain={detailedAnalyticsData.timePickerDomain}
                 onClearWindow={() => onWindowChange(null)}
+                onApplyTimePicker={(s, e) => {
+                  const sMs = new Date(s).getTime();
+                  const eMs = new Date(e).getTime();
+                  let best: { win: ActualCalcFloodsResponse['windows'][number]; overlap: number } | null = null;
+                  for (const w of (actualCalcFloods?.windows || [])) {
+                    const ws = new Date(w.start).getTime();
+                    const we = new Date(w.end).getTime();
+                    const overlap = Math.max(0, Math.min(eMs, we) - Math.max(sMs, ws));
+                    if (!best || overlap > best.overlap) best = { win: w, overlap };
+                  }
+                  let win: ActualCalcFloodsResponse['windows'][number] | null = best && best.overlap > 0 ? best.win : null;
+                  if (!win) {
+                    // pick nearest by start-time distance
+                    let nearest: { win: ActualCalcFloodsResponse['windows'][number]; dist: number } | null = null;
+                    for (const w of (actualCalcFloods?.windows || [])) {
+                      const dist = Math.abs(new Date(w.start).getTime() - sMs);
+                      if (!nearest || dist < nearest.dist) nearest = { win: w, dist };
+                    }
+                    win = nearest?.win;
+                  }
+                  if (win) {
+                    onWindowChange({ id: win.id, label: `${new Date(win.start).toLocaleString()} — ${new Date(win.end).toLocaleString()}`, start: win.start, end: win.end });
+                  }
+                }}
+                unhealthyWindows={(actualCalcFloods?.windows || []).map(w => ({ start: w.start, end: w.end, label: `${new Date(w.start).toLocaleString()} — ${new Date(w.end).toLocaleString()}` }))}
+                validateWindow={async () => true}
               />
+
+              {/* Bad Actors Pareto Chart */}
+              {actualCalcBadActors && (
+                <BadActorsParetoChart
+                  data={actualCalcBadActors.top_actors}
+                  totalFloodCount={actualCalcFloods?.totals?.total_flood_count || 0}
+                  topN={badActorsTopN}
+                  onTopNChange={setBadActorsTopN}
+                  isLoading={actualCalcLoading}
+                  includeSystem={includeSystem}
+                />
+              )}
+
+              {/* Unhealthy Periods Distribution Chart */}
+              {actualCalcUnhealthy && (
+                <UnhealthyPeriodsBarChart
+                  data={actualCalcUnhealthy.per_source}
+                  threshold={detailedAnalyticsData.threshold}
+                  windowMinutes={actualCalcUnhealthy.params?.window_minutes || 10}
+                  topN={unhealthyPeriodsTopN}
+                  onTopNChange={setUnhealthyPeriodsTopN}
+                  isLoading={actualCalcLoading}
+                  includeSystem={includeSystem}
+                />
+              )}
             </>
           )}
         </TabsContent>

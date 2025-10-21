@@ -143,6 +143,9 @@ export const TimeBinSlider: React.FC<TimeBinSliderProps> = ({
               size="sm"
               onClick={() => {
                 setStartMs(maxStartMs);
+                const startIso = new Date(maxStartMs).toISOString();
+                const endIso = new Date(maxStartMs + winMs).toISOString();
+                onApply(startIso, endIso);
               }}
             >
               Last 10m

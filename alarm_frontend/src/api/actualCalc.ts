@@ -90,7 +90,7 @@ export async function fetchPvciActualCalcBadActors(params?: {
   limit?: number;
   timeout_ms?: number;
 }): Promise<ActualCalcBadActorsResponse> {
-  const { stale_min = 60, chatter_min = 10, limit = 10, timeout_ms } = params || {};
+  const { stale_min = 60, chatter_min = 10, limit = 9999, timeout_ms } = params || {};
   const url = new URL(`${API_BASE_URL}/pvcI-actual-calc/bad-actors`);
   url.searchParams.set('stale_min', String(stale_min));
   url.searchParams.set('chatter_min', String(chatter_min));

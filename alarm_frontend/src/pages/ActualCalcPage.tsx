@@ -9,6 +9,8 @@ import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFlood
 import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
 import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
 import { AlarmFrequencyTrendChart } from '@/components/dashboard/AlarmFrequencyTrendChart';
+import { BadActorsParetoChart } from '@/components/actualCalc/BadActorsParetoChart';
+import { UnhealthyPeriodsBarChart } from '@/components/actualCalc/UnhealthyPeriodsBarChart';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertCircle } from 'lucide-react';
 import TopFloodWindowsChart, { TopFloodWindowRow } from '@/components/dashboard/TopFloodWindowsChart';
@@ -30,6 +32,9 @@ export function ActualCalcPage() {
   const [topN, setTopN] = useState<1 | 3>(1);
   const [topK, setTopK] = useState<5 | 10 | 15>(10);
   const [selectedWindow, setSelectedWindow] = useState<TopFloodWindowRow | null>(null);
+  // State for new chart controls
+  const [badActorsTopN, setBadActorsTopN] = useState<5 | 10 | 15 | 20>(10);
+  const [unhealthyPeriodsTopN, setUnhealthyPeriodsTopN] = useState<10 | 15 | 20 | 25>(15);
 
   // Load data on mount
   useEffect(() => {
@@ -341,7 +346,70 @@ export function ActualCalcPage() {
         timePickerDomain={timeDomain.start && timeDomain.end ? { start: timeDomain.start, end: timeDomain.end, peakStart: timeDomain.peakStart, peakEnd: timeDomain.peakEnd } : undefined}
         includeSystem={includeSystem}
         onClearWindow={() => setSelectedWindow(null)}
+        onApplyTimePicker={(s, e) => {
+          const sMs = new Date(s).getTime();
+          const eMs = new Date(e).getTime();
+          let best: { win: ActualCalcFloodsResponse['windows'][number]; overlap: number } | null = null;
+          for (const w of (floods?.windows || [])) {
+            const ws = new Date(w.start).getTime();
+            const we = new Date(w.end).getTime();
+            const overlap = Math.max(0, Math.min(eMs, we) - Math.max(sMs, ws));
+            if (!best || overlap > best.overlap) best = { win: w, overlap };
+          }
+          const win: ActualCalcFloodsResponse['windows'][number] | undefined = best && best.overlap > 0 ? best.win : (floods?.windows || []).find(w => (w.start === s && w.end === e) || w.start === s);
+          if (win) {
+            setSelectedWindow({ id: win.id, label: `${new Date(win.start).toLocaleString()} — ${new Date(win.end).toLocaleString()}`, start: win.start, end: win.end });
+          }
+        }}
+        unhealthyWindows={(floods?.windows || []).map(w => ({ start: w.start, end: w.end, label: `${new Date(w.start).toLocaleString()} — ${new Date(w.end).toLocaleString()}` }))}
+        validateWindow={async (s, e) => {
+          const sMs = new Date(s).getTime();
+          const eMs = new Date(e).getTime();
+          const overlaps = (floods?.windows || []).some(w => {
+            const ws = new Date(w.start).getTime();
+            const we = new Date(w.end).getTime();
+            return Math.min(eMs, we) > Math.max(sMs, ws);
+          });
+          return overlaps;
+        }}
       />
+
+      {/* Detailed Analytics Charts Section */}
+      {data && badActors && unhealthy && !isLoading && (
+        <>
+          {/* Section Header */}
+          <div className="mt-8">
+            <div className="flex items-center gap-2 mb-4">
+              <h2 className="text-2xl font-bold text-foreground">Detailed Analytics</h2>
+              <div className="flex-1 h-px bg-border"></div>
+            </div>
+            <p className="text-sm text-muted-foreground mb-6">
+              In-depth analysis of bad actors and unhealthy period distribution across sources
+            </p>
+          </div>
+
+          {/* Bad Actors Pareto Chart */}
+          <BadActorsParetoChart
+            data={badActors.top_actors}
+            totalFloodCount={floods?.totals?.total_flood_count || 0}
+            topN={badActorsTopN}
+            onTopNChange={setBadActorsTopN}
+            isLoading={isLoading}
+            includeSystem={includeSystem}
+          />
+
+          {/* Unhealthy Periods Distribution Chart */}
+          <UnhealthyPeriodsBarChart
+            data={unhealthy.per_source}
+            threshold={unhealthyThreshold}
+            windowMinutes={unhealthy.params?.window_minutes || 10}
+            topN={unhealthyPeriodsTopN}
+            onTopNChange={setUnhealthyPeriodsTopN}
+            isLoading={isLoading}
+            includeSystem={includeSystem}
+          />
+        </>
+      )}
     </div>
   );
 }

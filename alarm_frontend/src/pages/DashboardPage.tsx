@@ -302,7 +302,7 @@ export default function DashboardPage() {
           }),
           fetchPvciActualCalcUnhealthy({ stale_min: 60, chatter_min: 10, limit: 500, timeout_ms: 120000 }),
           fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200, timeout_ms: 120000 }),
-          fetchPvciActualCalcBadActors({ stale_min: 60, chatter_min: 10, limit: 10, timeout_ms: 120000 }),
+          fetchPvciActualCalcBadActors({ stale_min: 60, chatter_min: 10, timeout_ms: 120000 }),
         ]);
         if (mounted) {
           setActualCalcData(overall);

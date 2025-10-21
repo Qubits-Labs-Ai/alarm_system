@@ -490,12 +490,14 @@ def detect_unhealthy_and_flood(
             & (activations_df["Source"].isin(involved))
         ]
         counts = acts["Source"].value_counts().to_dict()
-        flood_summary.append({
-            "Flood_Start": s,
-            "Flood_End": e,
-            "Sources_Involved": counts,
-            "Source_Count": len(counts),
-        })
+        filtered_counts = {src: cnt for src, cnt in counts.items() if cnt >= unhealthy_threshold}
+        if len(filtered_counts) >= flood_source_threshold:
+            flood_summary.append({
+                "Flood_Start": s,
+                "Flood_End": e,
+                "Sources_Involved": filtered_counts,
+                "Source_Count": len(filtered_counts),
+            })
     flood_summary_df = pd.DataFrame(flood_summary)
 
     # 7) Unhealthy summary per source (number of merged periods)
@@ -504,7 +506,7 @@ def detect_unhealthy_and_flood(
     return activations_df, unhealthy_summary, flood_summary_df
 
 
-def identify_bad_actors(flood_summary_df: pd.DataFrame, top_n: int = 10) -> pd.DataFrame:
+def identify_bad_actors(flood_summary_df: pd.DataFrame, top_n: int | None = None) -> pd.DataFrame:
     """
     Identify 'Bad Actor' sources — those contributing the most alarms during floods.
     
@@ -541,7 +543,9 @@ def identify_bad_actors(flood_summary_df: pd.DataFrame, top_n: int = 10) -> pd.D
         "Total_Alarm_In_Floods", ascending=False
     ).reset_index(drop=True)
 
-    return bad_actors_df.head(top_n)
+    if isinstance(top_n, int) and top_n > 0:
+        return bad_actors_df.head(top_n)
+    return bad_actors_df
 
 
 # ---------- ACTIVATION-BASED ISA-STYLE WINDOW METRICS ----------
@@ -610,7 +614,7 @@ def compute_activation_window_metrics(
         }
 
     # Align to fixed windows
-    freq = f"{int(window_minutes)}T"
+    freq = f"{int(window_minutes)}min"
     start = df["StartTime"].min().floor(freq)
     end = (df["StartTime"].max() + pd.Timedelta(minutes=window_minutes)).ceil(freq)
     # All window starts in range [start, end)
@@ -924,7 +928,7 @@ def run_actual_calc(
     }
 
     # Bad Actors identification (from notebook)
-    bad_actors_df = identify_bad_actors(flood_df, top_n=10) if not flood_df.empty else pd.DataFrame()
+    bad_actors_df = identify_bad_actors(flood_df, top_n=None) if not flood_df.empty else pd.DataFrame()
     bad_actors_dict: Dict[str, Any] = {
         "top_actors": bad_actors_df.to_dict(orient="records") if not bad_actors_df.empty else [],
         "total_actors": len(bad_actors_df),
