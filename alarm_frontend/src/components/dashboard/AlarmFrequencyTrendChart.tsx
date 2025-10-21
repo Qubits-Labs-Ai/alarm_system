@@ -43,8 +43,8 @@ export function AlarmFrequencyTrendChart({
   }, [data]);
 
   // Custom dot renderer: color based on threshold violations
-  const renderCustomDot = (props: { cx?: number; cy?: number; payload?: AlarmFrequencyData }) => {
-    const { cx, cy, payload } = props;
+  const renderCustomDot = (props: { cx?: number; cy?: number; payload?: AlarmFrequencyData; index?: number }) => {
+    const { cx, cy, payload, index } = props;
     if (!payload) return null;
     
     const count = payload.alarm_count;
@@ -59,6 +59,7 @@ export function AlarmFrequencyTrendChart({
     
     return (
       <circle 
+        key={`dot-${payload.date}-${index}`}
         cx={cx} 
         cy={cy} 
         r={4} 

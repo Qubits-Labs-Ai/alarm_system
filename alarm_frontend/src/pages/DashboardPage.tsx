@@ -7,10 +7,7 @@ import { UniqueSourcesCard } from '@/components/dashboard/UniqueSourcesCard';
 import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
 import { EventStatisticsCards } from '@/components/dashboard/EventStatisticsCards';
 import { ErrorState } from '@/components/dashboard/ErrorState';
-import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
-import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
-import { AlarmFrequencyTrendChart } from '@/components/dashboard/AlarmFrequencyTrendChart';
-import ActivationOverloadSummary from '@/components/dashboard/ActivationOverloadSummary';
+import ActualCalcTabs from '@/components/dashboard/ActualCalcTabs';
 import { fetchPvciActualCalcOverall, fetchPvciActualCalcUnhealthy, fetchPvciActualCalcFloods, fetchPvciActualCalcBadActors } from '@/api/actualCalc';
 import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
@@ -30,6 +27,76 @@ import TopFloodWindowsChart, { TopFloodWindowRow } from '@/components/dashboard/
 import { Button } from '@/components/ui/button';
 import DateTimeRangePicker from '@/components/dashboard/DateTimeRangePicker';
 import { Bot } from 'lucide-react';
+
+// Type definitions for API responses
+interface EventStatistics {
+  total_events?: number;
+  unique_sources?: number;
+  avg_events_per_source?: number;
+  [key: string]: unknown;
+}
+
+interface UnhealthySourceRecord {
+  source: string;
+  hits?: number;
+  flood_count?: number;
+  threshold?: number;
+  over_by?: number;
+  bin_start?: string;
+  bin_end?: string;
+  location_tag?: string;
+  condition?: string;
+  action?: string;
+  priority?: string;
+  priority_severity?: number;
+  description?: string;
+  setpoint_value?: string | number;
+  raw_units?: string;
+  peak_window_start?: string;
+  peak_window_end?: string;
+  event_time?: string;
+}
+
+interface TopSource {
+  source: string;
+  count: number;
+}
+
+interface WindowRecord {
+  peak_10min_count?: number;
+  peak_window_start?: string;
+  peak_window_end?: string;
+  peak_rate_per_min?: number;
+  windows?: Array<{
+    count?: number;
+    window_start?: string;
+    window_end?: string;
+  }>;
+  peak_window_details?: {
+    top_sources?: TopSource[];
+  };
+  [key: string]: unknown;
+}
+
+interface EnhancedFloodSummaryResponse {
+  unique_sources_summary?: {
+    total_unique_sources?: number;
+    healthy_sources?: number;
+    unhealthy_sources?: number;
+  };
+  event_statistics?: EventStatistics;
+  unhealthy_sources_top_n?: {
+    sources: Array<{
+      source: string;
+      hits: number;
+      threshold?: number;
+      over_by?: number;
+      location_tag?: string;
+    }>;
+  };
+  records?: WindowRecord[];
+  [key: string]: unknown;
+}
 
 
 // Default plant used before API loads
@@ -71,6 +138,7 @@ export default function DashboardPage() {
       setIncludeSystem(false);
     }
     // No else branch: if users later add a UI toggle, their preference in other modes remains untouched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPlant.id, mode]);
   // Global date/time range for ISA-18 plant-wide mode only (applied range)
   const [isaRange, setIsaRange] = useState<{ startTime?: string; endTime?: string } | undefined>(undefined);
@@ -85,7 +153,7 @@ export default function DashboardPage() {
   }>({ totalUnique: 0, healthySources: 0, unhealthySources: 0 });
 
   // Event statistics (only for PVC-I Plant-Wide mode)
-  const [eventStats, setEventStats] = useState<any>(null);
+  const [eventStats, setEventStats] = useState<EventStatistics | null>(null);
 
   // Actual Calc data
   const [actualCalcData, setActualCalcData] = useState<ActualCalcOverallResponse | null>(null);
@@ -164,7 +232,7 @@ export default function DashboardPage() {
   const validateWindowHasUnhealthy = useCallback(async (startIso: string, endIso: string): Promise<boolean> => {
     try {
       const res = await fetchUnhealthySources(startIso, endIso, '10T', 10, selectedPlant.id);
-      const recs: any[] = Array.isArray(res?.records) ? res.records : [];
+      const recs: UnhealthySourceRecord[] = Array.isArray(res?.records) ? res.records : [];
       // Align meta/system filtering with other charts
       const isMetaSource = (name: string) => {
         const s = String(name || '').trim().toUpperCase();
@@ -173,10 +241,11 @@ export default function DashboardPage() {
       };
       const base = includeSystem ? recs : recs.filter(r => !isMetaSource(r.source));
       // Unhealthy rule
-      const unhealthy = base.some(r => Number((r as any).flood_count ?? r.hits ?? 0) >= 10);
+      const unhealthy = base.some(r => Number(r.flood_count ?? r.hits ?? 0) >= 10);
       return unhealthy;
-    } catch {
+    } catch (error) {
       // On any error, do not block apply
+      console.warn('Failed to validate window:', error);
       return true;
     }
   }, [includeSystem, selectedPlant.id]);
@@ -211,7 +280,8 @@ export default function DashboardPage() {
     }
     load();
     return () => { mounted = false; };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Intentionally empty - this is a one-time initialization on mount
 
   // Load Actual Calc data when mode is 'actualCalc'
   useEffect(() => {
@@ -274,14 +344,16 @@ export default function DashboardPage() {
             let bars: UnhealthyBar[] = [];
             if (selectedWindow) {
               // Use enhanced JSON (pre-computed Top Flood Windows) rather than event-level endpoint
-              let topSources: Array<{ source: string; count: number }> = [];
+              let topSources: TopSource[] = [];
               try {
-                topSources = (windowTopSources[selectedWindow.start] || []) as any;
+                topSources = (windowTopSources[selectedWindow.start] || []) as TopSource[];
                 if ((!topSources || topSources.length === 0) && Array.isArray(topWindows) && topWindows.length > 0) {
                   const row = topWindows.find(w => w.start === selectedWindow.start);
-                  if (row && Array.isArray(row.top_sources)) topSources = row.top_sources as any;
+                  if (row && Array.isArray(row.top_sources)) topSources = row.top_sources as TopSource[];
                 }
-              } catch {}
+              } catch (error) {
+                console.warn('Failed to load top sources for selected window:', error);
+              }
 
               bars = (topSources || []).map((s) => ({
                 id: `${s.source}-${selectedWindow.start}`,
@@ -305,17 +377,18 @@ export default function DashboardPage() {
                 const seen = new Set<string>();
                 let unhealthy = 0;
                 for (const d of baseList) {
-                  const src = String((d as any)?.source || 'Unknown').trim();
+                  const src = String(d?.source || 'Unknown').trim();
                   if (seen.has(src)) continue;
                   seen.add(src);
-                  const c = Number((d as any)?.count || 0);
+                  const c = Number(d?.count || 0);
                   if (c >= 10) unhealthy++;
                 }
                 const totalUnique = seen.size;
                 const healthy = Math.max(0, totalUnique - unhealthy);
                 if (mounted) setUniqueSourcesData({ totalUnique, healthySources: healthy, unhealthySources: unhealthy });
-              } catch {
+              } catch (error) {
                 // ignore; card will remain as previous value
+                console.warn('Failed to compute unique sources:', error);
               }
             } else {
               // Use enhanced endpoint for pre-computed aggregations
@@ -329,10 +402,10 @@ export default function DashboardPage() {
                 include_windows: false,
                 lite: true,
                 timeout_ms: 15000,
-              });
+              }) as EnhancedFloodSummaryResponse;
 
               // Use pre-computed unique_sources_summary from enhanced response
-              const uniqueSourcesSummary = (enhancedRes as any)?.unique_sources_summary;
+              const uniqueSourcesSummary = enhancedRes?.unique_sources_summary;
               if (uniqueSourcesSummary && typeof uniqueSourcesSummary.total_unique_sources === 'number') {
                 if (mounted) setUniqueSourcesData({
                   totalUnique: Number(uniqueSourcesSummary.total_unique_sources || 0),
@@ -342,13 +415,13 @@ export default function DashboardPage() {
               }
 
               // Extract event statistics from enhanced response
-              const eventStatistics = (enhancedRes as any)?.event_statistics;
+              const eventStatistics = enhancedRes?.event_statistics;
               if (eventStatistics && mounted) {
                 setEventStats(eventStatistics);
               }
 
               // Use pre-computed unhealthy_sources_top_n from enhanced response
-              const unhealthySources = (enhancedRes as any)?.unhealthy_sources_top_n;
+              const unhealthySources = enhancedRes?.unhealthy_sources_top_n;
               if (unhealthySources && Array.isArray(unhealthySources.sources)) {
                 const isMetaSource = (name: string) => {
                   const s = String(name || '').trim().toUpperCase();
@@ -358,9 +431,9 @@ export default function DashboardPage() {
                 
                 const filteredSources = includeSystem 
                   ? unhealthySources.sources 
-                  : unhealthySources.sources.filter((s: any) => !isMetaSource(s.source));
+                  : unhealthySources.sources.filter((s) => !isMetaSource(s.source));
 
-                bars = filteredSources.map((s: any) => ({
+                bars = filteredSources.map((s) => ({
                   id: `${s.source}-${isaRange?.startTime || 'agg'}`,
                   source: String(s.source || 'Unknown'),
                   hits: Number(s.hits || 0),
@@ -388,8 +461,8 @@ export default function DashboardPage() {
               top_sources_per_condition: 5,
               start_time: isaRange?.startTime,
               end_time: isaRange?.endTime,
-            });
-            const records: any[] = Array.isArray(res?.records) ? res.records : [];
+            }) as EnhancedFloodSummaryResponse;
+            const records: WindowRecord[] = Array.isArray(res?.records) ? res.records : [];
 
             const windowRows: TopFloodWindowRow[] = [];
             const windowMap: Record<string, Array<{ source: string; count: number }>> = {};
@@ -403,7 +476,7 @@ export default function DashboardPage() {
               let start: string | undefined = rec?.peak_window_start;
               let end: string | undefined = rec?.peak_window_end;
               if (!peakCount || !start || !end) {
-                const ws: any[] = Array.isArray(rec?.windows) ? rec.windows : [];
+                const ws = Array.isArray(rec?.windows) ? rec.windows : [];
                 if (ws.length > 0) {
                   const bestW = ws.reduce((m, w) => (Number(w?.count || 0) > Number(m?.count || 0) ? w : m), ws[0]);
                   peakCount = Number(bestW?.count || 0);
@@ -461,7 +534,7 @@ export default function DashboardPage() {
           }
 
           let bars: UnhealthyBar[] = [];
-          const score = (r: any) => (typeof r.flood_count === 'number' ? r.flood_count : r.hits) as number;
+          const score = (r: UnhealthySourceRecord) => (typeof r.flood_count === 'number' ? r.flood_count : r.hits) as number;
 
           if (topN === 1) {
             // Select the single worst bin per source
@@ -486,7 +559,7 @@ export default function DashboardPage() {
                 condition: best.condition,
                 action: best.action,
                 priority: best.priority,
-                priority_severity: (best as any).priority_severity,
+                priority_severity: best.priority_severity,
                 description: best.description,
                 setpoint_value: best.setpoint_value,
                 raw_units: best.raw_units,
@@ -515,7 +588,7 @@ export default function DashboardPage() {
                   condition: best.condition,
                   action: best.action,
                   priority: best.priority,
-                  priority_severity: (best as any).priority_severity,
+                  priority_severity: best.priority_severity,
                   description: best.description,
                   setpoint_value: best.setpoint_value,
                   raw_units: best.raw_units,
@@ -538,7 +611,9 @@ export default function DashboardPage() {
     }
     loadBars();
     return () => { mounted = false; };
-  }, [topN, selectedPlant.id, mode, selectedWindow?.id, selectedWindow?.start, selectedWindow?.end, isaRange?.startTime, isaRange?.endTime]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topN, selectedPlant.id, mode, selectedWindow?.id, selectedWindow?.start, selectedWindow?.end, isaRange?.startTime, isaRange?.endTime, includeSystem, topWindows, windowTopSources]);
+  // Note: We track selectedWindow properties individually to avoid object reference changes causing unnecessary re-renders
 
   // Update unique sources data when unhealthy bar data changes
   useEffect(() => {
@@ -840,207 +915,22 @@ export default function DashboardPage() {
         )}
 
         {/* Actual Calc Mode - PVC-I only */}
-        {selectedPlant.id === 'pvcI' && mode === 'actualCalc' && (
-          <div className="space-y-6">
-            {actualCalcLoading || !actualCalcData ? (
-              <ActualCalcKPICards
-                kpis={{
-                  avg_ack_delay_min: 0,
-                  avg_ok_delay_min: 0,
-                  completion_rate_pct: 0,
-                  avg_alarms_per_day: 0,
-                  avg_alarms_per_hour: 0,
-                  avg_alarms_per_10min: 0,
-                  days_over_288_count: 0,
-                  days_over_288_alarms_pct: 0,
-                  days_unacceptable_count: 0,
-                  days_unacceptable_pct: 0,
-                  total_days_analyzed: 0,
-                  total_unique_alarms: 0,
-                }}
-                counts={{
-                  total_sources: 0,
-                  total_alarms: 0,
-                  total_stale: 0,
-                  total_standing: 0,
-                  total_instrument_failure: 0,
-                  total_chattering: 0,
-                  total_cycles: 0,
-                }}
-                isLoading={true}
-              />
-            ) : (
-              <>
-                {/* Tree on top */}
-                <ActualCalcTree data={actualCalcData} />
-
-                {/* Activation-based Health Summary */}
-                <ActivationOverloadSummary overall={actualCalcData.overall} params={actualCalcData.params} />
-
-                {/* KPI Cards below health summary */}
-                <ActualCalcKPICards
-                  kpis={actualCalcData.overall}
-                  counts={actualCalcData.counts}
-                  isLoading={false}
-                  totals={{
-                    total_unhealthy_periods: actualCalcUnhealthy?.total_periods ?? 0,
-                    total_flood_windows: actualCalcFloods?.totals?.total_windows ?? 0,
-                    total_flood_count: actualCalcFloods?.totals?.total_flood_count ?? 0,
-                  }}
-                  unhealthyData={actualCalcUnhealthy}
-                  floodsData={actualCalcFloods}
-                  badActorsData={actualCalcBadActors}
-                />
-
-                {/* Daily Alarm Frequency Trend Chart */}
-                {actualCalcData.frequency && (() => {
-                  const over288Dates = new Set(actualCalcData.frequency.days_over_288?.map(d => d.Date) || []);
-                  const over720Dates = new Set(actualCalcData.frequency.days_unacceptable?.map(d => d.Date) || []);
-                  const chartData = actualCalcData.frequency.alarms_per_day.map(item => ({
-                    date: item.Date,
-                    alarm_count: item.Alarm_Count,
-                    is_over_288: over288Dates.has(item.Date),
-                    is_over_720: over720Dates.has(item.Date),
-                  }));
-                  
-                  return (
-                    <AlarmFrequencyTrendChart
-                      data={chartData}
-                      isLoading={false}
-                      totalDays={actualCalcData.frequency.summary.total_days_analyzed}
-                      daysOver288={actualCalcData.frequency.summary.days_over_288_count}
-                      daysOver720={actualCalcData.frequency.summary.days_unacceptable_count}
-                    />
-                  );
-                })()}
-
-                {/* Summary Stats Card */}
-                <div className="bg-card rounded-lg border p-6">
-                  <h3 className="text-lg font-semibold mb-4">Summary Statistics</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-7 gap-4 text-sm">
-                    <div>
-                      <p className="text-muted-foreground">Total Sources</p>
-                      <p className="text-lg font-semibold">{actualCalcData.counts.total_sources.toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Total Alarms</p>
-                      <p className="text-lg font-semibold">{actualCalcData.counts.total_alarms.toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Standing</p>
-                      <p className="text-lg font-semibold">{(actualCalcData.counts.total_standing || 0).toLocaleString()}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {((((actualCalcData.counts.total_standing || 0)) / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Stale</p>
-                      <p className="text-lg font-semibold">{actualCalcData.counts.total_stale.toLocaleString()}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {((actualCalcData.counts.total_stale / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Chattering</p>
-                      <p className="text-lg font-semibold">{actualCalcData.counts.total_chattering.toLocaleString()}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {((actualCalcData.counts.total_chattering / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Cycles</p>
-                      <p className="text-lg font-semibold">{actualCalcData.counts.total_cycles.toLocaleString()}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {actualCalcData.overall.completion_rate_pct.toFixed(1)}% complete
-                      </p>
-                    </div>
-                  </div>
-                  {actualCalcData.sample_range?.start && actualCalcData.sample_range?.end && (
-                    <p className="text-xs text-muted-foreground mt-4">
-                      Data range: {new Date(actualCalcData.sample_range.start).toLocaleDateString()} - {new Date(actualCalcData.sample_range.end).toLocaleDateString()}
-                    </p>
-                  )}
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Generated: {new Date(actualCalcData.generated_at).toLocaleString()} | 
-                    Stale threshold: {actualCalcData.params.stale_min}min | 
-                    Chatter threshold: {actualCalcData.params.chatter_min}min
-                  </p>
-                </div>
-
-                {/* Actual Calc: Top Flood Windows + Per-source bars */}
-                {(() => {
-                  const threshold = actualCalcUnhealthy?.params?.unhealthy_threshold ?? 10;
-                  const timeStart = actualCalcData.sample_range?.start || new Date().toISOString();
-                  const timeEnd = actualCalcData.sample_range?.end || new Date().toISOString();
-
-                  // Map floods -> rows
-                  const floodRows = (actualCalcFloods?.windows || []).map((w, idx) => {
-                    const id = w.id;
-                    const label = `${new Date(w.start).toLocaleString()} — ${new Date(w.end).toLocaleString()}`;
-                    const top_sources = w.top_sources || [];
-                    return { id, label, flood_count: w.flood_count, start: w.start, end: w.end, short_label: idx < 3 ? undefined : new Date(w.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), rate_per_min: w.rate_per_min, top_sources } as TopFloodWindowRow;
-                  });
-
-                  // Aggregate unhealthy per source across all unhealthy windows
-                  const aggBars = (actualCalcUnhealthy?.per_source || []).map((s) => {
-                    const hits = s.Unhealthy_Periods;
-                    return { id: s.Source, source: s.Source, hits, threshold, over_by: Math.max(0, hits - threshold), bin_start: timeStart, bin_end: timeEnd } as UnhealthyBar;
-                  }).sort((a, b) => b.hits - a.hits);
-
-                  // If a window is selected, build bars from contributions of that window
-                  let windowBars: UnhealthyBar[] | null = null;
-                  if (selectedWindow) {
-                    const match = (actualCalcFloods?.windows || []).find(w => w.id === selectedWindow.id);
-                    if (match) {
-                      windowBars = Object.entries(match.sources_involved || {}).map(([source, count]) => ({
-                        id: `${selectedWindow.id}:${source}`,
-                        source,
-                        hits: Number(count || 0),
-                        threshold,
-                        over_by: Math.max(0, Number(count || 0) - threshold),
-                        bin_start: match.start,
-                        bin_end: match.end,
-                      } as UnhealthyBar)).sort((a, b) => b.hits - a.hits);
-                    }
-                  }
-
-                  return (
-                    <div className="space-y-6">
-                      <TopFloodWindowsChart
-                        data={floodRows}
-                        threshold={threshold}
-                        topK={topWindowsTopK}
-                        onTopKChange={setTopWindowsTopK}
-                        isLoading={actualCalcLoading || !actualCalcFloods}
-                        includeSystem={includeSystem}
-                        onSelectWindow={(row) => {
-                          if (!row) { setSelectedWindow(null); return; }
-                          setSelectedWindow({ id: row.id, label: row.label, start: row.start, end: row.end });
-                        }}
-                        selectedWindowId={selectedWindow?.id}
-                      />
-
-                      <UnhealthyBarChart
-                        data={windowBars ?? aggBars}
-                        threshold={threshold}
-                        topN={topN}
-                        onTopNChange={setTopN}
-                        isLoading={actualCalcLoading || !actualCalcUnhealthy}
-                        plantId={selectedPlant.id}
-                        mode={'flood'}
-                        includeSystem={includeSystem}
-                        activeWindowLabel={selectedWindow?.label}
-                        activeWindowStart={selectedWindow?.start}
-                        activeWindowEnd={selectedWindow?.end}
-                        timePickerDomain={actualCalcData.sample_range?.start && actualCalcData.sample_range?.end ? { start: actualCalcData.sample_range.start, end: actualCalcData.sample_range.end } : undefined}
-                        onClearWindow={() => setSelectedWindow(null)}
-                      />
-                    </div>
-                  );
-                })()}
-              </>
-            )}
-          </div>
+        {selectedPlant.id === 'pvcI' && mode === 'actualCalc' && actualCalcData && (
+          <ActualCalcTabs
+            actualCalcData={actualCalcData}
+            actualCalcUnhealthy={actualCalcUnhealthy}
+            actualCalcFloods={actualCalcFloods}
+            actualCalcBadActors={actualCalcBadActors}
+            actualCalcLoading={actualCalcLoading}
+            selectedWindow={selectedWindow}
+            onWindowChange={setSelectedWindow}
+            topWindowsTopK={topWindowsTopK}
+            onTopKChange={setTopWindowsTopK}
+            topN={topN}
+            onTopNChange={setTopN}
+            includeSystem={includeSystem}
+            plantId={selectedPlant.id}
+          />
         )}
         
       </div>

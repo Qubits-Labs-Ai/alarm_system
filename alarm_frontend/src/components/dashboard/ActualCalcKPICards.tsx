@@ -31,9 +31,10 @@ interface ActualCalcKPICardsProps {
   unhealthyData?: ActualCalcUnhealthyResponse | null;
   floodsData?: ActualCalcFloodsResponse | null;
   badActorsData?: ActualCalcBadActorsResponse | null;
+  section?: 'alarm' | 'frequency' | 'analytics'; // Optional: render only this section's cards
 }
 
-export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, unhealthyData, floodsData, badActorsData }: ActualCalcKPICardsProps) {
+export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, unhealthyData, floodsData, badActorsData, section }: ActualCalcKPICardsProps) {
   const [unhealthyModalOpen, setUnhealthyModalOpen] = useState(false);
   const [floodsModalOpen, setFloodsModalOpen] = useState(false);
   const [badActorsModalOpen, setBadActorsModalOpen] = useState(false);
@@ -227,17 +228,22 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
     );
   }
 
+  // Determine which sections to render based on the section prop
+  const shouldRenderAlarm = !section || section === 'alarm';
+  const shouldRenderFrequency = !section || section === 'frequency';
+  const shouldRenderAnalytics = !section || section === 'analytics';
+
   return (
     <>
       <div className="space-y-8">
         {/* Section 1: Alarm Summary */}
-        {renderCardSection(alarmSummaryCards, 'Alarm Summary')}
+        {shouldRenderAlarm && renderCardSection(alarmSummaryCards, 'Alarm Summary')}
 
         {/* Section 2: Frequency Metrics */}
-        {renderCardSection(frequencyMetricsCards, 'Frequency Metrics')}
+        {shouldRenderFrequency && renderCardSection(frequencyMetricsCards, 'Frequency Metrics')}
 
         {/* Section 3: Detailed Analytics */}
-        {detailedAnalyticsCards.length > 0 && renderCardSection(detailedAnalyticsCards, 'Detailed Analytics')}
+        {shouldRenderAnalytics && detailedAnalyticsCards.length > 0 && renderCardSection(detailedAnalyticsCards, 'Detailed Analytics')}
       </div>
 
       {/* Unhealthy Periods Modal */}
