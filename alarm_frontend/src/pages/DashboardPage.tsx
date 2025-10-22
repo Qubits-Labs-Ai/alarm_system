@@ -292,7 +292,7 @@ export default function DashboardPage() {
       }
       try {
         setActualCalcLoading(true);
-        const [overall, unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
+        let [overall, unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
           fetchPvciActualCalcOverall({
             stale_min: 60,
             chatter_min: 10,
@@ -304,6 +304,31 @@ export default function DashboardPage() {
           fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200, timeout_ms: 120000 }),
           fetchPvciActualCalcBadActors({ stale_min: 60, chatter_min: 10, timeout_ms: 120000 }),
         ]);
+
+        // Recompute fallback: server cache may not have activation-based fields yet after deploy
+        const kpis = overall?.overall || ({} as any);
+        const hasData = Number(kpis?.avg_alarms_per_day || 0) > 0 || Number(overall?.counts?.total_alarms || 0) > 0;
+        const missingActivation = !('activation_overall_health_pct' in kpis) || (
+          Number(kpis?.activation_overall_health_pct || 0) === 0 && hasData
+        );
+        if (missingActivation) {
+          try {
+            const recomputed = await fetchPvciActualCalcOverall({
+              stale_min: 60,
+              chatter_min: 10,
+              include_per_source: false,
+              include_cycles: false,
+              force_recompute: true,
+              timeout_ms: 180000,
+            });
+            if (recomputed?.overall?.activation_overall_health_pct) {
+              overall = recomputed;
+            }
+          } catch (e) {
+            console.warn('Recompute fallback failed:', e);
+          }
+        }
+
         if (mounted) {
           setActualCalcData(overall);
           setActualCalcUnhealthy(unhealthyResp);

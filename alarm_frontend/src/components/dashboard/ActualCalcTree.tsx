@@ -5,7 +5,7 @@
  * Nuisance/Repeating → (Chattering Alarms, Instruments Faulty)
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ActualCalcOverallResponse } from '@/types/actualCalc';
 
@@ -17,10 +17,13 @@ type Props = {
   staleTotal?: number; // optional override
 };
 
-function StatNode({ title, value, nodeRef }: { title: string; value: number; nodeRef: React.RefObject<HTMLDivElement> }) {
+function StatNode({ title, value, nodeRef, bg }: { title: string; value: number; nodeRef: React.RefObject<HTMLDivElement>; bg?: string }) {
   return (
     <div ref={nodeRef} className="inline-block relative">
-      <Card className="shadow-metric-card bg-dashboard-metric-card-bg min-w-[160px] sm:min-w-[200px] md:min-w-[220px]">
+      <Card
+        className="shadow-metric-card bg-dashboard-metric-card-bg min-w-[160px] sm:min-w-[200px] md:min-w-[220px] border"
+        style={bg ? ({ background: bg } as CSSProperties) : undefined}
+      >
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium text-muted-foreground text-center truncate">
             {title}
@@ -104,6 +107,41 @@ export function ActualCalcTree({ data, standingTotal: standingOverride = 0, inst
     };
   }, [totalAlarms, standingTotal, instrumentsFaultyTotal, chatteringTotal]);
 
+  const values = [
+    standingTotal,
+    nuisanceTotal,
+    instrumentsFaultyTotal,
+    staleTotal,
+    chatteringTotal,
+    instrumentsFaultyChatteringTotal,
+  ];
+  const minV = Math.min(...values);
+  const maxV = Math.max(...values);
+  const band = (v: number) => {
+    const t = maxV === minV ? 0.5 : (v - minV) / (maxV - minV);
+    if (t >= 0.8) return { color: 'var(--destructive)', pct: 36 };
+    if (t >= 0.55) return { color: 'var(--warning)', pct: 24 };
+    if (t >= 0.3) return { color: 'var(--ring)', pct: 12 };
+    return { color: 'var(--metric-card-bg)', pct: 0 };
+  };
+  const mixBg = (colorVar: string, pct: number) => pct > 0
+    ? `color-mix(in oklch, ${colorVar} ${pct}%, var(--metric-card-bg))`
+    : undefined;
+
+  const { color: cStand, pct: pStand } = band(standingTotal);
+  const { color: cNuis, pct: pNuis } = band(nuisanceTotal);
+  const { color: cFault, pct: pFault } = band(instrumentsFaultyTotal);
+  const { color: cStl, pct: pStl } = band(staleTotal);
+  const { color: cCh, pct: pCh } = band(chatteringTotal);
+  const { color: cFCh, pct: pFCh } = band(instrumentsFaultyChatteringTotal);
+
+  const bgStanding = mixBg(cStand, pStand);
+  const bgNuisance = mixBg(cNuis, pNuis);
+  const bgFaulty = mixBg(cFault, pFault);
+  const bgStale = mixBg(cStl, pStl);
+  const bgChat = mixBg(cCh, pCh);
+  const bgFaultyChat = mixBg(cFCh, pFCh);
+
   return (
     <div ref={containerRef} className="relative w-full mx-auto overflow-hidden px-2 sm:px-0">
       {/* SVG connectors */}
@@ -121,26 +159,26 @@ export function ActualCalcTree({ data, standingTotal: standingOverride = 0, inst
       {/* Row 2: Standing | Nuisance */}
       <div className="grid grid-cols-2 gap-6 md:grid-cols-2 md:gap-16 items-start max-w-5xl mx-auto mb-10">
         <div className="flex justify-center">
-          <StatNode title="Standing Alarm" value={standingTotal} nodeRef={standingRef} />
+          <StatNode title="Standing Alarm" value={standingTotal} nodeRef={standingRef} bg={bgStanding} />
         </div>
         <div className="flex justify-center">
-          <StatNode title="Nuisance/Repeating Alarms" value={nuisanceTotal} nodeRef={nuisanceRef} />
+          <StatNode title="Nuisance/Repeating Alarms" value={nuisanceTotal} nodeRef={nuisanceRef} bg={bgNuisance} />
         </div>
       </div>
 
       {/* Row 3: Children of Standing and Nuisance */}
       <div className="grid grid-cols-2 gap-6 sm:grid-cols-2 md:grid-cols-4 md:gap-16 items-start max-w-7xl mx-auto">
         <div className="flex justify-center order-1 md:order-1">
-          <StatNode title="Instruments Faulty" value={instrumentsFaultyTotal} nodeRef={faultyRef} />
+          <StatNode title="Instruments Faulty" value={instrumentsFaultyTotal} nodeRef={faultyRef} bg={bgFaulty} />
         </div>
         <div className="flex justify-center order-3 md:order-2">
-          <StatNode title="Stale Alarms" value={staleTotal} nodeRef={staleRef} />
+          <StatNode title="Stale Alarms" value={staleTotal} nodeRef={staleRef} bg={bgStale} />
         </div>
         <div className="flex justify-center order-2 md:order-3">
-          <StatNode title="Chattering Alarms" value={chatteringTotal} nodeRef={chatteringRef} />
+          <StatNode title="Chattering Alarms" value={chatteringTotal} nodeRef={chatteringRef} bg={bgChat} />
         </div>
         <div className="flex justify-center order-4 md:order-4">
-          <StatNode title="Instruments Faulty (Chattering)" value={instrumentsFaultyChatteringTotal} nodeRef={faultyChatteringRef} />
+          <StatNode title="Instruments Faulty (Chattering)" value={instrumentsFaultyChatteringTotal} nodeRef={faultyChatteringRef} bg={bgFaultyChat} />
         </div>
       </div>
     </div>

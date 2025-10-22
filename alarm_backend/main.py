@@ -295,6 +295,7 @@ def get_pvci_actual_calc_peak_details(
     end_iso: str | None = None,
     stale_min: int = 60,
     chatter_min: int = 10,
+    use_cache: bool = True,
 ):
     """Return per-source UNIQUE activation counts within a 10-min window.
 
@@ -316,6 +317,15 @@ def get_pvci_actual_calc_peak_details(
             "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
         }
         cached = read_cache(BASE_DIR, params)
+        if not cached:
+            # Try reading cache file directly (ignore param mismatch) so UI can still show details
+            try:
+                cache_path = os.path.join(BASE_DIR, "PVCI-actual-calc", "actual-calc.json")
+                if os.path.exists(cache_path):
+                    with open(cache_path, "r", encoding="utf-8") as _f:
+                        cached = json.load(_f)
+            except Exception as _ex:
+                logger.warning(f"Direct cache read failed: {_sanitize_error_message(_ex)}")
 
         s = start_iso
         e = end_iso
@@ -329,8 +339,58 @@ def get_pvci_actual_calc_peak_details(
         if not s or not e:
             raise HTTPException(status_code=400, detail="Provide start_iso and end_iso, or generate overall cache first")
 
-        details = get_activation_peak_details(ALARM_DATA_DIR, s, e)
-        return details
+        # Prefer cache for speed unless explicitly disabled
+        if not use_cache:
+            # Try precise per-source computation from CSV
+            try:
+                details = get_activation_peak_details(ALARM_DATA_DIR, s, e)
+                return details
+            except Exception as csv_err:
+                logger.warning(f"peak-details CSV path failed; falling back to cache: {_sanitize_error_message(csv_err)}")
+
+        # Fallback: serve from cached JSON (actual-calc.json)
+        if not cached:
+            # No cache to fall back on
+            return {"window": {"start": s, "end": e}, "total": 0, "top_sources": []}
+
+        overall = cached.get("overall", {}) or {}
+        total = int(overall.get("peak_10min_activation_count") or 0)
+
+        # Try to pull top_sources from closest floods window in cache
+        top_sources: List[Dict[str, Any]] = []
+        try:
+            floods = (cached.get("floods") or {}).get("windows") or []
+            if isinstance(floods, list) and floods:
+                from datetime import datetime as _dt
+                def _ts(x: str) -> int:
+                    try:
+                        return int(_dt.fromisoformat(x.replace("Z", "+00:00")).timestamp())
+                    except Exception:
+                        return 0
+                s_ts = _ts(s)
+                e_ts = _ts(e)
+                # Exact match first
+                match = next((w for w in floods if w.get("start") == s and w.get("end") == e), None)
+                if not match:
+                    # Overlap within tolerance
+                    tol = 60  # seconds tolerance
+                    def _overlap(w):
+                        ws = _ts(str(w.get("start")))
+                        we = _ts(str(w.get("end")))
+                        return max(0, min(e_ts, we) - max(s_ts, ws))
+                    match = None
+                    best_ov = -1
+                    for w in floods:
+                        ov = _overlap(w)
+                        if ov > best_ov:
+                            best_ov = ov
+                            match = w
+                if match and isinstance(match.get("top_sources"), list):
+                    top_sources = match.get("top_sources")[:50]
+        except Exception as ex2:
+            logger.warning(f"Failed to derive top_sources from cache floods: {_sanitize_error_message(ex2)}")
+
+        return {"window": {"start": s, "end": e}, "total": total, "top_sources": top_sources}
     except HTTPException:
         raise
     except Exception as e:

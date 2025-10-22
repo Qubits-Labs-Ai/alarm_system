@@ -43,7 +43,11 @@ export default function ActivationOverloadSummary({ overall, params }: Props) {
     (async () => {
       try {
         setLoading(true);
-        const res = await fetchPvciActualCalcPeakDetails({ timeout_ms: 30000 });
+        const res = await fetchPvciActualCalcPeakDetails({
+          start_iso: peakStartISO || undefined,
+          end_iso: peakEndISO || undefined,
+          timeout_ms: 30000,
+        });
         if (!mounted) return;
         setDetails(res);
       } catch {

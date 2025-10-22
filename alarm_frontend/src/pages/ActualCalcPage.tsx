@@ -46,12 +46,38 @@ export function ActualCalcPage() {
       setIsLoading(true);
       setError(null);
       
-      const [overall, unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
-        fetchPvciActualCalcOverall({ stale_min: 60, chatter_min: 10, include_per_source: false, include_cycles: false }),
-        fetchPvciActualCalcUnhealthy({ stale_min: 60, chatter_min: 10, limit: 500 }),
-        fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200 }),
-        fetchPvciActualCalcBadActors({ stale_min: 60, chatter_min: 10, limit: 10 }),
+      let [overall, unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
+        fetchPvciActualCalcOverall({ stale_min: 60, chatter_min: 10, include_per_source: false, include_cycles: false, timeout_ms: 120000 }),
+        fetchPvciActualCalcUnhealthy({ stale_min: 60, chatter_min: 10, limit: 500, timeout_ms: 120000 }),
+        fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200, timeout_ms: 120000 }),
+        fetchPvciActualCalcBadActors({ stale_min: 60, chatter_min: 10, limit: 10, timeout_ms: 120000 }),
       ]);
+      
+      // Fallback: if activation-based fields are missing/zero while dataset clearly has alarms,
+      // request a recompute to regenerate the server cache (common on first deploy)
+      const kpis = overall?.overall || ({} as any);
+      const hasData = Number(kpis?.avg_alarms_per_day || 0) > 0 || Number(overall?.counts?.total_alarms || 0) > 0;
+      const missingActivation = !('activation_overall_health_pct' in kpis) || (
+        Number(kpis?.activation_overall_health_pct || 0) === 0 && hasData
+      );
+      if (missingActivation) {
+        try {
+          const recomputed = await fetchPvciActualCalcOverall({
+            stale_min: 60,
+            chatter_min: 10,
+            include_per_source: false,
+            include_cycles: false,
+            force_recompute: true,
+            timeout_ms: 180000,
+          });
+          if (recomputed?.overall?.activation_overall_health_pct) {
+            overall = recomputed;
+          }
+        } catch (e) {
+          // swallow; we'll use the original payload
+          console.warn('Recompute fallback failed:', e);
+        }
+      }
       
       setData(overall);
       setUnhealthy(unhealthyResp);
@@ -183,7 +209,7 @@ export function ActualCalcPage() {
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
+    <div className="container mx-auto p-6 space-y-6" data-page="actual-calc-page">
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Actual Calculation Mode</h1>
@@ -347,16 +373,40 @@ export function ActualCalcPage() {
         includeSystem={includeSystem}
         onClearWindow={() => setSelectedWindow(null)}
         onApplyTimePicker={(s, e) => {
-          const sMs = new Date(s).getTime();
-          const eMs = new Date(e).getTime();
-          let best: { win: ActualCalcFloodsResponse['windows'][number]; overlap: number } | null = null;
-          for (const w of (floods?.windows || [])) {
-            const ws = new Date(w.start).getTime();
-            const we = new Date(w.end).getTime();
-            const overlap = Math.max(0, Math.min(eMs, we) - Math.max(sMs, ws));
-            if (!best || overlap > best.overlap) best = { win: w, overlap };
+          const windows = floods?.windows || [];
+          // 1) Exact string match
+          let win: ActualCalcFloodsResponse['windows'][number] | null = windows.find(w => w.start === s && w.end === e) || null;
+          // 2) Tolerant start/end match within ±60s to absorb minor drift
+          if (!win) {
+            const sMs = new Date(s).getTime();
+            const eMs = new Date(e).getTime();
+            const tol = 60_000;
+            win = windows.find(w => {
+              const ws = new Date(w.start).getTime();
+              const we = new Date(w.end).getTime();
+              return Math.abs(ws - sMs) <= tol && Math.abs(we - eMs) <= tol;
+            }) || null;
+            // 3) Overlap-based best match
+            if (!win) {
+              let best: { win: ActualCalcFloodsResponse['windows'][number]; overlap: number } | null = null;
+              for (const w of windows) {
+                const ws = new Date(w.start).getTime();
+                const we = new Date(w.end).getTime();
+                const overlap = Math.max(0, Math.min(eMs, we) - Math.max(sMs, ws));
+                if (!best || overlap > best.overlap) best = { win: w, overlap };
+              }
+              if (best && best.overlap > 0) win = best.win;
+            }
+            // 4) Nearest-by-start fallback
+            if (!win) {
+              let nearest: { win: ActualCalcFloodsResponse['windows'][number]; dist: number } | null = null;
+              for (const w of windows) {
+                const dist = Math.abs(new Date(w.start).getTime() - sMs);
+                if (!nearest || dist < nearest.dist) nearest = { win: w, dist };
+              }
+              win = nearest?.win || null;
+            }
           }
-          const win: ActualCalcFloodsResponse['windows'][number] | undefined = best && best.overlap > 0 ? best.win : (floods?.windows || []).find(w => (w.start === s && w.end === e) || w.start === s);
           if (win) {
             setSelectedWindow({ id: win.id, label: `${new Date(win.start).toLocaleString()} — ${new Date(win.end).toLocaleString()}`, start: win.start, end: win.end });
           }

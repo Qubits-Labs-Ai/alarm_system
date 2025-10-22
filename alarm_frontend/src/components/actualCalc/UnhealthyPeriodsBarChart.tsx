@@ -25,6 +25,8 @@ interface UnhealthyPeriodsBarChartProps {
   onTopNChange?: (n: 10 | 15 | 20 | 25) => void;
   isLoading?: boolean;
   includeSystem?: boolean;
+  activeRangeStart?: string;
+  activeRangeEnd?: string;
 }
 
 // Helper to identify system/meta sources
@@ -57,6 +59,8 @@ export function UnhealthyPeriodsBarChart({
   onTopNChange,
   isLoading = false,
   includeSystem = true,
+  activeRangeStart,
+  activeRangeEnd,
 }: UnhealthyPeriodsBarChartProps) {
   const { onOpen: openInsightModal } = useInsightModal();
   const [viewMode, setViewMode] = useState<'chart' | 'distribution'>('chart');
@@ -181,6 +185,12 @@ export function UnhealthyPeriodsBarChart({
                 : `Distribution of sources by severity level`
               }
             </CardDescription>
+            {activeRangeStart && activeRangeEnd && (
+              <div className="mt-2 text-xs text-muted-foreground">
+                <div>Local: {new Date(activeRangeStart).toLocaleString()} — {new Date(activeRangeEnd).toLocaleString()}</div>
+                <div>UTC: {new Date(activeRangeStart).toLocaleString(undefined, { timeZone: 'UTC' })} — {new Date(activeRangeEnd).toLocaleString(undefined, { timeZone: 'UTC' })}</div>
+              </div>
+            )}
           </div>
 
           {/* Controls */}

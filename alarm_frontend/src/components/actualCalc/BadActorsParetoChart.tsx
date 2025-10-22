@@ -25,6 +25,8 @@ interface BadActorsParetoChartProps {
   onTopNChange?: (n: 5 | 10 | 15 | 20 | 'all') => void;
   isLoading?: boolean;
   includeSystem?: boolean;
+  activeRangeStart?: string;
+  activeRangeEnd?: string;
 }
 
 // Helper to identify system/meta sources
@@ -41,6 +43,8 @@ export function BadActorsParetoChart({
   onTopNChange,
   isLoading = false,
   includeSystem = true,
+  activeRangeStart,
+  activeRangeEnd,
 }: BadActorsParetoChartProps) {
   const { onOpen: openInsightModal } = useInsightModal();
   const [metricMode, setMetricMode] = useState<'alarms' | 'windows'>('alarms');
@@ -166,6 +170,12 @@ export function BadActorsParetoChart({
                 </span>
               )}
             </CardDescription>
+            {activeRangeStart && activeRangeEnd && (
+              <div className="mt-2 text-xs text-muted-foreground">
+                <div>Local: {new Date(activeRangeStart).toLocaleString()} — {new Date(activeRangeEnd).toLocaleString()}</div>
+                <div>UTC: {new Date(activeRangeStart).toLocaleString(undefined, { timeZone: 'UTC' })} — {new Date(activeRangeEnd).toLocaleString(undefined, { timeZone: 'UTC' })}</div>
+              </div>
+            )}
           </div>
 
           {/* Controls */}

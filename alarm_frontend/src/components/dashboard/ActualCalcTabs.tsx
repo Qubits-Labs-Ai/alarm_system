@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import ActivationOverloadSummary from './ActivationOverloadSummary';
 import { ActualCalcKPICards } from './ActualCalcKPICards';
 import { ActualCalcTree } from './ActualCalcTree';
@@ -18,6 +19,8 @@ import { UnhealthyPeriodsBarChart } from '../actualCalc/UnhealthyPeriodsBarChart
 import FloodsBubbleChart from '../actualCalc/FloodsBubbleChart';
 import TopFloodWindowsChart, { TopFloodWindowRow } from './TopFloodWindowsChart';
 import { UnhealthyBarChart } from './UnhealthyBarChart';
+import DateTimeRangePicker from '@/components/dashboard/DateTimeRangePicker';
+import { filterWindowsByRange, aggregateBarsFromWindows, buildTopActorsFromWindows, buildUnhealthyPeriodsFromWindows } from '@/lib/actualCalcRange';
 import { 
   ActualCalcOverallResponse, 
   ActualCalcUnhealthyResponse, 
@@ -78,6 +81,7 @@ export default function ActualCalcTabs({
   const [activeTab, setActiveTab] = useState<'alarm' | 'frequency' | 'analytics'>('alarm');
   const { badActorsTopN, setBadActorsTopN } = useBadActorsTopN();
   const { unhealthyPeriodsTopN, setUnhealthyPeriodsTopN } = useUnhealthyPeriodsTopN();
+  const [analyticsRange, setAnalyticsRange] = useState<{ startTime?: string; endTime?: string } | undefined>(undefined);
 
   // Loading state skeleton for KPIs
   const loadingKPIs = {
@@ -123,8 +127,15 @@ export default function ActualCalcTabs({
     const timeStart = actualCalcData?.sample_range?.start || new Date().toISOString();
     const timeEnd = actualCalcData?.sample_range?.end || new Date().toISOString();
 
+    // Decide windows to display based on optional analyticsRange
+    const allWindows = (actualCalcFloods?.windows || []);
+    const hasRange = Boolean(analyticsRange?.startTime && analyticsRange?.endTime);
+    const usedWindows = hasRange
+      ? filterWindowsByRange(allWindows, analyticsRange!.startTime!, analyticsRange!.endTime!)
+      : allWindows;
+
     // Map floods -> rows
-    const floodRows: TopFloodWindowRow[] = (actualCalcFloods?.windows || []).map((w, idx) => {
+    const floodRows: TopFloodWindowRow[] = (usedWindows || []).map((w, idx) => {
       const id = w.id;
       const label = `${new Date(w.start).toLocaleString()} — ${new Date(w.end).toLocaleString()}`;
       const top_sources = w.top_sources || [];
@@ -187,12 +198,39 @@ export default function ActualCalcTabs({
       ? { start: actualCalcData.sample_range.start, end: actualCalcData.sample_range.end } 
       : undefined;
 
+    // Range-based aggregates (apply when a range is selected and no single window is chosen)
+    const rangeBars = hasRange
+      ? aggregateBarsFromWindows(usedWindows, threshold, includeSystem, analyticsRange!.startTime!, analyticsRange!.endTime!)
+      : null;
+    const rangeBadActors = hasRange
+      ? buildTopActorsFromWindows(usedWindows, includeSystem)
+      : null;
+    const rangeUnhealthy = hasRange
+      ? buildUnhealthyPeriodsFromWindows(usedWindows, threshold, includeSystem)
+      : null;
+    const totalFloodCountRange = hasRange
+      ? usedWindows.reduce((sum, w) => {
+          const srcs = w?.sources_involved || {};
+          const entries = Object.entries(srcs);
+          const visible = includeSystem ? entries : entries.filter(([k]) => {
+            const s = String(k || '').trim().toUpperCase();
+            return !(s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM'));
+          });
+          return sum + visible.reduce((acc, [, v]) => acc + Number(v || 0), 0);
+        }, 0)
+      : null;
+
     return {
       threshold,
       floodRows,
       aggBars,
       windowBars,
       timePickerDomain,
+      floodWindows: usedWindows,
+      rangeBars,
+      rangeBadActors,
+      rangeUnhealthy,
+      totalFloodCountRange,
     };
   })();
 
@@ -295,20 +333,6 @@ export default function ActualCalcTabs({
                       {((actualCalcData.counts.total_chattering / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
                     </p>
                   </div>
-                  <div>
-                    <p className="text-muted-foreground">Cycles</p>
-                    <p className="text-lg font-semibold">{actualCalcData.counts.total_cycles.toLocaleString()}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {actualCalcData.overall.completion_rate_pct.toFixed(1)}% complete
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground">Inst. Failure</p>
-                    <p className="text-lg font-semibold">{(actualCalcData.counts.total_instrument_failure || 0).toLocaleString()}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {(((actualCalcData.counts.total_instrument_failure || 0) / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
-                    </p>
-                  </div>
                 </div>
                 {actualCalcData.sample_range?.start && actualCalcData.sample_range?.end && (
                   <p className="text-xs text-muted-foreground mt-4">
@@ -393,6 +417,23 @@ export default function ActualCalcTabs({
                 badActorsData={actualCalcBadActors}
               />
 
+              {/* Observation Range Picker (applies to Detailed Analytics charts) */}
+              <div className="flex flex-wrap items-center gap-3">
+                <DateTimeRangePicker
+                  value={analyticsRange}
+                  onApply={(s, e) => setAnalyticsRange({ startTime: s, endTime: e })}
+                  onClear={() => setAnalyticsRange(undefined)}
+                  domainStartISO={actualCalcData?.sample_range?.start || undefined}
+                  domainEndISO={actualCalcData?.sample_range?.end || undefined}
+                  label="Observation range"
+                />
+                {Boolean(analyticsRange?.startTime || analyticsRange?.endTime) && (
+                  <Button variant="outline" size="sm" onClick={() => setAnalyticsRange(undefined)}>
+                    Clear
+                  </Button>
+                )}
+              </div>
+
               {/* Top Flood Windows Chart */}
               <TopFloodWindowsChart
                 data={detailedAnalyticsData.floodRows}
@@ -419,7 +460,7 @@ export default function ActualCalcTabs({
               {/* Floods Bubble Chart */}
               {actualCalcFloods && (
                 <FloodsBubbleChart
-                  windows={actualCalcFloods.windows}
+                  windows={detailedAnalyticsData.floodWindows}
                   includeSystem={includeSystem}
                   isLoading={actualCalcLoading}
                   selectedWindowId={selectedWindow?.id}
@@ -437,7 +478,7 @@ export default function ActualCalcTabs({
 
               {/* Unhealthy Bar Chart */}
               <UnhealthyBarChart
-                data={detailedAnalyticsData.windowBars ?? detailedAnalyticsData.aggBars}
+                data={detailedAnalyticsData.windowBars ?? detailedAnalyticsData.rangeBars ?? detailedAnalyticsData.aggBars}
                 threshold={detailedAnalyticsData.threshold}
                 topN={topN}
                 onTopNChange={onTopNChange}
@@ -451,24 +492,39 @@ export default function ActualCalcTabs({
                 timePickerDomain={detailedAnalyticsData.timePickerDomain}
                 onClearWindow={() => onWindowChange(null)}
                 onApplyTimePicker={(s, e) => {
-                  const sMs = new Date(s).getTime();
-                  const eMs = new Date(e).getTime();
-                  let best: { win: ActualCalcFloodsResponse['windows'][number]; overlap: number } | null = null;
-                  for (const w of (actualCalcFloods?.windows || [])) {
-                    const ws = new Date(w.start).getTime();
-                    const we = new Date(w.end).getTime();
-                    const overlap = Math.max(0, Math.min(eMs, we) - Math.max(sMs, ws));
-                    if (!best || overlap > best.overlap) best = { win: w, overlap };
-                  }
-                  let win: ActualCalcFloodsResponse['windows'][number] | null = best && best.overlap > 0 ? best.win : null;
+                  const windows = actualCalcFloods?.windows || [];
+                  // 1) Exact string match (for quick-pick list items)
+                  let win: ActualCalcFloodsResponse['windows'][number] | null = windows.find(w => w.start === s && w.end === e) || null;
+                  // 2) Tolerant start/end match within ±60s (handles formatting/UTC drift)
                   if (!win) {
-                    // pick nearest by start-time distance
-                    let nearest: { win: ActualCalcFloodsResponse['windows'][number]; dist: number } | null = null;
-                    for (const w of (actualCalcFloods?.windows || [])) {
-                      const dist = Math.abs(new Date(w.start).getTime() - sMs);
-                      if (!nearest || dist < nearest.dist) nearest = { win: w, dist };
+                    const sMs = new Date(s).getTime();
+                    const eMs = new Date(e).getTime();
+                    const tol = 60_000; // 60 seconds tolerance
+                    win = windows.find(w => {
+                      const ws = new Date(w.start).getTime();
+                      const we = new Date(w.end).getTime();
+                      return Math.abs(ws - sMs) <= tol && Math.abs(we - eMs) <= tol;
+                    }) || null;
+                    // 3) Overlap-based best match
+                    if (!win) {
+                      let best: { win: ActualCalcFloodsResponse['windows'][number]; overlap: number } | null = null;
+                      for (const w of windows) {
+                        const ws = new Date(w.start).getTime();
+                        const we = new Date(w.end).getTime();
+                        const overlap = Math.max(0, Math.min(eMs, we) - Math.max(sMs, ws));
+                        if (!best || overlap > best.overlap) best = { win: w, overlap };
+                      }
+                      if (best && best.overlap > 0) win = best.win;
                     }
-                    win = nearest?.win;
+                    // 4) Nearest by start-time distance as last resort
+                    if (!win) {
+                      let nearest: { win: ActualCalcFloodsResponse['windows'][number]; dist: number } | null = null;
+                      for (const w of windows) {
+                        const dist = Math.abs(new Date(w.start).getTime() - new Date(s).getTime());
+                        if (!nearest || dist < nearest.dist) nearest = { win: w, dist };
+                      }
+                      win = nearest?.win || null;
+                    }
                   }
                   if (win) {
                     onWindowChange({ id: win.id, label: `${new Date(win.start).toLocaleString()} — ${new Date(win.end).toLocaleString()}`, start: win.start, end: win.end });
@@ -481,25 +537,29 @@ export default function ActualCalcTabs({
               {/* Bad Actors Pareto Chart */}
               {actualCalcBadActors && (
                 <BadActorsParetoChart
-                  data={actualCalcBadActors.top_actors}
-                  totalFloodCount={actualCalcFloods?.totals?.total_flood_count || 0}
+                  data={detailedAnalyticsData.rangeBadActors ?? actualCalcBadActors.top_actors}
+                  totalFloodCount={(detailedAnalyticsData.totalFloodCountRange ?? undefined) as number || (actualCalcFloods?.totals?.total_flood_count || 0)}
                   topN={badActorsTopN}
                   onTopNChange={setBadActorsTopN}
                   isLoading={actualCalcLoading}
                   includeSystem={includeSystem}
+                  activeRangeStart={analyticsRange?.startTime}
+                  activeRangeEnd={analyticsRange?.endTime}
                 />
               )}
 
               {/* Unhealthy Periods Distribution Chart */}
               {actualCalcUnhealthy && (
                 <UnhealthyPeriodsBarChart
-                  data={actualCalcUnhealthy.per_source}
+                  data={detailedAnalyticsData.rangeUnhealthy ?? actualCalcUnhealthy.per_source}
                   threshold={detailedAnalyticsData.threshold}
                   windowMinutes={actualCalcUnhealthy.params?.window_minutes || 10}
                   topN={unhealthyPeriodsTopN}
                   onTopNChange={setUnhealthyPeriodsTopN}
                   isLoading={actualCalcLoading}
                   includeSystem={includeSystem}
+                  activeRangeStart={analyticsRange?.startTime}
+                  activeRangeEnd={analyticsRange?.endTime}
                 />
               )}
             </>

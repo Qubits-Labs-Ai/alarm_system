@@ -38,6 +38,10 @@ export async function fetchPvciActualCalcPeakDetails(params?: {
   const url = new URL(`${API_BASE_URL}/pvcI-actual-calc/peak-details`);
   url.searchParams.set('stale_min', String(stale_min));
   url.searchParams.set('chatter_min', String(chatter_min));
+  // Prefer backend JSON cache for speed
+  url.searchParams.set('use_cache', 'true');
+  // Cache-bust to avoid stale inflight/localStorage entries after backend change
+  url.searchParams.set('api_version', '2');
   if (start_iso) url.searchParams.set('start_iso', start_iso);
   if (end_iso) url.searchParams.set('end_iso', end_iso);
   return fetchWithCache<PeakDetailsResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);

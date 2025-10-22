@@ -168,7 +168,7 @@ export default function FloodsBubbleChart({ windows, includeSystem = true, isLoa
                   />
                   <Scatter
                     data={filteredRows}
-                    fill="#ef4444"
+                    fill="rgb(95, 168, 47)"
                     opacity={0.8}
                     shape="circle"
                     onClick={(_, index) => {
