@@ -40,3 +40,11 @@ class LowestIsaDayResult(BaseModel):
 class WorstFileResult(BaseModel):
     filename: str
     health_pct: float
+
+
+class StreamRequest(BaseModel):
+    """Request for SSE streaming agent endpoint."""
+    query: str = Field(..., description="Natural language question about PVCI alarms")
+    plant: str = Field("PVCI", description="Plant identifier")
+    sessionId: str = Field(..., description="Client-generated session ID")
+    requestId: str = Field(..., description="Client-generated unique request ID")

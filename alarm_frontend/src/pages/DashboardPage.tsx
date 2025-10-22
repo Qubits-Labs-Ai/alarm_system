@@ -26,7 +26,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import TopFloodWindowsChart, { TopFloodWindowRow } from '@/components/dashboard/TopFloodWindowsChart';
 import { Button } from '@/components/ui/button';
 import DateTimeRangePicker from '@/components/dashboard/DateTimeRangePicker';
-import { Bot } from 'lucide-react';
+import { Bot, Sparkles } from 'lucide-react';
 
 // Type definitions for API responses
 interface EventStatistics {
@@ -709,14 +709,25 @@ export default function DashboardPage() {
               disabled={plantsLoading || plants.length <= 1}
             />
             {selectedPlant.id === 'pvcI' && (
-              <Button
-                size="sm"
-                className="gap-2"
-                onClick={() => navigate(`/${selectedPlant.id.toLowerCase()}/agent`)}
-                title="Chat with the PVC-I Agent"
-              >
-                <Bot className="h-4 w-4" /> Agent
-              </Button>
+              <>
+                <Button
+                  size="sm"
+                  className="gap-2 bg-primary hover:bg-primary/90"
+                  onClick={() => navigate(`/${selectedPlant.id.toLowerCase()}/agent`)}
+                  title="Open PVC-I Agent - Full page experience"
+                >
+                  <Sparkles className="h-4 w-4" /> Agent
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => navigate('/pvci/agent-sql')}
+                  title="PVCI Agent - Streaming SQL analysis"
+                >
+                  <Bot className="h-4 w-4" /> PVCI Agent
+                </Button>
+              </>
             )}
           </div>
           <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">

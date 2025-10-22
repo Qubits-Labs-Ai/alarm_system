@@ -9,6 +9,7 @@ import DashboardPage from "./pages/DashboardPage";
 import { ActualCalcPage } from "./pages/ActualCalcPage";
 import NotFound from "./pages/NotFound";
 import AgentPage from "./pages/AgentPage";
+import PVCIAgentPage from "./pages/PVCIAgentPage";
 
 // React Query global defaults: cache and serve instantly without background refetches
 const queryClient = new QueryClient({
@@ -46,6 +47,7 @@ const App = () => (
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/actual-calc" element={<ActualCalcPage />} />
           <Route path="/:plant/agent" element={<AgentPage />} />
+          <Route path="/pvci/agent-sql" element={<PVCIAgentPage />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
