@@ -18,6 +18,9 @@ def classify_per_source(df, time_col="Event Time"):
     df = ensure_datetime(df, time_col)
     results = []
 
+    # Check for required columns
+    has_action = 'Action' in df.columns
+    
     # Group by Source
     for src, g in df.groupby("Source"):
         g = g.sort_values(time_col).reset_index(drop=True)
@@ -27,7 +30,10 @@ def classify_per_source(df, time_col="Event Time"):
         g['time_diff'] = g[time_col].diff()
 
         # Active (no ACK/OK in the record). We treat Action column; empty or NaN -> active count
-        active_count = g[g['Action'].isna() | (g['Action'].astype(str).str.strip() == "")].shape[0]
+        if has_action:
+            active_count = g[g['Action'].isna() | (g['Action'].astype(str).str.strip() == "")].shape[0]
+        else:
+            active_count = 0  # Can't determine without Action column
 
         # Stale: time_diff > STALE_MINUTES
         stale_count = g[g['time_diff'] > timedelta(minutes=STALE_MINUTES)].shape[0]
@@ -84,14 +90,39 @@ def analyze(df, time_col="Event Time"):
     """
     df = df.copy()
     df = ensure_datetime(df, time_col)
+    
+    # Validate required columns
+    required_cols = [time_col, "Source"]
+    recommended_cols = [time_col, "Source", "Action", "Condition"]
+    missing_required = [col for col in required_cols if col not in df.columns]
+    missing_recommended = [col for col in recommended_cols if col not in df.columns]
+    
+    if missing_required:
+        return {
+            "error": f"Missing required columns: {', '.join(missing_required)}",
+            "hint": f"Your SQL query must SELECT these columns: {', '.join(required_cols)}",
+            "suggestion": "Use SELECT * FROM alerts WHERE ... to include all columns",
+            "available_columns": list(df.columns)
+        }
+    
+    # Warn about missing recommended columns (but continue with limited analysis)
+    warnings = []
+    if missing_recommended:
+        warnings.append(f"Missing recommended columns: {', '.join(missing_recommended)}. Some analysis features will be limited.")
+    
     per_source = classify_per_source(df, time_col)
     unhealthy, badactor = detect_unhealthy_and_badactor(df, time_col)
     floods = detect_floods(df, time_col)
 
-    return {
+    result = {
         "per_source": per_source.to_dict(orient="records"),
         "unhealthy_sources": unhealthy,
         "bad_actor": badactor,
         "floods": floods,
         "total_rows": int(len(df))
     }
+    
+    if warnings:
+        result["warnings"] = warnings
+    
+    return result

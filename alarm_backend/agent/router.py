@@ -63,8 +63,8 @@ async def agent_stream(payload: StreamRequest):
             async for event in run_glm_agent(
                 query=payload.query,
                 tools=AVAILABLE_TOOLS,
-                model="z-ai/glm-4.5-air:free",
-                max_iterations=4
+                model="z-ai/glm-4.5-air:free",  # Use GLM model as requested
+                max_iterations=8  # Increased to allow multiple retries on errors
             ):
                 # Enrich event with request metadata
                 event_with_meta = {

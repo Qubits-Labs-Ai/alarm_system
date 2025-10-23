@@ -7,21 +7,49 @@ import { useNavigate } from "react-router-dom";
 import { PageShell } from "@/components/dashboard/PageShell";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Sparkles, ArrowLeft, Copy, ThumbsUp, ThumbsDown, Share2, RotateCcw, MoreHorizontal, Loader2 } from "lucide-react";
+import { Sparkles, ArrowLeft, Copy, ThumbsUp, ThumbsDown, Share2, RotateCcw, MoreHorizontal, Loader2, ChevronDown } from "lucide-react";
 import { PlaceholdersAndVanishInput } from "@/components/ui/placeholders-and-vanish-input";
 import { streamAgentQuery, generateRequestId, generateSessionId, AgentEvent } from "@/api/agentSSE";
 import { cn } from "@/lib/utils";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
+type ReasoningPhase = {
+  label: string;  // "Planning", "Iteration 1 Analysis", "Final Review"
+  content: string;
+  timestamp: number;
+};
 
 type Message = {
   id: string;
   role: 'user' | 'agent';
   content: string;
-  reasoning?: string;
+  reasoningPhases?: ReasoningPhase[];  // Multiple reasoning blocks
   toolCalls?: Array<{ name: string; arguments: string }>;
   toolResults?: string[];
   pending?: boolean;
   isStreaming?: boolean;
+  // Track state for intelligent phase labeling
+  _toolCallCount?: number;  // How many tools have been called
+  _lastReasoningPhase?: string;  // Last phase label to avoid duplicates
+  // Track which section should be open (format: 'reasoning-0', 'tool-0', etc)
+  _openSection?: string;
 };
+
+// Remove any inline tool-call markup the model might echo into the answer text
+function sanitizeAnswerChunk(raw: string | undefined): string {
+  if (!raw) return "";
+  let s = raw;
+  // Strip XML-like tool call blocks
+  s = s.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "");
+  s = s.replace(/<arg_key>[\s\S]*?<\/arg_key>/gi, "");
+  s = s.replace(/<arg_value>[\s\S]*?<\/arg_value>/gi, "");
+  // Optional: strip fenced blocks labeled tool or arguments
+  s = s.replace(/```\s*(tool|arguments|argument|tool_call)[\s\S]*?```/gi, "");
+  return s;
+}
 
 const WelcomeMarkdown = `Welcome to PVCI Agent
 
@@ -63,7 +91,19 @@ const PVCIAgentPage = () => {
 
     const userMsg: Message = { id: `u-${Date.now()}`, role: "user", content: text };
     const answerId = `a-${Date.now()}`;
-    const answerMsg: Message = { id: answerId, role: "agent", content: "", pending: true, isStreaming: true, reasoning: "", toolCalls: [], toolResults: [] };
+    const answerMsg: Message = { 
+      id: answerId, 
+      role: "agent", 
+      content: "", 
+      pending: true, 
+      isStreaming: true, 
+      reasoningPhases: [], 
+      toolCalls: [], 
+      toolResults: [],
+      _toolCallCount: 0,
+      _lastReasoningPhase: "",
+      _openSection: undefined
+    };
 
     setMessages((m) => [...m, userMsg, answerMsg]);
     setInput("");
@@ -82,17 +122,66 @@ const PVCIAgentPage = () => {
               if (m.id !== answerId) return m;
               const updated: Message = { ...m, pending: false };
               switch (event.type) {
-                case "reasoning":
-                  updated.reasoning = (updated.reasoning || "") + (event.content || "");
+                case "reasoning": {
+                  // Determine phase label based on tool call count
+                  const toolCount = updated._toolCallCount || 0;
+                  let phaseLabel = "Planning";
+                  if (toolCount === 0) {
+                    phaseLabel = "Planning";
+                  } else if (toolCount === 1) {
+                    phaseLabel = "Iteration 1 - Analysis";
+                  } else if (toolCount === 2) {
+                    phaseLabel = "Iteration 2 - Analysis";
+                  } else if (toolCount >= 3) {
+                    phaseLabel = `Iteration ${toolCount} - Analysis`;
+                  }
+                  
+                  // Check if we should create a new phase or append to existing
+                  const phases = updated.reasoningPhases || [];
+                  const lastPhase = phases[phases.length - 1];
+                  
+                  if (!lastPhase || lastPhase.label !== phaseLabel) {
+                    // New phase - create new reasoning block
+                    updated.reasoningPhases = [
+                      ...phases,
+                      {
+                        label: phaseLabel,
+                        content: event.content || "",
+                        timestamp: Date.now()
+                      }
+                    ];
+                    // Auto-open this new reasoning phase
+                    updated._openSection = `reasoning-${phases.length}`;
+                  } else {
+                    // Same phase - append to existing
+                    const updatedPhases = [...phases];
+                    updatedPhases[updatedPhases.length - 1] = {
+                      ...lastPhase,
+                      content: lastPhase.content + (event.content || "")
+                    };
+                    updated.reasoningPhases = updatedPhases;
+                  }
+                  updated._lastReasoningPhase = phaseLabel;
                   return updated;
+                }
                 case "answer_stream":
-                  updated.content = (updated.content || "") + (event.content || "");
+                  updated.content = (updated.content || "") + sanitizeAnswerChunk(event.content);
                   return updated;
-                case "tool_call":
+                case "tool_call": {
                   if (event.data) {
-                    updated.toolCalls = [ ...(updated.toolCalls || []), { name: event.data.name, arguments: event.data.arguments } ];
+                    const data = event.data as { name?: string; arguments?: string };
+                    const newToolIndex = (updated.toolCalls || []).length;
+                    updated.toolCalls = [
+                      ...(updated.toolCalls || []),
+                      { name: data?.name || "", arguments: data?.arguments || "" }
+                    ];
+                    // Increment tool count for reasoning phase tracking
+                    updated._toolCallCount = (updated._toolCallCount || 0) + 1;
+                    // Auto-open this new tool call
+                    updated._openSection = `tool-${newToolIndex}`;
                   }
                   return updated;
+                }
                 case "tool_call_update":
                   if (updated.toolCalls && updated.toolCalls.length > 0) {
                     const idx = updated.toolCalls.length - 1;
@@ -107,16 +196,31 @@ const PVCIAgentPage = () => {
                   updated.toolResults = [ ...(updated.toolResults || []), event.content || "" ];
                   return updated;
                 case "answer_complete":
-                  updated.content = event.content || updated.content;
+                  updated.content = sanitizeAnswerChunk(event.content) || updated.content;
                   updated.isStreaming = false;
                   return updated;
                 case "complete":
                   updated.isStreaming = false;
                   return updated;
-                case "error":
-                  updated.content = `Error: ${event.message || "Unknown error"}`;
+                case "error": {
+                  // Show detailed error message with debug info if available
+                  const errorMsg = event.message || "Unknown error";
+                  const eventData = event as unknown as Record<string, unknown>;
+                  const debugInfo = eventData.debug as string | undefined;
+                  const errorType = eventData.error_type as string | undefined;
+                  
+                  let fullError = `**Error**: ${errorMsg}`;
+                  if (errorType) {
+                    fullError += `\n\n**Type**: ${errorType}`;
+                  }
+                  if (debugInfo && debugInfo !== errorMsg) {
+                    fullError += `\n\n**Details**: ${debugInfo}`;
+                  }
+                  
+                  updated.content = fullError;
                   updated.isStreaming = false;
                   return updated;
+                }
                 default:
                   return updated;
               }
@@ -134,15 +238,32 @@ const PVCIAgentPage = () => {
         }
       );
       activeControllerRef.current = controller;
-    } catch (error: any) {
+    } catch (error: unknown) {
       setLoading(false);
-      setMessages((m) => m.map((mm) => mm.id === answerId ? { ...mm, content: `Error: ${error.message}`, isStreaming: false, pending: false } : mm));
+      const message = error instanceof Error ? error.message : String(error);
+      setMessages((m) => m.map((mm) => mm.id === answerId ? { ...mm, content: `Error: ${message}`, isStreaming: false, pending: false } : mm));
       setActiveAnswerId(null);
     }
   };
 
+  const [manualOverrides, setManualOverrides] = useState<Record<string, boolean>>({});
+
   const renderMessage = (m: Message) => {
     const isUser = m.role === "user";
+    
+    const isOpen = (sectionId: string) => {
+      if (manualOverrides[`${m.id}-${sectionId}`] !== undefined) {
+        return manualOverrides[`${m.id}-${sectionId}`];
+      }
+      return m._openSection === sectionId;
+    };
+    
+    const toggleSection = (sectionId: string, currentState: boolean) => {
+      setManualOverrides(prev => ({
+        ...prev,
+        [`${m.id}-${sectionId}`]: !currentState
+      }));
+    };
     return (
       <div key={m.id} className={`group flex w-full ${isUser ? "justify-end" : "justify-start"}`}>
         <div
@@ -161,10 +282,10 @@ const PVCIAgentPage = () => {
           {/* Bubble */}
           <div
             className={cn(
-              "rounded-3xl px-4 py-3 shadow-sm break-words",
+              "break-words",
               isUser
-                ? "w-fit max-w-[90%] md:max-w-[85%] ml-6 sm:ml-10 bg-[#7eb653] dark:bg-[#496930] text-white border-transparent"
-                : "w-full bg-primary/5 text-foreground border-primary/15 border"
+                ? "rounded-3xl px-4 py-3 shadow-sm w-fit max-w-[90%] md:max-w-[85%] ml-6 sm:ml-10 bg-[#7eb653] dark:bg-[#496930] text-white border-transparent"
+                : "w-full"
             )}
           >
             {isUser ? (
@@ -176,30 +297,110 @@ const PVCIAgentPage = () => {
               </div>
             ) : (
               <>
-                {/* Reasoning */}
-                {m.reasoning && m.reasoning.trim() && (
-                  <div className="mb-3 p-3 rounded-lg bg-muted/30 border border-border">
-                    <div className="text-xs font-medium text-muted-foreground mb-1">💭 Reasoning:</div>
-                    <div className="text-sm text-foreground whitespace-pre-wrap">{m.reasoning}</div>
+                {m.reasoningPhases && m.reasoningPhases.length > 0 && (
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span className="font-medium">💭 Reasoning</span>
+                      <span className="opacity-70">({m.reasoningPhases.length} phase{m.reasoningPhases.length > 1 ? 's' : ''})</span>
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {m.reasoningPhases.map((phase, idx) => {
+                        const sectionId = `reasoning-${idx}`;
+                        const open = isOpen(sectionId);
+                        return (
+                          <Collapsible 
+                            key={idx} 
+                            open={open}
+                            onOpenChange={() => toggleSection(sectionId, open)}
+                            className="group/collapsible"
+                          >
+                            <CollapsibleTrigger className="flex w-full items-center justify-between text-left text-[13px]">
+                              <span className="font-medium text-primary flex items-center gap-2">
+                                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-xs">{idx + 1}</span>
+                                {phase.label}
+                              </span>
+                              <ChevronDown className="h-4 w-4 opacity-60 transition-all duration-200 group-data-[state=open]/collapsible:rotate-180" />
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="transition-all duration-200 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                              <div className="mt-2 pl-1">
+                                <ScrollArea className="h-24 pr-1">
+                                  <div className="text-[13px] whitespace-pre-wrap leading-6 text-muted-foreground">{phase.content}</div>
+                                </ScrollArea>
+                              </div>
+                            </CollapsibleContent>
+                          </Collapsible>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
-                {/* Tool Calls */}
-                {m.toolCalls &&
-                  m.toolCalls.length > 0 &&
-                  m.toolCalls.map((tool, idx) => (
-                    <div key={idx} className="mb-3 p-3 rounded-lg bg-primary/5 border border-primary/20">
-                      <div className="text-xs font-medium text-primary mb-1">🔧 Tool: {tool.name}</div>
-                      <div className="text-xs font-mono text-muted-foreground overflow-x-auto">
-                        {tool.arguments.substring(0, 300)}...
-                      </div>
-                      {m.toolResults && m.toolResults[idx] && (
-                        <div className="mt-2 text-xs text-foreground">✓ {m.toolResults[idx].substring(0, 200)}...</div>
-                      )}
+
+                {m.toolCalls && m.toolCalls.length > 0 && (
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span className="font-medium">🔧 Tool Calls</span>
+                      <span className="opacity-70">{m.toolCalls.length}</span>
                     </div>
-                  ))}
-                {/* Answer */}
-                <div className="prose prose-sm dark:prose-invert max-w-none leading-6 prose-p:my-2 prose-ul:my-1 prose-li:my-0.5 whitespace-pre-wrap">
-                  {m.content}
+                    <div className="pt-2 space-y-3">
+                      {m.toolCalls.map((tool, idx) => {
+                        let prettyArgs = tool.arguments;
+                        try {
+                          const parsed = JSON.parse(tool.arguments);
+                          prettyArgs = JSON.stringify(parsed, null, 2);
+                        } catch (_e) { void 0; }
+                        const toolResult = m.toolResults && m.toolResults[idx];
+                        const sectionId = `tool-${idx}`;
+                        const open = isOpen(sectionId);
+                        return (
+                          <Collapsible 
+                            key={idx} 
+                            open={open}
+                            onOpenChange={() => toggleSection(sectionId, open)}
+                            className="group/collapsible"
+                          >
+                            <CollapsibleTrigger className="flex w-full items-center justify-between text-left text-[13px] text-primary">
+                              <span className="underline-offset-2 hover:underline">{tool.name}</span>
+                              <ChevronDown className="h-4 w-4 opacity-60 transition-all duration-200 group-data-[state=open]/collapsible:rotate-180" />
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="transition-all duration-200 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                              <div className="grid gap-2 mt-2">
+                                <div>
+                                  <div className="text-[11px] font-medium text-muted-foreground mb-1">Arguments</div>
+                                  <ScrollArea className="h-28 rounded-md border border-border/60 p-2">
+                                    <pre className="text-[13px] whitespace-pre-wrap font-mono text-muted-foreground">{prettyArgs}</pre>
+                                  </ScrollArea>
+                                </div>
+                                {toolResult && (
+                                  <div>
+                                    <div className="text-[11px] font-medium text-muted-foreground mb-1">Result</div>
+                                    <ScrollArea className="h-28 rounded-md border border-border/60 p-2">
+                                      <pre className="text-[13px] whitespace-pre-wrap font-mono text-muted-foreground">{toolResult}</pre>
+                                    </ScrollArea>
+                                  </div>
+                                )}
+                              </div>
+                            </CollapsibleContent>
+                          </Collapsible>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-1">
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground mb-2">Answer</div>
+                  <div className="prose prose-sm dark:prose-invert agent-prose max-w-none leading-6 prose-p:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-strong:font-semibold prose-code:text-[13px]">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        a: ({node, ...props}) => (
+                          <a {...props} target="_blank" rel="noreferrer" />
+                        ),
+                      }}
+                    >
+                      {m.content || ""}
+                    </ReactMarkdown>
+                  </div>
                   {m.isStreaming && <span className="inline-block w-2 h-4 ml-1 bg-primary animate-pulse" />}
                 </div>
               </>
@@ -216,7 +417,9 @@ const PVCIAgentPage = () => {
                             await navigator.clipboard.writeText(m.content);
                             setCopiedId(m.id);
                             window.setTimeout(() => setCopiedId(null), 1500);
-                          } catch {}
+                          } catch (e) {
+                            console.error(e);
+                          }
                         }}
                       >
                         <Copy className="h-4 w-4" />
