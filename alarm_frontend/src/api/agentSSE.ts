@@ -47,7 +47,10 @@ export async function streamAgentQuery(
   callbacks: StreamCallbacks
 ): Promise<AbortController> {
   const abortController = new AbortController();
-  const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  const API_BASE =
+    (typeof window !== 'undefined' && (window as any).__APP_CONFIG__?.API_BASE_URL) ||
+    import.meta.env.VITE_API_URL ||
+    'http://127.0.0.1:8000';
 
   try {
     const response = await fetch(`${API_BASE}/agent/pvci/stream`, {

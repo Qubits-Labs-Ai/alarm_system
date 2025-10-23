@@ -11,6 +11,12 @@ from dotenv import load_dotenv
 # We support both OPENROUTER_API_KEY (preferred) and OPENAI_API_KEY (fallback)
 load_dotenv(override=True)  # Ensure latest .env overrides any existing env vars
 CLIENT_API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+try:
+    GEMINI_THINKING_BUDGET = int(os.getenv("GEMINI_THINKING_BUDGET", "-1"))
+except Exception:
+    GEMINI_THINKING_BUDGET = -1
 
 if not CLIENT_API_KEY:
     raise ValueError("❌ API key missing! Please set OPENROUTER_API_KEY or OPENAI_API_KEY in your .env file.")
@@ -246,6 +252,7 @@ async def run_glm_agent(
         max_retries = 3
         base_delay = 1.0
         
+        fallback_to_gemini = False
         for attempt in range(max_retries):
             try:
                 return await client.chat.completions.create(
@@ -263,15 +270,28 @@ async def run_glm_agent(
                     print(f"❌ Non-retryable error: {e}")
                     raise
                 
+                # On OpenRouter rate limit and GEMINI available, switch provider
+                if ('rate limit' in error_str or '429' in error_str) and GEMINI_API_KEY:
+                    print("⚠️ OpenRouter rate limited. Falling back to Google Gemini provider.")
+                    fallback_to_gemini = True
+                    break
+
                 # Last attempt - raise the error
                 if attempt == max_retries - 1:
                     print(f"❌ Max retries ({max_retries}) reached: {e}")
-                    raise
+                    if GEMINI_API_KEY and ('rate limit' in error_str or '429' in error_str):
+                        fallback_to_gemini = True
+                        break
+                    else:
+                        raise
                 
                 # Exponential backoff with jitter
                 delay = base_delay * (2 ** attempt) + random.uniform(0, 0.5)
                 print(f"⚠️ Retry {attempt + 1}/{max_retries} after {delay:.2f}s due to: {type(e).__name__}")
                 await asyncio.sleep(delay)
+
+        if fallback_to_gemini:
+            return None  # Signal caller to invoke Gemini fallback
 
     while iteration < max_iterations:
         iteration += 1
@@ -282,6 +302,127 @@ async def run_glm_agent(
                 yield {"type": "reasoning", "content": "Analyzing query and planning steps..."}
 
             response_stream = await _create_stream_with_retry()
+
+            if response_stream is None and GEMINI_API_KEY:
+                # Gemini fallback path (single or two-turn with one function call)
+                try:
+                    yield {"type": "reasoning", "content": "Provider fell back to Google Gemini due to rate limits. Attempting response..."}
+                    # Import on-demand to avoid hard runtime dependency when not used
+                    from google import genai as google_genai
+                except Exception as imp_err:
+                    yield {"type": "error", "message": f"Gemini fallback unavailable: {imp_err}"}
+                    break
+
+                try:
+                    gemini_client = google_genai.Client(api_key=GEMINI_API_KEY)
+                    # google-genai expects actual callable functions, not schema dicts
+                    # Pass the tools list directly (Python callables)
+
+                    def _oai_messages_to_gemini_contents(msgs: List[Dict[str, Any]]):
+                        contents = []
+                        for m in msgs:
+                            role = m.get("role", "user")
+                            text = m.get("content", "")
+                            if role == "system":
+                                # Prepend system to first user message for simplicity
+                                contents.append({"role": "user", "parts": [{"text": text}]})
+                            elif role in ("user", "assistant"):
+                                contents.append({"role": role, "parts": [{"text": text}]})
+                            elif role == "tool":
+                                # Provide tool result as assistant part to give model the context
+                                contents.append({"role": "assistant", "parts": [{"text": text}]})
+                        return contents
+
+                    def _extract_text(resp):
+                        try:
+                            return getattr(resp, 'text', None) or resp.text  # SDK convenience
+                        except Exception:
+                            try:
+                                # Fallback parse from candidates
+                                cands = getattr(resp, 'candidates', [])
+                                if cands and 'content' in cands[0] and 'parts' in cands[0]['content']:
+                                    for p in cands[0]['content']['parts']:
+                                        if 'text' in p:
+                                            return p['text']
+                            except Exception:
+                                return None
+                        return None
+
+                    # First turn - pass actual Python callables as tools
+                    _genai_config = {}
+                    if tools:
+                        _genai_config["tools"] = tools  # Pass actual callable functions
+                    if GEMINI_THINKING_BUDGET is not None and GEMINI_THINKING_BUDGET >= 0:
+                        _genai_config["thinking"] = {"budgetTokens": GEMINI_THINKING_BUDGET}
+
+                    resp = gemini_client.models.generate_content(
+                        model=GEMINI_MODEL,
+                        contents=_oai_messages_to_gemini_contents(messages),
+                        config=_genai_config if _genai_config else None,
+                    )
+
+                    # Handle function call if present (single tool call support)
+                    fn_calls = []
+                    try:
+                        parts = resp.candidates[0].content.parts  # SDK structure
+                        for p in parts:
+                            if hasattr(p, 'function_call') or (isinstance(p, dict) and 'functionCall' in p):
+                                fc = getattr(p, 'function_call', None) or p['functionCall']
+                                fn_calls.append(fc)
+                    except Exception:
+                        pass
+
+                    if fn_calls:
+                        fc = fn_calls[0]
+                        fn_name = getattr(fc, 'name', None) or fc.get('name')
+                        fn_args = getattr(fc, 'args', None) or fc.get('args') or {}
+                        try:
+                            args_json = json.dumps(fn_args)
+                        except Exception:
+                            args_json = json.dumps({})
+                        yield {"type": "tool_call", "data": {"name": fn_name, "arguments": args_json}}
+                        try:
+                            tool_func = tool_map.get(fn_name)
+                            tool_result = await asyncio.to_thread(tool_func, **(fn_args or {})) if tool_func else json.dumps({"error": f"Tool '{fn_name}' not found"})
+                        except Exception as tool_err:
+                            tool_result = json.dumps({"error": str(tool_err)})
+                        yield {"type": "tool_result", "content": tool_result[:500] + ("..." if len(tool_result) > 500 else "")}
+
+                        # Second turn: provide tool result
+                        messages.append({
+                            "role": "assistant",
+                            "tool_calls": [{"id": "gemini-fc-1", "function": {"name": fn_name, "arguments": args_json}, "type": "function"}]
+                        })
+                        messages.append({"role": "tool", "tool_call_id": "gemini-fc-1", "content": tool_result[:5000]})
+
+                        _genai_config2 = {}
+                        if tools:
+                            _genai_config2["tools"] = tools  # Pass actual callable functions
+                        if GEMINI_THINKING_BUDGET is not None and GEMINI_THINKING_BUDGET >= 0:
+                            _genai_config2["thinking"] = {"budgetTokens": GEMINI_THINKING_BUDGET}
+
+                        resp2 = gemini_client.models.generate_content(
+                            model=GEMINI_MODEL,
+                            contents=_oai_messages_to_gemini_contents(messages),
+                            config=_genai_config2 if _genai_config2 else None,
+                        )
+                        final_text = _extract_text(resp2) or ""
+                    else:
+                        final_text = _extract_text(resp) or ""
+
+                    if final_text:
+                        # Simulate streaming
+                        yield {"type": "answer_stream", "content": final_text}
+                        yield {"type": "answer_complete", "content": final_text}
+                        yield {"type": "complete", "data": {"iterations": iteration}}
+                        break
+                    else:
+                        yield {"type": "error", "message": "Gemini fallback returned no content."}
+                        break
+
+                except Exception as gerr:
+                    yield {"type": "error", "message": f"Gemini fallback failed: {gerr}"}
+                    break
 
             reasoning_buffer = ""
             function_call_info = None

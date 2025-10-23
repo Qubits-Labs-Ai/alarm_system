@@ -3,5 +3,6 @@ uvicorn
 pandas
 python-dotenv
 google-generativeai
+google-genai>=0.3.0
 openai>=1.30.0
 orjson
