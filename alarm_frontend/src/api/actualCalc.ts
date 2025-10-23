@@ -306,3 +306,190 @@ export function clearActualCalcCache() {
     // ignore
   }
 }
+
+// ==================== MULTI-PLANT DYNAMIC API FUNCTIONS ====================
+
+export interface PlantInfo {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  active: boolean;
+}
+
+export interface PlantsListResponse {
+  plants: PlantInfo[];
+  total: number;
+}
+
+/**
+ * Fetch list of all available plants
+ */
+export async function fetchAvailablePlants(timeout_ms?: number): Promise<PlantsListResponse> {
+  const url = `${API_BASE_URL}/actual-calc/plants`;
+  return fetchWithCache<PlantsListResponse>(url, 5 * 60 * 1000, timeout_ms);
+}
+
+/**
+ * Fetch overall actual-calc KPIs for any plant
+ */
+export async function fetchPlantActualCalcOverall(
+  plantId: string,
+  params?: {
+    stale_min?: number;
+    chatter_min?: number;
+    include_per_source?: boolean;
+    offset?: number;
+    limit?: number;
+    include_cycles?: boolean;
+    raw?: boolean;
+    force_recompute?: boolean;
+    timeout_ms?: number;
+  }
+): Promise<ActualCalcOverallResponse> {
+  const {
+    stale_min = 60,
+    chatter_min = 10,
+    include_per_source = false,
+    offset = 0,
+    limit = 200,
+    include_cycles = false,
+    raw = false,
+    force_recompute = false,
+    timeout_ms,
+  } = params || {};
+
+  const url = new URL(`${API_BASE_URL}/actual-calc/${plantId}/overall`);
+  url.searchParams.set('stale_min', String(stale_min));
+  url.searchParams.set('chatter_min', String(chatter_min));
+  url.searchParams.set('include_per_source', String(include_per_source));
+  url.searchParams.set('offset', String(offset));
+  url.searchParams.set('limit', String(limit));
+  url.searchParams.set('include_cycles', String(include_cycles));
+  url.searchParams.set('raw', String(raw));
+  url.searchParams.set('force_recompute', String(force_recompute));
+
+  const ttl = include_per_source ? 5 * 60 * 1000 : 15 * 60 * 1000;
+  return fetchWithCache<ActualCalcOverallResponse>(url.toString(), ttl, timeout_ms);
+}
+
+/**
+ * Fetch per-source metrics for a specific source in any plant
+ */
+export async function fetchPlantActualCalcPerSource(
+  plantId: string,
+  params: {
+    source: string;
+    include_cycles?: boolean;
+    stale_min?: number;
+    chatter_min?: number;
+    timeout_ms?: number;
+  }
+): Promise<ActualCalcPerSourceResponse> {
+  const {
+    source,
+    include_cycles = false,
+    stale_min = 60,
+    chatter_min = 10,
+    timeout_ms,
+  } = params;
+
+  const url = new URL(`${API_BASE_URL}/actual-calc/${plantId}/per-source`);
+  url.searchParams.set('source', source);
+  url.searchParams.set('include_cycles', String(include_cycles));
+  url.searchParams.set('stale_min', String(stale_min));
+  url.searchParams.set('chatter_min', String(chatter_min));
+
+  return fetchWithCache<ActualCalcPerSourceResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
+}
+
+/**
+ * Fetch unhealthy periods for any plant
+ */
+export async function fetchPlantActualCalcUnhealthy(
+  plantId: string,
+  params?: {
+    offset?: number;
+    limit?: number;
+    timeout_ms?: number;
+  }
+): Promise<ActualCalcUnhealthyResponse> {
+  const { offset = 0, limit = 200, timeout_ms } = params || {};
+  const url = new URL(`${API_BASE_URL}/actual-calc/${plantId}/unhealthy`);
+  url.searchParams.set('offset', String(offset));
+  url.searchParams.set('limit', String(limit));
+  return fetchWithCache<ActualCalcUnhealthyResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
+}
+
+/**
+ * Fetch flood windows for any plant
+ */
+export async function fetchPlantActualCalcFloods(
+  plantId: string,
+  params?: {
+    limit?: number;
+    timeout_ms?: number;
+  }
+): Promise<ActualCalcFloodsResponse> {
+  const { limit = 100, timeout_ms } = params || {};
+  const url = new URL(`${API_BASE_URL}/actual-calc/${plantId}/floods`);
+  url.searchParams.set('limit', String(limit));
+  return fetchWithCache<ActualCalcFloodsResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
+}
+
+/**
+ * Fetch bad actors for any plant
+ */
+export async function fetchPlantActualCalcBadActors(
+  plantId: string,
+  params?: {
+    limit?: number;
+    timeout_ms?: number;
+  }
+): Promise<ActualCalcBadActorsResponse> {
+  const { limit = 9999, timeout_ms } = params || {};
+  const url = new URL(`${API_BASE_URL}/actual-calc/${plantId}/bad-actors`);
+  url.searchParams.set('limit', String(limit));
+  return fetchWithCache<ActualCalcBadActorsResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
+}
+
+/**
+ * Regenerate cache for any plant
+ */
+export async function regeneratePlantActualCalcCache(
+  plantId: string,
+  params?: {
+    stale_min?: number;
+    chatter_min?: number;
+    timeout_ms?: number;
+  }
+): Promise<RegenerateCacheResponse> {
+  const {
+    stale_min = 60,
+    chatter_min = 10,
+    timeout_ms = 120000, // 2 minute timeout
+  } = params || {};
+
+  const url = new URL(`${API_BASE_URL}/actual-calc/${plantId}/regenerate-cache`);
+  url.searchParams.set('stale_min', String(stale_min));
+  url.searchParams.set('chatter_min', String(chatter_min));
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout_ms);
+
+  try {
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errorText}`);
+    }
+
+    return await res.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}

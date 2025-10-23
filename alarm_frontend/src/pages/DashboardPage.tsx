@@ -2,13 +2,24 @@ import { useState, useEffect, startTransition, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageShell } from '@/components/dashboard/PageShell';
 import { PlantSelector } from '@/components/dashboard/PlantSelector';
+import { ActualCalcPlantSelector } from '@/components/actualCalc/ActualCalcPlantSelector';
+import { useSelectedPlant } from '@/contexts/PlantContext';
 import { InsightCards } from '@/components/dashboard/InsightCards';
 import { UniqueSourcesCard } from '@/components/dashboard/UniqueSourcesCard';
 import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
 import { EventStatisticsCards } from '@/components/dashboard/EventStatisticsCards';
 import { ErrorState } from '@/components/dashboard/ErrorState';
 import ActualCalcTabs from '@/components/dashboard/ActualCalcTabs';
-import { fetchPvciActualCalcOverall, fetchPvciActualCalcUnhealthy, fetchPvciActualCalcFloods, fetchPvciActualCalcBadActors } from '@/api/actualCalc';
+import { 
+  fetchPvciActualCalcOverall, 
+  fetchPvciActualCalcUnhealthy, 
+  fetchPvciActualCalcFloods, 
+  fetchPvciActualCalcBadActors,
+  fetchPlantActualCalcOverall,
+  fetchPlantActualCalcUnhealthy,
+  fetchPlantActualCalcFloods,
+  fetchPlantActualCalcBadActors
+} from '@/api/actualCalc';
 import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
 import UnhealthySourcesWordCloud from '@/components/UnhealthySourcesWordCloud';
@@ -105,6 +116,7 @@ const defaultPlant: Plant = { id: 'pvcI', name: 'PVC-I', status: 'active' };
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const actualCalcPlantId = useSelectedPlant(); // Plant from context for actual-calc mode
   const [selectedPlant, setSelectedPlant] = useState<Plant>(defaultPlant);
   const [plants, setPlants] = useState<Plant[]>([]);
   const [plantsLoading, setPlantsLoading] = useState<boolean>(true);
@@ -207,6 +219,7 @@ export default function DashboardPage() {
 
 
   // Fetch ISA-18 summary (cards) and per-source metrics via hook; now safe to reference isaRange
+  // Note: usePlantHealth only supports 'perSource' and 'flood' modes, not 'actualCalc'
   const { 
     data, 
     isLoading, 
@@ -216,7 +229,7 @@ export default function DashboardPage() {
   } = usePlantHealth(
     selectedPlant.id,
     topN,
-    mode,
+    mode === 'actualCalc' ? 'perSource' : mode, // Filter actualCalc to perSource for hook compatibility
     false,
     (mode === 'flood' && selectedPlant.id === 'pvcI') ? isaRange : undefined
   );
@@ -287,22 +300,23 @@ export default function DashboardPage() {
   useEffect(() => {
     let mounted = true;
     async function loadActualCalc() {
-      if (mode !== 'actualCalc' || selectedPlant.id !== 'pvcI') {
+      if (mode !== 'actualCalc') {
         return;
       }
       try {
         setActualCalcLoading(true);
+        // Use dynamic plant-aware API calls with actualCalcPlantId from context
         let [overall, unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
-          fetchPvciActualCalcOverall({
+          fetchPlantActualCalcOverall(actualCalcPlantId, {
             stale_min: 60,
             chatter_min: 10,
             include_per_source: false,
             include_cycles: false,
             timeout_ms: 120000, // Increased to 120s for activation window calculations
           }),
-          fetchPvciActualCalcUnhealthy({ stale_min: 60, chatter_min: 10, limit: 500, timeout_ms: 120000 }),
-          fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200, timeout_ms: 120000 }),
-          fetchPvciActualCalcBadActors({ stale_min: 60, chatter_min: 10, timeout_ms: 120000 }),
+          fetchPlantActualCalcUnhealthy(actualCalcPlantId, { offset: 0, limit: 500, timeout_ms: 120000 }),
+          fetchPlantActualCalcFloods(actualCalcPlantId, { limit: 200, timeout_ms: 120000 }),
+          fetchPlantActualCalcBadActors(actualCalcPlantId, { limit: 9999, timeout_ms: 120000 }),
         ]);
 
         // Recompute fallback: server cache may not have activation-based fields yet after deploy
@@ -313,7 +327,7 @@ export default function DashboardPage() {
         );
         if (missingActivation) {
           try {
-            const recomputed = await fetchPvciActualCalcOverall({
+            const recomputed = await fetchPlantActualCalcOverall(actualCalcPlantId, {
               stale_min: 60,
               chatter_min: 10,
               include_per_source: false,
@@ -350,7 +364,7 @@ export default function DashboardPage() {
     }
     loadActualCalc();
     return () => { mounted = false; };
-  }, [mode, selectedPlant.id]);
+  }, [mode, actualCalcPlantId]); // Reload when mode or selected plant changes
 
   // Load Top Bars: per-source or flood mode
   useEffect(() => {
@@ -699,21 +713,29 @@ export default function DashboardPage() {
       lastUpdated={data?.metrics.last_updated}
     >
       <div className="space-y-6">
-        {/* Plant Selector + Agent (PVC-I only) */}
+        {/* Plant Selector + Agent (conditional) */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <PlantSelector
-              plants={plants}
-              selectedPlant={selectedPlant}
-              onPlantChange={handlePlantChange}
-              disabled={plantsLoading || plants.length <= 1}
-            />
-            {selectedPlant.id === 'pvcI' && (
+            {/* Use unified plant selector for all modes */}
+            {mode === 'actualCalc' ? (
+              <ActualCalcPlantSelector />
+            ) : (
+              <PlantSelector
+                plants={plants}
+                selectedPlant={selectedPlant}
+                onPlantChange={handlePlantChange}
+                disabled={plantsLoading || plants.length <= 1}
+              />
+            )}
+            
+            {/* Agent buttons - only show for PVCI in actual-calc mode, or when PVCI selected in other modes */}
+            {((mode === 'actualCalc' && actualCalcPlantId === 'PVCI') || 
+              (mode !== 'actualCalc' && selectedPlant.id === 'pvcI')) && (
               <>
                 <Button
                   size="sm"
                   className="gap-2 bg-primary hover:bg-primary/90"
-                  onClick={() => navigate(`/${selectedPlant.id.toLowerCase()}/agent`)}
+                  onClick={() => navigate('/pvci/agent')}
                   title="Open PVC-I Agent - Full page experience"
                 >
                   <Sparkles className="h-4 w-4" /> Agent
@@ -730,20 +752,18 @@ export default function DashboardPage() {
               </>
             )}
           </div>
-          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
             <span className="text-sm text-muted-foreground">Mode</span>
-            <Select value={mode} onValueChange={(v) => setMode(v as any)} disabled={selectedPlant.id !== 'pvcI'}>
+            <Select value={mode} onValueChange={(v) => setMode(v as 'perSource' | 'flood' | 'actualCalc')} disabled={mode !== 'actualCalc' && selectedPlant.id !== 'pvcI'}>
               <SelectTrigger className="w-full sm:w-56">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="perSource">Per Source</SelectItem>
-                {selectedPlant.id === 'pvcI' && (
+                {(mode !== 'actualCalc' && selectedPlant.id === 'pvcI') && (
                   <SelectItem value="flood">Plant-Wide (ISA 18.2)</SelectItem>
                 )}
-                {selectedPlant.id === 'pvcI' && (
-                  <SelectItem value="actualCalc">Actual Calc</SelectItem>
-                )}
+                <SelectItem value="actualCalc">Actual Calc</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -950,8 +970,8 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Actual Calc Mode - PVC-I only */}
-        {selectedPlant.id === 'pvcI' && mode === 'actualCalc' && actualCalcData && (
+        {/* Actual Calc Mode - Dynamic Multi-Plant */}
+        {mode === 'actualCalc' && actualCalcData && (
           <ActualCalcTabs
             actualCalcData={actualCalcData}
             actualCalcUnhealthy={actualCalcUnhealthy}
@@ -965,7 +985,7 @@ export default function DashboardPage() {
             topN={topN}
             onTopNChange={setTopN}
             includeSystem={includeSystem}
-            plantId={selectedPlant.id}
+            plantId={actualCalcPlantId}
           />
         )}
         

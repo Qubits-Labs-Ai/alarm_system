@@ -2006,6 +2006,7 @@ try:
         sys.path.insert(0, actual_calc_dir)
     from actual_calc_service import (
         run_actual_calc,
+        run_actual_calc_with_cache,
         read_cache,
         write_cache,
         dataframe_to_json_records,
@@ -2024,6 +2025,17 @@ try:
 except ImportError as ie:
     logger.warning(f"Actual calc service not available: {ie}")
     ACTUAL_CALC_AVAILABLE = False
+
+# Import plant registry for multi-plant support
+try:
+    from plant_registry import get_all_plants, get_plant_info, validate_plant_id
+    PLANT_REGISTRY_AVAILABLE = True
+except ImportError as ie2:
+    logger.warning(f"Plant registry not available: {ie2}")
+    PLANT_REGISTRY_AVAILABLE = False
+    def get_all_plants(): return []
+    def get_plant_info(plant_id): return None
+    def validate_plant_id(plant_id): return False
 
 
 @app.get("/pvcI-actual-calc/overall", response_class=ORJSONResponse)
@@ -2629,5 +2641,370 @@ def get_pvci_actual_calc_bad_actors(
         raise
     except Exception as e:
         logger.error(f"actual-calc/bad-actors error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== MULTI-PLANT DYNAMIC ACTUAL-CALC ENDPOINTS ====================
+
+@app.get("/actual-calc/plants", response_class=ORJSONResponse)
+def get_available_plants():
+    """Get list of all available plants for actual-calc mode.
+    
+    Returns:
+        {
+            plants: [
+                {id, name, display_name, description, active},
+                ...
+            ],
+            total: int
+        }
+    """
+    if not PLANT_REGISTRY_AVAILABLE:
+        return {"plants": [], "total": 0, "message": "Plant registry not available"}
+    
+    try:
+        plants = get_all_plants()
+        return {
+            "plants": plants,
+            "total": len(plants)
+        }
+    except Exception as e:
+        logger.error(f"Error getting plants: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/actual-calc/{plant_id}/overall", response_class=ORJSONResponse)
+def get_plant_actual_calc_overall(
+    plant_id: str,
+    stale_min: int = 60,
+    chatter_min: int = 10,
+    include_per_source: bool = False,
+    offset: int = 0,
+    limit: int = 200,
+    include_cycles: bool = False,
+    raw: bool = False,
+    force_recompute: bool = False
+):
+    """Get actual calculation KPIs for any plant.
+    
+    Path Parameters:
+        plant_id: Plant identifier (e.g., "PVCI", "VCMA")
+    
+    Query Parameters:
+        stale_min: Stale alarm threshold in minutes (default 60)
+        chatter_min: Chattering threshold in minutes (default 10)
+        include_per_source: Include per-source summary (default False)
+        offset: Offset for per-source pagination (default 0)
+        limit: Limit for per-source pagination (default 200)
+        include_cycles: Include alarm lifecycle cycles (default False)
+        raw: Return full cache JSON as-is (default False)
+        force_recompute: Force recomputation ignoring cache (default False)
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service not available")
+    
+    if not validate_plant_id(plant_id):
+        raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
+    
+    try:
+        # Use run_actual_calc_with_cache for unified cache management
+        result = run_actual_calc_with_cache(
+            base_dir=BASE_DIR,
+            alarm_data_dir=ALARM_DATA_DIR,
+            plant_id=plant_id,
+            use_cache=not force_recompute,
+            force_refresh=force_recompute,
+            stale_min=stale_min,
+            chatter_min=chatter_min,
+            unhealthy_threshold=UNHEALTHY_THRESHOLD,
+            window_minutes=WINDOW_MINUTES,
+            flood_source_threshold=FLOOD_SOURCE_THRESHOLD,
+            act_window_overload_op=ACT_WINDOW_OVERLOAD_OP,
+            act_window_overload_threshold=ACT_WINDOW_OVERLOAD_THRESHOLD,
+            act_window_unacceptable_op=ACT_WINDOW_UNACCEPTABLE_OP,
+            act_window_unacceptable_threshold=ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        )
+        
+        if raw:
+            return result
+        
+        # Build compact response
+        response = {
+            "plant_id": result.get("plant_id", plant_id),
+            "plant_folder": result.get("plant_folder"),
+            "mode": result.get("mode"),
+            "generated_at": result.get("generated_at"),
+            "params": result.get("params"),
+            "overall": result.get("overall"),
+            "counts": result.get("counts"),
+            "sample_range": result.get("sample_range"),
+            "frequency": result.get("frequency"),
+        }
+        
+        # Add per_source if requested (paginated)
+        if include_per_source:
+            per_source_all = result.get("per_source", [])
+            response["per_source"] = per_source_all[offset:offset + limit]
+            response["per_source_pagination"] = {
+                "offset": offset,
+                "limit": limit,
+                "total": len(per_source_all),
+                "returned": len(response["per_source"])
+            }
+        
+        # Add cycles if requested
+        if include_cycles:
+            response["cycles"] = result.get("cycles", [])
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in plant {plant_id} actual-calc overall: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/actual-calc/{plant_id}/per-source", response_class=ORJSONResponse)
+def get_plant_actual_calc_per_source(
+    plant_id: str,
+    source: str,
+    include_cycles: bool = False,
+    stale_min: int = 60,
+    chatter_min: int = 10
+):
+    """Get actual calculation metrics for a specific source in any plant.
+    
+    Path Parameters:
+        plant_id: Plant identifier
+    
+    Query Parameters:
+        source: Source name (required)
+        include_cycles: Include cycles (default False)
+        stale_min, chatter_min: Thresholds (must match cache)
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service not available")
+    
+    if not validate_plant_id(plant_id):
+        raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
+    
+    try:
+        params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
+        
+        cached = read_cache(BASE_DIR, params, plant_id=plant_id)
+        if not cached:
+            raise HTTPException(status_code=404, detail=f"No cached data for plant {plant_id}. Generate it first.")
+        
+        per_source = cached.get("per_source", [])
+        source_data = next((s for s in per_source if s.get("Source") == source), None)
+        
+        if not source_data:
+            raise HTTPException(status_code=404, detail=f"Source '{source}' not found in plant {plant_id}")
+        
+        result = {"source": source, "metrics": source_data}
+        
+        if include_cycles:
+            cycles = cached.get("cycles", [])
+            source_cycles = [c for c in cycles if c.get("source") == source]
+            result["cycles"] = source_cycles
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in plant {plant_id} per-source: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/actual-calc/{plant_id}/unhealthy", response_class=ORJSONResponse)
+def get_plant_actual_calc_unhealthy(
+    plant_id: str,
+    offset: int = 0,
+    limit: int = 100,
+    raw: bool = False
+):
+    """Get unhealthy sources for any plant."""
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service not available")
+    
+    if not validate_plant_id(plant_id):
+        raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
+    
+    try:
+        params = {
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+        }
+        
+        cached = read_cache(BASE_DIR, params, plant_id=plant_id)
+        if not cached:
+            raise HTTPException(status_code=404, detail=f"No cached data for plant {plant_id}")
+        
+        unhealthy = cached.get("unhealthy", {})
+        per_source_all = unhealthy.get("per_source", [])
+        per_source_slice = per_source_all[offset: offset + limit]
+        
+        return {
+            "plant_id": cached.get("plant_id", plant_id),
+            "plant_folder": cached.get("plant_folder"),
+            "mode": "actual-calc",
+            "generated_at": cached.get("generated_at"),
+            "params": {"unhealthy_threshold": UNHEALTHY_THRESHOLD, "window_minutes": WINDOW_MINUTES},
+            "observation_range": cached.get("sample_range"),
+            "total_periods": unhealthy.get("total_periods", 0),
+            "sources_total": len(per_source_all),
+            "per_source": per_source_slice,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in plant {plant_id} unhealthy: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/actual-calc/{plant_id}/floods", response_class=ORJSONResponse)
+def get_plant_actual_calc_floods(
+    plant_id: str,
+    limit: int = 50,
+    raw: bool = False
+):
+    """Get flood windows for any plant."""
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service not available")
+    
+    if not validate_plant_id(plant_id):
+        raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
+    
+    try:
+        params = {
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+        }
+        
+        cached = read_cache(BASE_DIR, params, plant_id=plant_id)
+        if not cached:
+            raise HTTPException(status_code=404, detail=f"No cached data for plant {plant_id}")
+        
+        floods = cached.get("floods", {})
+        windows_all = floods.get("windows", [])
+        windows_slice = windows_all[: max(0, int(limit))]
+        
+        return {
+            "plant_id": cached.get("plant_id", plant_id),
+            "plant_folder": cached.get("plant_folder"),
+            "mode": "actual-calc",
+            "generated_at": cached.get("generated_at"),
+            "params": {"window_minutes": WINDOW_MINUTES, "source_threshold": FLOOD_SOURCE_THRESHOLD},
+            "observation_range": cached.get("sample_range"),
+            "totals": floods.get("totals", {}),
+            "windows_total": len(windows_all),
+            "windows": windows_slice,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in plant {plant_id} floods: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/actual-calc/{plant_id}/bad-actors", response_class=ORJSONResponse)
+def get_plant_actual_calc_bad_actors(
+    plant_id: str,
+    limit: int = 20,
+    raw: bool = False
+):
+    """Get bad actors for any plant."""
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service not available")
+    
+    if not validate_plant_id(plant_id):
+        raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
+    
+    try:
+        cached = read_cache(BASE_DIR, {}, plant_id=plant_id)
+        if not cached:
+            raise HTTPException(status_code=404, detail=f"No cached data for plant {plant_id}")
+        
+        bad_actors = cached.get("bad_actors", {})
+        actors_all = bad_actors.get("top_actors", [])
+        actors_slice = actors_all[: max(0, int(limit))]
+        
+        return {
+            "plant_id": cached.get("plant_id", plant_id),
+            "plant_folder": cached.get("plant_folder"),
+            "mode": "actual-calc",
+            "generated_at": cached.get("generated_at"),
+            "observation_range": cached.get("sample_range"),
+            "total_actors": bad_actors.get("total_actors", 0),
+            "actors_total": len(actors_all),
+            "top_actors": actors_slice,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in plant {plant_id} bad-actors: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/actual-calc/{plant_id}/regenerate-cache", response_class=ORJSONResponse)
+def regenerate_plant_actual_calc_cache(
+    plant_id: str,
+    stale_min: int = 60,
+    chatter_min: int = 10
+):
+    """Regenerate cache for any plant."""
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service not available")
+    
+    if not validate_plant_id(plant_id):
+        raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
+    
+    try:
+        logger.info(f"Regenerating cache for plant {plant_id}...")
+        start_time = datetime.now()
+        
+        result = run_actual_calc_with_cache(
+            base_dir=BASE_DIR,
+            alarm_data_dir=ALARM_DATA_DIR,
+            plant_id=plant_id,
+            use_cache=True,
+            force_refresh=True,
+            stale_min=stale_min,
+            chatter_min=chatter_min,
+        )
+        
+        duration = (datetime.now() - start_time).total_seconds()
+        
+        return {
+            "status": "success",
+            "plant_id": plant_id,
+            "plant_name": result.get("plant_folder"),
+            "duration_seconds": round(duration, 2),
+            "generated_at": result.get("generated_at"),
+            "stats": {
+                "total_sources": result.get("counts", {}).get("total_sources", 0),
+                "total_alarms": result.get("counts", {}).get("total_alarms", 0),
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error regenerating cache for plant {plant_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

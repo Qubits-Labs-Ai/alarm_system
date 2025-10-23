@@ -1,17 +1,213 @@
 """
 PVCI Actual Calculation Service
+
 Computes alarm management KPIs from merged PVCI alarm data.
 Logic ported from Data_Calculations.ipynb with exact preservation of calculation methods.
+
+=================================================================================================
+DYNAMIC CSV PROCESSING - OVERVIEW
+=================================================================================================
+
+This module now supports DYNAMIC processing of multiple CSV files by providing the CSV path.
+Key improvements:
+
+1. **Dynamic CSV Loading**
+   - Supports any CSV file via csv_relative_path and csv_file_name parameters
+   - Automatic metadata row detection and skipping
+   - Column validation to ensure required fields exist
+   - Handles optional 'Source Sheet Name' column
+
+2. **Performance Optimization**
+   - Data is PRE-SORTED ONCE after loading (eliminates 5+ redundant sorts)
+   - All calculation functions now assume pre-sorted input
+   - Significant performance improvement for large datasets
+
+3. **Smart Cache Management**
+   - Unique cache files per CSV (prevents conflicts)
+   - CSV metadata validation (size, modified time)
+   - Automatic cache invalidation when CSV changes
+   - Multiple plants/files can have independent caches
+
+4. **Backward Compatibility & Cache File Naming**
+   - Default behavior: uses "VCMA/VCMA.csv" (configurable via environment variables)
+   - Each CSV file gets its own unique cache file: {filename}-actual-calc.json
+   - Existing API endpoints work without modification
+   - No breaking changes to function signatures (new params are optional)
+
+=================================================================================================
+USAGE EXAMPLES
+=================================================================================================
+
+# Example 1: Use default CSV (VCMA)
+# -------------------------------------------------
+from PVCI_actual_calc import actual_calc_service
+
+results = actual_calc_service.run_actual_calc_with_cache(
+    base_dir="/path/to/alarm_backend",
+    alarm_data_dir="/path/to/ALARM_DATA_DIR"
+)
+# Uses: ALARM_DATA_DIR/VCMA/VCMA.csv
+# Cache: PVCI-actual-calc/VCMA-actual-calc.json
+
+
+# Example 2: Process All_Merged CSV
+# -------------------------------------------
+results = actual_calc_service.run_actual_calc_with_cache(
+    base_dir="/path/to/alarm_backend",
+    alarm_data_dir="/path/to/ALARM_DATA_DIR",
+    csv_relative_path="PVCI-merged",
+    csv_file_name="All_Merged.csv"
+)
+# Uses: ALARM_DATA_DIR/PVCI-merged/All_Merged.csv
+# Cache: PVCI-actual-calc/All_Merged-actual-calc.json
+
+
+# Example 3: Process a different plant's CSV
+# ------------------------------------------
+results = actual_calc_service.run_actual_calc_with_cache(
+    base_dir="/path/to/alarm_backend",
+    alarm_data_dir="/path/to/ALARM_DATA_DIR",
+    csv_relative_path="plant2/alarm-data",
+    csv_file_name="Plant2_Merged.csv",
+    unhealthy_threshold=15,  # Custom threshold
+    window_minutes=10,
+    stale_min=90
+)
+# Uses: ALARM_DATA_DIR/plant2/alarm-data/Plant2_Merged.csv
+# Cache: PVCI-actual-calc/Plant2_Merged-actual-calc.json
+
+
+# Example 4: Force fresh calculation (skip cache)
+# ------------------------------------------------
+results = actual_calc_service.run_actual_calc_with_cache(
+    base_dir="/path/to/alarm_backend",
+    alarm_data_dir="/path/to/ALARM_DATA_DIR",
+    csv_relative_path="test/data",
+    csv_file_name="test.csv",
+    force_refresh=True  # Ignore existing cache
+)
+
+
+# Example 5: Direct calculation without cache
+# --------------------------------------------
+summary, kpis, cycles, unhealthy, floods, bad_actors, frequency = \
+    actual_calc_service.run_actual_calc(
+        alarm_data_dir="/path/to/ALARM_DATA_DIR",
+        csv_relative_path="plant4/raw",
+        csv_file_name="data.csv"
+    )
+# Returns raw tuple (no cache involved)
+
+
+# Example 6: In FastAPI endpoint
+# -------------------------------
+from fastapi import APIRouter, Query
+from PVCI_actual_calc import actual_calc_service
+
+router = APIRouter()
+
+@router.get("/calculate")
+async def calculate_kpis(
+    csv_path: str = Query(None, description="Optional: relative CSV path"),
+    csv_file: str = Query(None, description="Optional: CSV filename"),
+    use_cache: bool = Query(True, description="Use cached results if available")
+):
+    results = actual_calc_service.run_actual_calc_with_cache(
+        base_dir=BASE_DIR,
+        alarm_data_dir=ALARM_DATA_DIR,
+        csv_relative_path=csv_path,
+        csv_file_name=csv_file,
+        use_cache=use_cache
+    )
+    return results
+
+=================================================================================================
+CSV FILE REQUIREMENTS
+=================================================================================================
+
+Required Columns:
+- Event Time (datetime): Timestamp of the alarm event
+- Source (string): Alarm source identifier
+- Action (string): Alarm action (blank/ACK/OK)
+
+Optional Columns:
+- Condition (string): Alarm condition text
+- Priority (string): Alarm priority level
+- Location Tag (string): Physical location
+- Description (string): Alarm description
+- Value (numeric): Alarm value
+- Units (string): Value units
+- Source Sheet Name (string): Origin sheet name
+
+Metadata Handling:
+- If CSV has metadata rows at the top, they will be automatically detected and skipped
+- Header row must contain "Event Time" and "Source" keywords
+- Column names are case-sensitive
+
+Data Sorting:
+- CSV does NOT need to be pre-sorted
+- Data is automatically sorted by ['Source', 'Event Time'] after loading
+- This sorting happens ONCE, eliminating redundant sorts in calculation functions
+
+=================================================================================================
+CACHE FILE NAMING
+=================================================================================================
+
+Cache files are stored in: BASE_DIR/PVCI-actual-calc/
+
+Naming pattern: {csv_filename_without_extension}-actual-calc.json
+
+Examples:
+- All_Merged.csv   →     PVCI-actual-calc/All_Merged-actual-calc.json
+- VCMA.csv         →     PVCI-actual-calc/VCMA-actual-calc.json
+- Plant2_Data.csv  →     PVCI-actual-calc/Plant2_Data-actual-calc.json
+
+Each CSV file gets its own unique cache file. When you regenerate calculations for a specific
+CSV, only its corresponding cache file is updated.
+
+Cache includes:
+- Calculation results (KPIs, per-source metrics, cycles, etc.)
+- Calculation parameters (thresholds, operators)
+- CSV metadata (path, size, modified time)
+- Generation timestamp
+
+Cache is invalidated when:
+- CSV file size changes
+- CSV file modified time changes
+- Calculation parameters change
+
+=================================================================================================
 """
 
 import pandas as pd
 import os
 import logging
+import sys
 from datetime import datetime, timedelta
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, Optional
 from collections import deque
+import argparse
+import json
+
+# Add parent directory to path for plant_registry import
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+try:
+    from plant_registry import get_plant_info, get_plant_csv_info, validate_plant_id, get_default_plant_id
+except ImportError:
+    # Fallback if plant_registry not available (backward compatibility)
+    def get_plant_info(plant_id: str) -> Optional[Dict]: return None
+    def get_plant_csv_info(plant_id: str) -> Optional[Dict]: return None
+    def validate_plant_id(plant_id: str) -> bool: return True
+    def get_default_plant_id() -> str: return "PVCI"
 
 logger = logging.getLogger(__name__)
+
+# Centralized defaults for CSV location
+DEFAULT_CSV_RELATIVE_PATH = os.getenv("DEFAULT_CSV_RELATIVE_PATH", "PVCI-merged")
+DEFAULT_CSV_FILE_NAME = os.getenv("DEFAULT_CSV_FILE_NAME", "All_Merged.csv")
 
 # Default thresholds (can be overridden via parameters)
 STALE_THRESHOLD_MIN = 60  # minutes until an active alarm is considered standing/stale classification point
@@ -65,13 +261,15 @@ def detect_repeating_and_chattering(df: pd.DataFrame) -> pd.DataFrame:
     - Repeating_Alarms: max(0, unique_alarms - 1)
     - Chattering_Alarms: count of times a sliding window of CHATTER_THRESHOLD_MIN minutes reaches CHATTER_MIN_COUNT alarms; do not double-count while within the same episode
     - Instrument_Failures: count of unique alarm starts whose Condition contains FAIL/BAD (chattering-specific perspective)
+    
+    NOTE: Assumes input DataFrame is already sorted by ['Source', 'Event Time']
     """
     df = df.copy()
     df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
     df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
     if "Condition" in df.columns:
         df["Condition"] = df["Condition"].fillna("").astype(str).str.upper().str.strip()
-    df = df.sort_values(["Source", "Event Time"])
+    # Sorting removed - data is pre-sorted in load_pvci_merged_csv()
 
     rows = []
     for src, group in df.groupby("Source"):
@@ -133,13 +331,15 @@ def analyze_basic_alarm_states(df: pd.DataFrame) -> pd.DataFrame:
       - Standing_Alarms (counted once per ACTIVE episode crossing threshold)
       - Stale_Alarms (standing subtype when condition is not instrument failure)
       - Instrument_Failure (standing subtype when condition contains FAIL/BAD)
+    
+    NOTE: Assumes input DataFrame is already sorted by ['Source', 'Event Time']
     """
     df = df.copy()
     df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
     df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
     if "Condition" in df.columns:
         df["Condition"] = df["Condition"].fillna("").astype(str).str.upper().str.strip()
-    df = df.sort_values(["Source", "Event Time"]) 
+    # Sorting removed - data is pre-sorted in load_pvci_merged_csv() 
 
     results = []
     for src, group in df.groupby("Source"):
@@ -233,6 +433,8 @@ def get_alarm_cycles(df):
 def calculate_alarm_kpis(df):
     """Main KPI calculation function.
     
+    NOTE: Assumes input DataFrame is already sorted by ['Source', 'Event Time']
+    
     Returns:
         summary (DataFrame): Per-source metrics (Unique_Alarms, Standing_Alarms, Stale_Alarms, Instrument_Failure, [optional] Chattering_Count)
         kpis (dict): Overall plant KPIs
@@ -240,7 +442,6 @@ def calculate_alarm_kpis(df):
     """
     df = df.copy()
     df["Event Time"] = pd.to_datetime(df["Event Time"])
-    df = df.sort_values(["Source", "Event Time"])
 
     # Prepare and clean alarm event data
     df = df.copy()
@@ -248,7 +449,6 @@ def calculate_alarm_kpis(df):
     df['Action'] = df['Action'].astype(str).str.upper().str.strip().replace({'nan': ''})
     if 'Condition' in df.columns:
         df['Condition'] = df['Condition'].astype(str).str.upper().str.strip().replace({'nan': ''})
-    df = df.sort_values(["Source", "Event Time"])
 
     # Per-source metrics (Updated Standing/Instrument Failure/Stale classification)
     basic = analyze_basic_alarm_states(df)
@@ -309,12 +509,14 @@ def calculate_alarm_frequency_metrics(
         
     Returns:
         Dict with keys: Summary, Alarms_Per_Day, Days_Over_288, Days_Unacceptable
+    
+    NOTE: Assumes input DataFrame is already sorted by ['Source', 'Event Time']
     """
     # ---------- Step 1: Clean ----------
     df = df.copy()
     df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
     df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
-    df = df.sort_values(["Source", "Event Time"]).reset_index(drop=True)
+    # Sorting removed - data is pre-sorted in load_pvci_merged_csv()
 
     # ---------- Step 2: Identify Unique Alarms (Activations) ----------
     activations = []
@@ -400,11 +602,13 @@ def detect_unhealthy_and_flood(
     """
     Returns activations_df, unhealthy_summary_df, flood_summary_df.
     Logic mirrors the notebook pasted by the user.
+    
+    NOTE: Assumes input DataFrame is already sorted by ['Source', 'Event Time']
     """
     df = df.copy()
     df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
     df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
-    df = df.sort_values(["Source", "Event Time"])
+    # Sorting removed - data is pre-sorted in load_pvci_merged_csv()
 
     # 2) Extract unique activations (blank when IDLE/ACKED)
     activations = []
@@ -668,7 +872,14 @@ def compute_activation_window_metrics(
     }
 
 
-def get_activation_peak_details(alarm_data_dir: str, start_iso: str, end_iso: str) -> Dict[str, Any]:
+def get_activation_peak_details(
+    alarm_data_dir: str,
+    start_iso: str,
+    end_iso: str,
+    plant_id: str = None,
+    csv_relative_path: str = None,
+    csv_file_name: str = None
+) -> Dict[str, Any]:
     """Return per-source UNIQUE activation counts within [start, end).
 
     Uses the same unique activation logic as the actual-calc pipeline (Blank when IDLE/ACKED → activation).
@@ -697,7 +908,12 @@ def get_activation_peak_details(alarm_data_dir: str, start_iso: str, end_iso: st
         if pd.isna(start) or pd.isna(end) or start >= end:
             raise ValueError("Invalid start/end time range")
 
-        df = load_pvci_merged_csv(alarm_data_dir)
+        df = load_pvci_merged_csv(
+            alarm_data_dir,
+            plant_id=plant_id,
+            csv_relative_path=csv_relative_path,
+            csv_file_name=csv_file_name
+        )
         df = df.copy()
         df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
         df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
@@ -751,39 +967,159 @@ def get_activation_peak_details(alarm_data_dir: str, start_iso: str, end_iso: st
 
 # ---------- DATA LOADING ----------
 
-def load_pvci_merged_csv(alarm_data_dir: str) -> pd.DataFrame:
-    """Load the merged PVCI CSV file.
+def detect_metadata_rows(csv_path: str, max_check_rows: int = 10) -> int:
+    """Detect how many metadata rows exist at the top of the CSV file.
+    
+    Metadata rows typically lack proper timestamps or have descriptive text.
+    This function checks the first few rows to find where actual data starts.
+    
+    Args:
+        csv_path: Path to the CSV file
+        max_check_rows: Maximum number of rows to check for metadata
+        
+    Returns:
+        Number of rows to skip (0 if no metadata detected)
+    """
+    try:
+        # Read first few rows without header assumption
+        sample = pd.read_csv(csv_path, nrows=max_check_rows, header=None)
+        
+        # Try to find the header row (contains "Event Time" or "Source")
+        for idx, row in sample.iterrows():
+            row_str = ' '.join(str(val).lower() for val in row.values if pd.notna(val))
+            if 'event time' in row_str and 'source' in row_str:
+                return int(idx)
+        
+        # No metadata detected
+        return 0
+    except Exception as e:
+        logger.warning(f"Metadata detection failed: {e}. Assuming no metadata rows.")
+        return 0
+
+
+def validate_required_columns(df: pd.DataFrame, csv_path: str) -> None:
+    """Validate that the DataFrame contains all required columns.
+    
+    Args:
+        df: DataFrame to validate
+        csv_path: Path to CSV (for error messages)
+        
+    Raises:
+        ValueError: If required columns are missing
+    """
+    required_columns = ['Event Time', 'Source', 'Action']
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    
+    if missing_columns:
+        available = list(df.columns)
+        raise ValueError(
+            f"CSV file '{csv_path}' is missing required columns: {missing_columns}.\n"
+            f"Available columns: {available}"
+        )
+    
+    logger.info(f"Column validation passed. Found {len(df.columns)} columns: {list(df.columns)}")
+
+
+def load_pvci_merged_csv(
+    alarm_data_dir: str,
+    plant_id: str = None,
+    csv_relative_path: str = None,
+    csv_file_name: str = None
+) -> pd.DataFrame:
+    """Load and preprocess alarm CSV file with dynamic path support.
+    
+    This function:
+    1. Detects and skips metadata rows at the top of the file
+    2. Validates required columns exist
+    3. Parses timestamps and cleans text fields
+    4. Pre-sorts data by Source and Event Time (CRITICAL for state machine logic)
+    5. Handles optional 'Source Sheet Name' column
     
     Args:
         alarm_data_dir: Path to ALARM_DATA_DIR
+        plant_id: Optional plant identifier (e.g., "PVCI", "VCMA")
+                 If provided, uses plant_registry to lookup CSV path
+        csv_relative_path: Optional relative path from alarm_data_dir to CSV folder
+                          (e.g., "PVCI-merged" or "other-plant/data")
+        csv_file_name: Optional CSV filename (e.g., "All_Merged.csv" or "plant2.csv")
+                      
+    Default behavior (backward compatible):
+        If no parameters specified, uses "PVCI-merged/All_Merged.csv"
+        If plant_id provided, uses plant_registry to lookup CSV path
         
     Returns:
-        DataFrame with parsed Event Time and cleaned Action column
+        DataFrame with:
+        - Parsed Event Time column
+        - Cleaned Action column
+        - Pre-sorted by ['Source', 'Event Time']
+        - No invalid rows (missing Event Time or Source)
         
     Raises:
-        FileNotFoundError: If merged CSV doesn't exist
-        ValueError: If CSV is empty or malformed
+        FileNotFoundError: If CSV file doesn't exist
+        ValueError: If CSV is empty, malformed, or missing required columns
     """
-    csv_path = os.path.join(alarm_data_dir, "PVCI-merged", "All_Merged.csv")
+    # Build CSV path - priority: explicit params > plant_id > defaults
+    if plant_id and csv_relative_path is None and csv_file_name is None:
+        # Use plant registry to get CSV path
+        csv_info = get_plant_csv_info(plant_id)
+        if csv_info:
+            csv_relative_path = csv_info["csv_relative_path"]
+            csv_file_name = csv_info["csv_filename"]
+            logger.info(f"Using plant_id='{plant_id}' from registry: {csv_relative_path}/{csv_file_name}")
+        else:
+            logger.warning(f"Plant ID '{plant_id}' not found in registry, using defaults")
+            csv_relative_path = DEFAULT_CSV_RELATIVE_PATH
+            csv_file_name = DEFAULT_CSV_FILE_NAME
+    elif csv_relative_path is None and csv_file_name is None:
+        csv_relative_path = DEFAULT_CSV_RELATIVE_PATH
+        csv_file_name = DEFAULT_CSV_FILE_NAME
+    elif csv_file_name is None:
+        raise ValueError("csv_file_name must be provided if csv_relative_path is specified")
+    elif csv_relative_path is None:
+        csv_relative_path = DEFAULT_CSV_RELATIVE_PATH  # default folder
+    
+    csv_path = os.path.join(alarm_data_dir, csv_relative_path, csv_file_name)
     
     if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"Merged CSV not found at {csv_path}")
+        raise FileNotFoundError(
+            f"CSV file not found at: {csv_path}\n"
+            f"alarm_data_dir: {alarm_data_dir}\n"
+            f"csv_relative_path: {csv_relative_path}\n"
+            f"csv_file_name: {csv_file_name}"
+        )
     
-    logger.info(f"Loading merged CSV from {csv_path}")
+    logger.info(f"Loading CSV from: {csv_path}")
     
     try:
-        df = pd.read_csv(csv_path)
+        # Step 1: Detect and skip metadata rows
+        skiprows = detect_metadata_rows(csv_path)
+        if skiprows > 0:
+            logger.info(f"Detected {skiprows} metadata row(s) at top of file. Skipping...")
+        
+        # Step 2: Load CSV with proper header
+        df = pd.read_csv(csv_path, skiprows=skiprows)
         
         if df.empty:
-            raise ValueError("Merged CSV is empty")
+            raise ValueError(f"CSV file is empty: {csv_path}")
         
-        # Parse Event Time
+        # Step 3: Validate required columns exist
+        validate_required_columns(df, csv_path)
+        
+        # Step 4: Parse Event Time
         df["Event Time"] = pd.to_datetime(df["Event Time"], errors='coerce')
         
-        # Clean Action column
+        # Step 5: Clean Action column
         df['Action'] = df['Action'].astype(str).str.strip().replace({'nan': ''})
         
-        # Drop rows with invalid Event Time or missing Source
+        # Step 6: Clean optional Condition column if present
+        if 'Condition' in df.columns:
+            df['Condition'] = df['Condition'].fillna("").astype(str).str.strip()
+        
+        # Step 7: Handle optional 'Source Sheet Name' column
+        if 'Source Sheet Name' in df.columns:
+            logger.info("Found 'Source Sheet Name' column - preserving for reference")
+        
+        # Step 8: Drop rows with invalid Event Time or missing Source
         initial_rows = len(df)
         df = df.dropna(subset=['Event Time', 'Source'])
         dropped = initial_rows - len(df)
@@ -791,13 +1127,23 @@ def load_pvci_merged_csv(alarm_data_dir: str) -> pd.DataFrame:
         if dropped > 0:
             logger.warning(f"Dropped {dropped} rows with invalid Event Time or missing Source")
         
-        logger.info(f"Loaded {len(df)} alarm events from {df['Source'].nunique()} sources")
-        logger.info(f"Time range: {df['Event Time'].min()} to {df['Event Time'].max()}")
+        if df.empty:
+            raise ValueError(f"No valid data rows after cleaning: {csv_path}")
+        
+        # Step 9: PRE-SORT ONCE (Critical for all state machine calculations)
+        # This eliminates redundant sorting in each calculation function
+        logger.info("Pre-sorting data by ['Source', 'Event Time']...")
+        df = df.sort_values(['Source', 'Event Time']).reset_index(drop=True)
+        
+        # Step 10: Log summary
+        logger.info(f"✓ Loaded {len(df)} alarm events from {df['Source'].nunique()} unique sources")
+        logger.info(f"✓ Time range: {df['Event Time'].min()} to {df['Event Time'].max()}")
+        logger.info(f"✓ Data pre-sorted and ready for calculations")
         
         return df
         
     except Exception as e:
-        logger.error(f"Failed to load merged CSV: {str(e)}")
+        logger.error(f"Failed to load CSV: {str(e)}")
         raise
 
 
@@ -805,6 +1151,7 @@ def load_pvci_merged_csv(alarm_data_dir: str) -> pd.DataFrame:
 
 def run_actual_calc(
     alarm_data_dir: str,
+    plant_id: str = None,
     stale_min: int = 60,
     chatter_min: int = 10,
     unhealthy_threshold: int = UNHEALTHY_THRESHOLD,
@@ -817,11 +1164,19 @@ def run_actual_calc(
     act_window_overload_threshold: int = ACT_WINDOW_OVERLOAD_THRESHOLD,
     act_window_unacceptable_op: str = ACT_WINDOW_UNACCEPTABLE_OP,
     act_window_unacceptable_threshold: int = ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+    # Dynamic CSV path support
+    csv_relative_path: str = None,
+    csv_file_name: str = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Any], pd.DataFrame, Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-    """Run actual calculation with specified thresholds.
+    """Run actual calculation with specified thresholds on any CSV file.
+    
+    This function now supports dynamic CSV file processing:
+    - Default behavior: Uses "PVCI-merged/All_Merged.csv" (backward compatible)
+    - Custom CSV: Provide csv_relative_path and csv_file_name
     
     Args:
         alarm_data_dir: Path to ALARM_DATA_DIR
+        plant_id: Optional plant identifier (e.g., "PVCI", "VCMA")
         stale_min: Standing/stale threshold in minutes (default 60)
         chatter_min: Chattering alarm threshold in minutes (default 10)
         unhealthy_threshold: Activations threshold for unhealthy (default 10)
@@ -829,9 +1184,26 @@ def run_actual_calc(
         flood_source_threshold: Minimum overlapping unhealthy sources for flood (default 2)
         iso_threshold: ISO 18.2 alarm rate threshold per day (default 288)
         unacceptable_threshold: Unacceptable alarm rate threshold per day (default 720)
+        act_window_overload_op: Operator for overload comparison (default ">")
+        act_window_overload_threshold: Threshold for overload windows (default 2)
+        act_window_unacceptable_op: Operator for unacceptable comparison (default ">=")
+        act_window_unacceptable_threshold: Threshold for unacceptable windows (default 5)
+        csv_relative_path: Optional path relative to alarm_data_dir (e.g., "plant2/data")
+        csv_file_name: Optional CSV filename (e.g., "merged_data.csv")
         
     Returns:
         Tuple of (summary_df, kpis_dict, cycles_df, unhealthy_dict, floods_dict, bad_actors_dict, frequency_dict)
+    
+    Example:
+        # Use default CSV (backward compatible)
+        results = run_actual_calc(ALARM_DATA_DIR)
+        
+        # Use custom CSV
+        results = run_actual_calc(
+            ALARM_DATA_DIR,
+            csv_relative_path="plant2/alarm-data",
+            csv_file_name="plant2_merged.csv"
+        )
     """
     global STALE_THRESHOLD_MIN, CHATTER_THRESHOLD_MIN, UNHEALTHY_THRESHOLD, WINDOW_MINUTES, FLOOD_SOURCE_THRESHOLD
     global ACT_WINDOW_OVERLOAD_OP, ACT_WINDOW_OVERLOAD_THRESHOLD, ACT_WINDOW_UNACCEPTABLE_OP, ACT_WINDOW_UNACCEPTABLE_THRESHOLD
@@ -847,19 +1219,28 @@ def run_actual_calc(
     ACT_WINDOW_UNACCEPTABLE_OP = act_window_unacceptable_op
     ACT_WINDOW_UNACCEPTABLE_THRESHOLD = act_window_unacceptable_threshold
     
+    # Log calculation parameters
+    plant_name = plant_id or "default"
+    csv_info = f"plant_id={plant_name}, csv_path={csv_relative_path or DEFAULT_CSV_RELATIVE_PATH}/{csv_file_name or DEFAULT_CSV_FILE_NAME}"
     logger.info(
-        f"Running actual calculation with stale_min={stale_min}, chatter_min={chatter_min}, "
+        f"Running actual calculation with {csv_info}, "
+        f"stale_min={stale_min}, chatter_min={chatter_min}, "
         f"unhealthy_threshold={unhealthy_threshold}, window_minutes={window_minutes}, "
         f"flood_source_threshold={flood_source_threshold}, "
         f"act_overload=({ACT_WINDOW_OVERLOAD_OP} {ACT_WINDOW_OVERLOAD_THRESHOLD}), "
         f"act_unacceptable=({ACT_WINDOW_UNACCEPTABLE_OP} {ACT_WINDOW_UNACCEPTABLE_THRESHOLD})"
     )
     
-    # Load data
+    # Load data with dynamic CSV path support
     start_time = datetime.now()
-    df = load_pvci_merged_csv(alarm_data_dir)
+    df = load_pvci_merged_csv(
+        alarm_data_dir,
+        plant_id=plant_id,
+        csv_relative_path=csv_relative_path,
+        csv_file_name=csv_file_name
+    )
     load_duration = (datetime.now() - start_time).total_seconds()
-    logger.info(f"Data loaded in {load_duration:.2f}s")
+    logger.info(f"Data loaded in {load_duration:.2f}s (pre-sorted, ready for calculations)")
     
     # Calculate KPIs
     calc_start = datetime.now()
@@ -993,7 +1374,157 @@ def run_actual_calc(
         f"overall_health_pct={kpis['activation_overall_health_pct']:.2f}%"
     )
     
+    # Store CSV path info for cache functions
+    # This will be used by write_cache to generate appropriate cache filename
+    logger.info(f"Calculation complete. Returning results for {csv_info}")
+    
     return summary, kpis, cycles, unhealthy_dict, floods_dict, bad_actors_dict, frequency_dict
+
+
+def run_actual_calc_with_cache(
+    base_dir: str,
+    alarm_data_dir: str,
+    plant_id: str = None,
+    use_cache: bool = True,
+    force_refresh: bool = False,
+    csv_relative_path: str = None,
+    csv_file_name: str = None,
+    **calc_params
+) -> Dict[str, Any]:
+    """Convenience function to run calculations with automatic cache management.
+    
+    This function:
+    1. Checks if valid cache exists (unless force_refresh=True)
+    2. Returns cached data if valid
+    3. Otherwise runs calculation and writes cache
+    4. Returns complete result dict ready for API responses
+    
+    Args:
+        base_dir: Base directory (alarm_backend)
+        alarm_data_dir: Path to ALARM_DATA_DIR
+        plant_id: Optional plant identifier (e.g., "PVCI", "VCMA")
+        use_cache: Whether to use cache at all (default True)
+        force_refresh: Force recalculation even if cache exists (default False)
+        csv_relative_path: Optional CSV folder path
+        csv_file_name: Optional CSV filename
+        **calc_params: Additional parameters passed to run_actual_calc()
+                      (stale_min, chatter_min, unhealthy_threshold, etc.)
+    
+    Returns:
+        Complete cache dict with all calculation results
+        
+    Example:
+        # Use default CSV with cache
+        result = run_actual_calc_with_cache(BASE_DIR, ALARM_DATA_DIR)
+        
+        # Custom CSV without cache
+        result = run_actual_calc_with_cache(
+            BASE_DIR,
+            ALARM_DATA_DIR,
+            use_cache=False,
+            csv_relative_path="plant2/data",
+            csv_file_name="merged.csv"
+        )
+    """
+    # Build CSV path for metadata validation
+    # Priority: explicit params > plant_id > defaults
+    if plant_id and csv_relative_path is None and csv_file_name is None:
+        csv_info = get_plant_csv_info(plant_id)
+        if csv_info:
+            rel_path = csv_info["csv_relative_path"]
+            file_name = csv_info["csv_filename"]
+        else:
+            rel_path = DEFAULT_CSV_RELATIVE_PATH
+            file_name = DEFAULT_CSV_FILE_NAME
+    elif csv_relative_path is None and csv_file_name is None:
+        rel_path = DEFAULT_CSV_RELATIVE_PATH
+        file_name = DEFAULT_CSV_FILE_NAME
+    else:
+        rel_path = csv_relative_path or DEFAULT_CSV_RELATIVE_PATH
+        file_name = csv_file_name or DEFAULT_CSV_FILE_NAME
+    
+    csv_path = os.path.join(alarm_data_dir, rel_path, file_name)
+    
+    # Build params dict for cache validation
+    params = {
+        "stale_min": calc_params.get("stale_min", 60),
+        "chatter_min": calc_params.get("chatter_min", 10),
+        "unhealthy_threshold": calc_params.get("unhealthy_threshold", UNHEALTHY_THRESHOLD),
+        "window_minutes": calc_params.get("window_minutes", WINDOW_MINUTES),
+        "flood_source_threshold": calc_params.get("flood_source_threshold", FLOOD_SOURCE_THRESHOLD),
+        "iso_threshold": calc_params.get("iso_threshold", 288),
+        "unacceptable_threshold": calc_params.get("unacceptable_threshold", 720),
+        "act_window_overload_op": calc_params.get("act_window_overload_op", ACT_WINDOW_OVERLOAD_OP),
+        "act_window_overload_threshold": calc_params.get("act_window_overload_threshold", ACT_WINDOW_OVERLOAD_THRESHOLD),
+        "act_window_unacceptable_op": calc_params.get("act_window_unacceptable_op", ACT_WINDOW_UNACCEPTABLE_OP),
+        "act_window_unacceptable_threshold": calc_params.get("act_window_unacceptable_threshold", ACT_WINDOW_UNACCEPTABLE_THRESHOLD),
+    }
+    
+    # Try to read cache if enabled and not forcing refresh
+    if use_cache and not force_refresh:
+        cached = read_cache(
+            base_dir,
+            params,
+            csv_path=csv_path,
+            plant_id=plant_id,
+            csv_relative_path=csv_relative_path,
+            csv_file_name=csv_file_name
+        )
+        if cached:
+            logger.info("Returning cached results")
+            return cached
+    
+    # Run calculation
+    logger.info("Running fresh calculation...")
+    summary, kpis, cycles, unhealthy, floods, bad_actors, frequency = run_actual_calc(
+        alarm_data_dir,
+        plant_id=plant_id,
+        csv_relative_path=csv_relative_path,
+        csv_file_name=csv_file_name,
+        **calc_params
+    )
+    
+    # Write cache if enabled
+    if use_cache:
+        write_cache(
+            base_dir,
+            summary,
+            kpis,
+            cycles,
+            params,
+            alarm_data_dir,
+            plant_id=plant_id,
+            csv_relative_path=csv_relative_path,
+            csv_file_name=csv_file_name,
+            unhealthy=unhealthy,
+            floods=floods,
+            bad_actors=bad_actors,
+            frequency=frequency,
+        )
+        
+        # Read back the cache to return complete structure
+        cached = read_cache(
+            base_dir,
+            params,
+            csv_path=csv_path,
+            plant_id=plant_id,
+            csv_relative_path=csv_relative_path,
+            csv_file_name=csv_file_name
+        )
+        if cached:
+            return cached
+    
+    # Fallback: build return dict manually (if cache write failed or disabled)
+    return {
+        "overall": kpis,
+        "per_source": dataframe_to_json_records(summary),
+        "cycles": dataframe_to_json_records(cycles),
+        "unhealthy": unhealthy,
+        "floods": floods,
+        "bad_actors": bad_actors,
+        "frequency": frequency,
+        "params": params,
+    }
 
 
 # ---------- UTILITY: CONVERT TO JSON-SAFE TYPES ----------
@@ -1033,24 +1564,89 @@ def kpis_to_json_safe(kpis: Dict[str, Any]) -> Dict[str, Any]:
 
 # ---------- CACHE MANAGEMENT ----------
 
-def get_cache_path(base_dir: str) -> str:
-    """Get the path to the actual-calc cache JSON file."""
-    cache_dir = os.path.join(base_dir, "PVCI-actual-calc")
-    os.makedirs(cache_dir, exist_ok=True)
-    return os.path.join(cache_dir, "actual-calc.json")
+def generate_cache_identifier(csv_relative_path: str = None, csv_file_name: str = None) -> str:
+    """Generate a unique cache identifier from CSV path components.
+    
+    Args:
+        csv_relative_path: Relative path from alarm_data_dir to CSV folder
+        csv_file_name: CSV filename
+        
+    Returns:
+        Safe filename string for cache file (e.g., "All_Merged-actual-calc" or "VCMA-actual-calc")
+    """
+    import re
+    
+    # Use default CSV filename if not provided
+    if csv_file_name is None:
+        csv_file_name = DEFAULT_CSV_FILE_NAME
+    
+    # Extract filename without extension and sanitize it
+    file_base = os.path.splitext(csv_file_name)[0]
+    file_base_clean = re.sub(r'[^a-zA-Z0-9_-]', '_', file_base)
+    
+    # Return format: {csv_filename}-actual-calc
+    # Examples: "All_Merged-actual-calc", "VCMA-actual-calc", "Plant2_Data-actual-calc"
+    identifier = f"{file_base_clean}-actual-calc"
+    return identifier
 
 
-def read_cache(base_dir: str, params: Dict[str, Any]) -> Dict[str, Any] | None:
-    """Read cached calculation results if they match current parameters.
+def get_cache_path(
+    base_dir: str,
+    plant_id: str = None,
+    csv_relative_path: str = None,
+    csv_file_name: str = None
+) -> str:
+    """Get the path to the cache JSON file for a specific CSV.
     
     Args:
         base_dir: Base directory (alarm_backend)
-        params: Dict with stale_min, chatter_min
+        plant_id: Optional plant identifier
+        csv_relative_path: Optional CSV folder path
+        csv_file_name: Optional CSV filename
+        
+    Returns:
+        Full path to cache JSON file
+    """
+    cache_dir = os.path.join(base_dir, "PVCI-actual-calc")
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    # Use plant_id to generate cache identifier if available
+    if plant_id:
+        csv_info = get_plant_csv_info(plant_id)
+        if csv_info:
+            cache_identifier = generate_cache_identifier(None, csv_info["csv_filename"])
+        else:
+            cache_identifier = generate_cache_identifier(csv_relative_path, csv_file_name)
+    else:
+        cache_identifier = generate_cache_identifier(csv_relative_path, csv_file_name)
+    
+    cache_filename = f"{cache_identifier}.json"
+    
+    return os.path.join(cache_dir, cache_filename)
+
+
+def read_cache(
+    base_dir: str,
+    params: Dict[str, Any],
+    csv_path: str = None,
+    plant_id: str = None,
+    csv_relative_path: str = None,
+    csv_file_name: str = None
+) -> Dict[str, Any] | None:
+    """Read cached calculation results if they match current parameters and CSV metadata.
+    
+    Args:
+        base_dir: Base directory (alarm_backend)
+        params: Dict with calculation parameters
+        csv_path: Full path to CSV file (for metadata validation)
+        plant_id: Optional plant identifier
+        csv_relative_path: Relative CSV folder path
+        csv_file_name: CSV filename
         
     Returns:
         Cached data dict if valid, None otherwise
     """
-    cache_path = get_cache_path(base_dir)
+    cache_path = get_cache_path(base_dir, plant_id, csv_relative_path, csv_file_name)
     
     if not os.path.exists(cache_path):
         logger.info("No cache file found")
@@ -1079,11 +1675,28 @@ def read_cache(base_dir: str, params: Dict[str, Any]) -> Dict[str, Any] | None:
         effective_requested = {**current_params, **(params or {})}
 
         # All keys in effective_requested must match cached_params
-        matches = all(cached_params.get(k) == v for k, v in effective_requested.items())
-        if matches:
-            logger.info(f"Cache hit with matching params: {effective_requested}")
+        params_match = all(cached_params.get(k) == v for k, v in effective_requested.items())
+        
+        # Validate CSV metadata if csv_path provided
+        csv_metadata_match = True
+        if csv_path and os.path.exists(csv_path):
+            cached_csv_meta = cached_data.get("csv_metadata", {})
+            current_size = os.path.getsize(csv_path)
+            current_mtime = os.path.getmtime(csv_path)
+            
+            if cached_csv_meta.get("size") != current_size:
+                logger.info(f"Cache invalid: CSV size changed ({cached_csv_meta.get('size')} -> {current_size})")
+                csv_metadata_match = False
+            elif abs(cached_csv_meta.get("mtime", 0) - current_mtime) > 1:  # Allow 1 second tolerance
+                logger.info(f"Cache invalid: CSV modified time changed")
+                csv_metadata_match = False
+        
+        if params_match and csv_metadata_match:
+            logger.info(f"✓ Cache hit with matching params and CSV metadata")
             return cached_data
-        logger.info(f"Cache params mismatch. Cached: {cached_params}, Requested: {effective_requested}")
+        
+        if not params_match:
+            logger.info(f"Cache params mismatch. Cached: {cached_params}, Requested: {effective_requested}")
         return None
             
     except Exception as e:
@@ -1098,12 +1711,15 @@ def write_cache(
     cycles_df: pd.DataFrame,
     params: Dict[str, Any],
     alarm_data_dir: str,
+    plant_id: str = None,
+    csv_relative_path: str = None,
+    csv_file_name: str = None,
     unhealthy: Dict[str, Any] | None = None,
     floods: Dict[str, Any] | None = None,
     bad_actors: Dict[str, Any] | None = None,
     frequency: Dict[str, Any] | None = None,
 ) -> None:
-    """Write calculation results to cache JSON.
+    """Write calculation results to cache JSON with CSV metadata.
     
     Args:
         base_dir: Base directory (alarm_backend)
@@ -1111,13 +1727,16 @@ def write_cache(
         kpis: Overall KPIs dict
         cycles_df: Alarm cycles DataFrame
         params: Calculation parameters
-        alarm_data_dir: Path to ALARM_DATA_DIR for metadata
+        alarm_data_dir: Path to ALARM_DATA_DIR
+        plant_id: Optional plant identifier
+        csv_relative_path: Relative CSV folder path
+        csv_file_name: CSV filename
         unhealthy: Optional unhealthy periods dictionary (from detect_unhealthy_and_flood)
         floods: Optional floods windows dictionary (from detect_unhealthy_and_flood)
         bad_actors: Optional bad actors dictionary (from identify_bad_actors)
         frequency: Optional frequency metrics dictionary (from calculate_alarm_frequency_metrics)
     """
-    cache_path = get_cache_path(base_dir)
+    cache_path = get_cache_path(base_dir, plant_id, csv_relative_path, csv_file_name)
     
     try:
         import json
@@ -1127,8 +1746,27 @@ def write_cache(
         cycles_records = dataframe_to_json_records(cycles_df)
         json_safe_kpis = kpis_to_json_safe(kpis)
         
-        # Extract time range from source CSV
-        csv_path = os.path.join(alarm_data_dir, "PVCI-merged", "All_Merged.csv")
+        # Extract time range and metadata from source CSV
+        # Build CSV path - priority: explicit params > plant_id > defaults
+        if plant_id and csv_relative_path is None and csv_file_name is None:
+            csv_info = get_plant_csv_info(plant_id)
+            if csv_info:
+                csv_relative_path = csv_info["csv_relative_path"]
+                csv_file_name = csv_info["csv_filename"]
+            else:
+                csv_relative_path = DEFAULT_CSV_RELATIVE_PATH
+                csv_file_name = DEFAULT_CSV_FILE_NAME
+        elif csv_relative_path is None and csv_file_name is None:
+            csv_relative_path = DEFAULT_CSV_RELATIVE_PATH
+            csv_file_name = DEFAULT_CSV_FILE_NAME
+        elif csv_file_name is None:
+            csv_file_name = DEFAULT_CSV_FILE_NAME
+        elif csv_relative_path is None:
+            csv_relative_path = DEFAULT_CSV_RELATIVE_PATH
+        
+        csv_path = os.path.join(alarm_data_dir, csv_relative_path, csv_file_name)
+        
+        # Extract time range
         try:
             df_sample = pd.read_csv(csv_path, usecols=["Event Time"], parse_dates=["Event Time"])
             time_min = df_sample["Event Time"].min()
@@ -1140,12 +1778,28 @@ def write_cache(
         except Exception:
             sample_range = {"start": None, "end": None}
         
+        # Store CSV metadata for cache validation
+        csv_metadata = {
+            "csv_relative_path": csv_relative_path,
+            "csv_file_name": csv_file_name,
+            "csv_full_path": csv_path,
+        }
+        if os.path.exists(csv_path):
+            csv_metadata["size"] = os.path.getsize(csv_path)
+            csv_metadata["mtime"] = os.path.getmtime(csv_path)
+        
+        # Get plant name from registry or use default
+        plant_info = get_plant_info(plant_id) if plant_id else None
+        plant_name = plant_info["display_name"] if plant_info else "PVC-I"
+        
         # Build cache structure
         cache_data = {
-            "plant_folder": "PVC-I",
+            "plant_id": plant_id or "PVCI",
+            "plant_folder": plant_name,
             "mode": "actual-calc",
             "generated_at": datetime.utcnow().isoformat() + "Z",
             "params": params,
+            "csv_metadata": csv_metadata,
             "overall": json_safe_kpis,
             "per_source": per_source_records,
             "cycles": cycles_records,
@@ -1209,3 +1863,95 @@ def write_cache(
                 os.remove(temp_path)
             except Exception:
                 pass
+
+
+# ---------- CLI ENTRYPOINT ----------
+
+def _default_base_dir() -> str:
+    """Get default base directory (parent of this file's directory)."""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _default_alarm_data_dir(base_dir: str) -> str:
+    """Get default alarm data directory."""
+    return os.path.join(base_dir, "ALARM_DATA_DIR")
+
+
+def main() -> None:
+    """Command-line entrypoint to run calculations and print/save results."""
+    parser = argparse.ArgumentParser(description="Run PVCI actual calculations on a CSV file.")
+    parser.add_argument("--alarm-data-dir", dest="alarm_data_dir", default=None, 
+                        help="Base directory that contains the CSV relative path (defaults to base_dir)")
+    parser.add_argument("--csv-rel", dest="csv_rel", default=None, 
+                        help=f"Relative CSV folder (default: {DEFAULT_CSV_RELATIVE_PATH})")
+    parser.add_argument("--csv-file", dest="csv_file", default=None, 
+                        help=f"CSV filename (default: {DEFAULT_CSV_FILE_NAME})")
+    parser.add_argument("--no-cache", dest="use_cache", action="store_false", 
+                        help="Disable cache usage")
+    parser.add_argument("--force-refresh", dest="force_refresh", action="store_true", 
+                        help="Force recalculation even if cache exists")
+    parser.add_argument("--save", dest="save_path", default=None, 
+                        help="Optional path to save full results JSON")
+    parser.add_argument("--log-level", dest="log_level", default="INFO", 
+                        help="Logging level (DEBUG, INFO, WARNING, ERROR)")
+
+    args = parser.parse_args()
+
+    # Configure logging for CLI
+    logging.basicConfig(
+        level=getattr(logging, str(args.log_level).upper(), logging.INFO), 
+        format="%(levelname)s: %(message)s"
+    )
+
+    base_dir = _default_base_dir()
+    alarm_data_dir = args.alarm_data_dir or _default_alarm_data_dir(base_dir)
+
+    # Run with cache helper
+    try:
+        result = run_actual_calc_with_cache(
+            base_dir=base_dir,
+            alarm_data_dir=alarm_data_dir,
+            use_cache=args.use_cache,
+            force_refresh=args.force_refresh,
+            csv_relative_path=args.csv_rel,
+            csv_file_name=args.csv_file,
+        )
+    except Exception as e:
+        logger.error(f"Calculation failed: {e}")
+        raise
+
+    # Print a concise summary to stdout
+    overall = result.get("overall", {})
+    per_source = result.get("per_source", [])
+    counts = result.get("counts") or {}
+
+    try:
+        total_sources = counts.get("total_sources") if counts else (len(per_source) if per_source else None)
+        total_unique_alarms = overall.get("total_unique_alarms") or overall.get("total_alarms")
+        avg_per_day = overall.get("avg_alarms_per_day")
+        print("\n=== PVCI Actual Calc Summary ===")
+        if total_sources is not None:
+            print(f"Sources: {total_sources}")
+        if total_unique_alarms is not None:
+            print(f"Total unique alarms: {total_unique_alarms}")
+        if avg_per_day is not None:
+            print(f"Avg alarms/day (activations): {avg_per_day:.2f}")
+        if overall.get("activation_overall_health_pct") is not None:
+            print(f"Activation Overall Health: {overall['activation_overall_health_pct']:.2f}%")
+        print("================================\n")
+    except Exception:
+        # Avoid failing CLI on formatting issues
+        pass
+
+    # Optionally save full results
+    if args.save_path:
+        try:
+            with open(args.save_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2)
+            print(f"Saved results to {args.save_path}")
+        except Exception as e:
+            logger.error(f"Failed to save results: {e}")
+
+
+if __name__ == "__main__":
+    main()
