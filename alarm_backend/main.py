@@ -18,7 +18,7 @@ import logging
 import json
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
-from typing import List, Any, Dict
+from typing import List, Any, Dict, Optional
 from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI, APIError, APIConnectionError, RateLimitError, BadRequestError, AuthenticationError, PermissionDeniedError
@@ -2038,7 +2038,7 @@ except ImportError as ie:
 
 # Import plant registry for multi-plant support
 try:
-    from plant_registry import get_all_plants, get_plant_info, validate_plant_id
+    from plant_registry import get_all_plants, get_plant_info, validate_plant_id, get_plant_overrides
     PLANT_REGISTRY_AVAILABLE = True
 except ImportError as ie2:
     logger.warning(f"Plant registry not available: {ie2}")
@@ -2046,6 +2046,101 @@ except ImportError as ie2:
     def get_all_plants(): return []
     def get_plant_info(plant_id): return None
     def validate_plant_id(plant_id): return False
+    def get_plant_overrides(plant_id): return {}
+
+
+# ============================================================================
+# PERSISTENT DISK CACHE HELPERS FOR SUMMARY ENDPOINTS
+# ============================================================================
+
+def get_summary_cache_path(plant_id: str, endpoint_type: str) -> str:
+    """
+    Get path to disk cache file for a summary endpoint.
+    
+    Args:
+        plant_id: Plant identifier (e.g., "PVCI", "VCMA")
+        endpoint_type: Type of endpoint ("categories", "hourly", "sankey")
+    
+    Returns:
+        Full path to cache JSON file
+    """
+    cache_dir = os.path.join(BASE_DIR, "PVCI-actual-calc")
+    os.makedirs(cache_dir, exist_ok=True)
+    filename = f"{plant_id}-summary-{endpoint_type}-cache.json"
+    return os.path.join(cache_dir, filename)
+
+
+def load_summary_cache(plant_id: str, endpoint_type: str, cache_key: tuple) -> Optional[dict]:
+    """
+    Load cached summary data from disk if valid.
+    
+    Args:
+        plant_id: Plant identifier
+        endpoint_type: Type of endpoint
+        cache_key: Cache key tuple for validation
+    
+    Returns:
+        Cached data dict or None if invalid/missing
+    """
+    cache_path = get_summary_cache_path(plant_id, endpoint_type)
+    
+    if not os.path.exists(cache_path):
+        return None
+    
+    try:
+        import json
+        import time
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            cached = json.load(f)
+        
+        # Validate cache key matches
+        if cached.get('cache_key') != list(cache_key):
+            logger.info(f"[DISK CACHE] Key mismatch for {plant_id}/{endpoint_type}, invalidating")
+            return None
+        
+        # Check if cache is stale (24 hour TTL for disk cache)
+        cache_time = cached.get('cached_at', 0)
+        age_hours = (time.time() - cache_time) / 3600
+        if age_hours > 24:
+            logger.info(f"[DISK CACHE] Stale cache ({age_hours:.1f}h old) for {plant_id}/{endpoint_type}")
+            return None
+        
+        logger.info(f"[DISK CACHE] HIT for {plant_id}/{endpoint_type} (age: {age_hours:.1f}h)")
+        return cached.get('data')
+        
+    except Exception as e:
+        logger.warning(f"[DISK CACHE] Failed to load {plant_id}/{endpoint_type}: {e}")
+        return None
+
+
+def save_summary_cache(plant_id: str, endpoint_type: str, cache_key: tuple, data: dict) -> None:
+    """
+    Save summary data to disk cache.
+    
+    Args:
+        plant_id: Plant identifier
+        endpoint_type: Type of endpoint
+        cache_key: Cache key tuple for validation
+        data: Data to cache
+    """
+    cache_path = get_summary_cache_path(plant_id, endpoint_type)
+    
+    try:
+        import json
+        import time
+        cache_obj = {
+            'cache_key': list(cache_key),
+            'cached_at': time.time(),
+            'data': data,
+        }
+        
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump(cache_obj, f, indent=2)
+        
+        logger.info(f"[DISK CACHE] Saved {plant_id}/{endpoint_type} ({os.path.getsize(cache_path) / 1024:.1f} KB)")
+        
+    except Exception as e:
+        logger.warning(f"[DISK CACHE] Failed to save {plant_id}/{endpoint_type}: {e}")
 
 
 @app.get("/pvcI-actual-calc/overall", response_class=ORJSONResponse)
@@ -2151,7 +2246,7 @@ def get_pvci_actual_calc_overall(
         
         # Compute fresh
         logger.info(f"Computing actual-calc with params: {params}")
-        summary_df, kpis, cycles_df, unhealthy, floods, bad_actors, frequency = run_actual_calc(
+        summary_df, kpis, cycles_df, unhealthy, floods, bad_actors, frequency, source_meta, category_summary, hourly_matrix, sankey_data = run_actual_calc(
             ALARM_DATA_DIR,
             stale_min=stale_min,
             chatter_min=chatter_min,
@@ -2164,9 +2259,13 @@ def get_pvci_actual_calc_overall(
             act_window_unacceptable_threshold=ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
         )
         
-        # Write to cache (with unhealthy/floods/bad_actors/frequency)
+        # Write to cache (with all datasets including pre-computed summary visualizations)
         try:
-            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods, bad_actors=bad_actors, frequency=frequency)
+            write_cache(
+                BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, 
+                unhealthy=unhealthy, floods=floods, bad_actors=bad_actors, frequency=frequency, source_meta=source_meta,
+                category_summary=category_summary, hourly_matrix=hourly_matrix, sankey_data=sankey_data
+            )
         except Exception as cache_err:
             logger.warning(f"Failed to write cache (non-fatal): {cache_err}")
         
@@ -2357,7 +2456,7 @@ def regenerate_pvci_actual_calc_cache(
         start_time = datetime.now()
         
         # Run computation
-        summary_df, kpis, cycles_df, unhealthy, floods, bad_actors, frequency = run_actual_calc(
+        summary_df, kpis, cycles_df, unhealthy, floods, bad_actors, frequency, source_meta, category_summary, hourly_matrix, sankey_data = run_actual_calc(
             ALARM_DATA_DIR,
             stale_min=stale_min,
             chatter_min=chatter_min,
@@ -2371,7 +2470,7 @@ def regenerate_pvci_actual_calc_cache(
         )
         
         # Write cache (with unhealthy/floods/bad_actors/frequency)
-        write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods, bad_actors=bad_actors, frequency=frequency)
+        write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=unhealthy, floods=floods, bad_actors=bad_actors, frequency=frequency, source_meta=source_meta, category_summary=category_summary, hourly_matrix=hourly_matrix, sankey_data=sankey_data)
         
         compute_time = (datetime.now() - start_time).total_seconds()
         
@@ -2443,7 +2542,7 @@ def get_pvci_actual_calc_unhealthy(
             unhealthy = cached["unhealthy"]
         if unhealthy is None:
             # Compute and cache
-            summary_df, kpis, cycles_df, uh, floods, ba, freq = run_actual_calc(
+            summary_df, kpis, cycles_df, uh, floods, ba, freq, sm, cat, hourly, sankey = run_actual_calc(
                 ALARM_DATA_DIR,
                 stale_min=stale_min,
                 chatter_min=chatter_min,
@@ -2455,7 +2554,7 @@ def get_pvci_actual_calc_unhealthy(
                 act_window_unacceptable_op=ACT_WINDOW_UNACCEPTABLE_OP,
                 act_window_unacceptable_threshold=ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
             )
-            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods, bad_actors=ba, frequency=freq)
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods, bad_actors=ba, frequency=freq, source_meta=sm, category_summary=cat, hourly_matrix=hourly, sankey_data=sankey)
             unhealthy = uh
             cached = {
                 "plant_folder": "PVC-I",
@@ -2522,7 +2621,7 @@ def get_pvci_actual_calc_floods(
         if cached and isinstance(cached.get("floods"), dict):
             floods = cached["floods"]
         if floods is None:
-            summary_df, kpis, cycles_df, uh, fl, ba, freq = run_actual_calc(
+            summary_df, kpis, cycles_df, uh, fl, ba, freq, sm, cat, hourly, sankey = run_actual_calc(
                 ALARM_DATA_DIR,
                 stale_min=stale_min,
                 chatter_min=chatter_min,
@@ -2534,7 +2633,7 @@ def get_pvci_actual_calc_floods(
                 act_window_unacceptable_op=ACT_WINDOW_UNACCEPTABLE_OP,
                 act_window_unacceptable_threshold=ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
             )
-            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=fl, bad_actors=ba, frequency=freq)
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=fl, bad_actors=ba, frequency=freq, source_meta=sm, category_summary=cat, hourly_matrix=hourly, sankey_data=sankey)
             floods = fl
             cached = {
                 "plant_folder": "PVC-I",
@@ -2618,10 +2717,10 @@ def get_pvci_actual_calc_bad_actors(
             bad_actors = cached["bad_actors"]
         if bad_actors is None:
             # Compute and cache
-            summary_df, kpis, cycles_df, uh, floods, ba, freq = run_actual_calc(
+            summary_df, kpis, cycles_df, uh, floods, ba, freq, sm, cat, hourly, sankey = run_actual_calc(
                 ALARM_DATA_DIR, stale_min=stale_min, chatter_min=chatter_min
             )
-            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods, bad_actors=ba, frequency=freq)
+            write_cache(BASE_DIR, summary_df, kpis, cycles_df, params, ALARM_DATA_DIR, unhealthy=uh, floods=floods, bad_actors=ba, frequency=freq, source_meta=sm, category_summary=cat, hourly_matrix=hourly, sankey_data=sankey)
             bad_actors = ba
             cached = {
                 "plant_folder": "PVC-I",
@@ -3163,4 +3262,596 @@ def get_plant_actual_calc_condition_distribution(
         raise
     except Exception as e:
         logger.error(f"Error in plant {plant_id} condition-distribution: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/actual-calc/{plant_id}/summary/categories", response_class=ORJSONResponse)
+def get_plant_actual_calc_category_time_series(
+    plant_id: str,
+    grain: str = "day",  # day | week | month
+    include_system: bool = False,
+):
+    """
+    Get exclusive category time series (Standing/Nuisance/Flood/Other) aggregated by day/week/month.
+    
+    Categories use precedence: Standing > Nuisance > Flood > Other (mutually exclusive).
+    Each activation is classified once using the highest precedence category it qualifies for.
+    
+    Args:
+        plant_id: Plant identifier
+        grain: Time aggregation grain (day, week, month)
+        include_system: Include system/meta sources (REPORT, $, ACTIVITY*, SYS_*, SYSTEM)
+    
+    Returns:
+        {
+          "plant_id": str,
+          "mode": "actual-calc",
+          "generated_at": str,
+          "params": {...},
+          "grain": str,
+          "series": [
+            {
+              "date": "2025-10-01",
+              "total": 1234,
+              "standing": 81,
+              "standing_stale": 56,
+              "standing_instrument_failure": 25,
+              "nuisance": 67,
+              "nuisance_chattering": 45,
+              "nuisance_if_chattering": 22,
+              "flood": 900,
+              "other": 186
+            }, ...
+          ]
+        }
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service not available")
+    
+    if not validate_plant_id(plant_id):
+        raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
+    
+    if grain not in ("day", "week", "month"):
+        raise HTTPException(status_code=400, detail="grain must be 'day', 'week', or 'month'")
+    
+    try:
+        # Add actual-calc dir to path for imports
+        import sys
+        actual_calc_dir = os.path.join(BASE_DIR, "PVCI-actual-calc")
+        if actual_calc_dir not in sys.path:
+            sys.path.insert(0, actual_calc_dir)
+        
+        from actual_calc_service import (
+            load_pvci_merged_csv,
+            compute_exclusive_categories_per_activation,
+            compute_category_time_series,
+            dataframe_to_json_records,
+        )
+        
+        # Load CSV data
+        df = load_pvci_merged_csv(
+            ALARM_DATA_DIR,
+            plant_id=plant_id,
+        )
+        
+        # Get plant overrides for thresholds
+        overrides = get_plant_overrides(plant_id)
+        stale_min = overrides.get("stale_min", STALE_THRESHOLD_MIN)
+        chatter_min = overrides.get("chatter_min", CHATTER_THRESHOLD_MIN)
+        unhealthy_threshold = overrides.get("unhealthy_threshold", UNHEALTHY_THRESHOLD)
+        window_minutes = overrides.get("window_minutes", WINDOW_MINUTES)
+        flood_source_threshold = FLOOD_SOURCE_THRESHOLD
+        
+        # Build cache key
+        import time
+        cats_cache_key = (
+            plant_id,
+            grain,
+            include_system,
+            stale_min,
+            chatter_min,
+            unhealthy_threshold,
+            window_minutes,
+            flood_source_threshold,
+        )
+        
+        # PRIORITY 1: Try to read from pre-computed main JSON cache (FASTEST - always available after regeneration)
+        params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": unhealthy_threshold,
+            "window_minutes": window_minutes,
+            "flood_source_threshold": flood_source_threshold,
+        }
+        main_cached = read_cache(BASE_DIR, params, plant_id=plant_id)
+        if main_cached and isinstance(main_cached.get("alarm_summary"), dict):
+            category_time_series = main_cached["alarm_summary"].get("category_time_series", {})
+            if category_time_series and grain in category_time_series:
+                logger.info(f"[MAIN JSON CACHE] HIT for {plant_id}/categories (grain={grain}) - instant load!")
+                return {
+                    "plant_id": plant_id,
+                    "mode": "actual-calc",
+                    "generated_at": main_cached.get("generated_at"),
+                    "params": {
+                        "grain": grain,
+                        "include_system": include_system,
+                        "stale_min": stale_min,
+                        "chatter_min": chatter_min,
+                        "unhealthy_threshold": unhealthy_threshold,
+                        "window_minutes": window_minutes,
+                    },
+                    "grain": grain,
+                    "series": category_time_series[grain],
+                }
+        
+        # PRIORITY 2: Try disk cache (persistent across restarts, but not always available)
+        disk_cached = load_summary_cache(plant_id, "categories", cats_cache_key)
+        if disk_cached:
+            logger.info(f"[DISK CACHE] HIT for {plant_id}/categories")
+            return disk_cached
+        
+        # PRIORITY 3: Try RAM cache (faster, 15 min TTL)
+        CATS_TTL_SECONDS = 15 * 60
+        try:
+            cats_cache = app.state.summary_categories_cache
+        except AttributeError:
+            app.state.summary_categories_cache = {}
+            cats_cache = app.state.summary_categories_cache
+        
+        cats_cached = cats_cache.get(cats_cache_key)
+        if cats_cached and (time.time() - cats_cached["ts"] < CATS_TTL_SECONDS):
+            logger.info(f"[RAM CACHE] summary/categories hit for {plant_id}, grain={grain}")
+            return cats_cached["data"]
+        
+        # Optional pre-filter: exclude system/meta sources before heavy classification
+        if not include_system:
+            def is_system(src: str) -> bool:
+                s = str(src or "").strip().upper()
+                return (s == "REPORT" or s.startswith("$") or s.startswith("ACTIVITY") or s.startswith("SYS_") or s.startswith("SYSTEM"))
+            before = len(df)
+            df = df[~df["Source"].apply(is_system)]
+            logger.info(f"Pre-filtered system/meta sources: {before - len(df)} rows removed (include_system=False)")
+
+        # Classify activations
+        logger.info(f"Computing exclusive categories for plant {plant_id}...")
+        activations_df = compute_exclusive_categories_per_activation(
+            df,
+            stale_min=stale_min,
+            chatter_min=chatter_min,
+            unhealthy_threshold=unhealthy_threshold,
+            window_minutes=window_minutes,
+            flood_source_threshold=flood_source_threshold,
+        )
+        
+        if activations_df.empty:
+            return {
+                "plant_id": plant_id,
+                "mode": "actual-calc",
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "params": {
+                    "grain": grain,
+                    "include_system": include_system,
+                    "stale_min": stale_min,
+                    "chatter_min": chatter_min,
+                    "unhealthy_threshold": unhealthy_threshold,
+                    "window_minutes": window_minutes,
+                },
+                "grain": grain,
+                "series": [],
+            }
+        
+        # Filter system sources if needed (redundant if pre-filtered, but safe)
+        if not include_system:
+            def is_system(src: str) -> bool:
+                s = str(src or "").strip().upper()
+                return (s == "REPORT" or s.startswith("$") or s.startswith("ACTIVITY") or s.startswith("SYS_") or s.startswith("SYSTEM"))
+            activations_df = activations_df[~activations_df["Source"].apply(is_system)]
+        
+        # Compute time series
+        logger.info(f"Aggregating by {grain}...")
+        series_df = compute_category_time_series(
+            activations_df,
+            grain=grain,
+        )
+        
+        series = dataframe_to_json_records(series_df)
+
+        resp = {
+            "plant_id": plant_id,
+            "mode": "actual-calc",
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "params": {
+                "grain": grain,
+                "include_system": include_system,
+                "stale_min": stale_min,
+                "chatter_min": chatter_min,
+                "unhealthy_threshold": unhealthy_threshold,
+                "window_minutes": window_minutes,
+            },
+            "grain": grain,
+            "series": series,
+        }
+        
+        # Save to both RAM and disk cache
+        cats_cache[cats_cache_key] = {"ts": time.time(), "data": resp}
+        save_summary_cache(plant_id, "categories", cats_cache_key, resp)
+        
+        return resp
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error computing category time series for plant {plant_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/actual-calc/{plant_id}/summary/hourly_matrix", response_class=ORJSONResponse)
+def get_plant_actual_calc_hourly_matrix(
+    plant_id: str,
+    include_system: bool = False,
+):
+    """
+    Get hour-of-day × day-of-week seasonality matrix for alarm activations.
+    
+    Returns average activations per hour slot across all weeks in the dataset.
+    Useful for identifying operational patterns and shift effects.
+    
+    Args:
+        plant_id: Plant identifier
+        include_system: Include system/meta sources
+    
+    Returns:
+        {
+          "plant_id": str,
+          "mode": "actual-calc",
+          "generated_at": str,
+          "params": {...},
+          "matrix": [
+            {"dow": 0, "hour": 0, "avg_activations": 12.5},  // Monday 12am
+            {"dow": 0, "hour": 1, "avg_activations": 8.3},   // Monday 1am
+            ...
+            {"dow": 6, "hour": 23, "avg_activations": 15.2}  // Sunday 11pm
+          ]
+        }
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service not available")
+    
+    if not validate_plant_id(plant_id):
+        raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
+    
+    try:
+        # Add actual-calc dir to path for imports
+        import sys
+        actual_calc_dir = os.path.join(BASE_DIR, "PVCI-actual-calc")
+        if actual_calc_dir not in sys.path:
+            sys.path.insert(0, actual_calc_dir)
+        
+        from actual_calc_service import (
+            load_pvci_merged_csv,
+            compute_exclusive_categories_per_activation,
+            compute_hourly_seasonality_matrix,
+            dataframe_to_json_records,
+        )
+        
+        # Load CSV data
+        df = load_pvci_merged_csv(
+            ALARM_DATA_DIR,
+            plant_id=plant_id,
+        )
+        
+        # Get plant overrides for thresholds
+        overrides = get_plant_overrides(plant_id)
+        stale_min = overrides.get("stale_min", STALE_THRESHOLD_MIN)
+        chatter_min = overrides.get("chatter_min", CHATTER_THRESHOLD_MIN)
+        unhealthy_threshold = overrides.get("unhealthy_threshold", UNHEALTHY_THRESHOLD)
+        window_minutes = overrides.get("window_minutes", WINDOW_MINUTES)
+        flood_source_threshold = FLOOD_SOURCE_THRESHOLD
+        
+        # Build cache key
+        import time
+        hourly_cache_key = (
+            plant_id,
+            include_system,
+            stale_min,
+            chatter_min,
+            unhealthy_threshold,
+            window_minutes,
+            flood_source_threshold,
+        )
+        
+        # PRIORITY 1: Try to read from pre-computed main JSON cache (FASTEST)
+        params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": unhealthy_threshold,
+            "window_minutes": window_minutes,
+            "flood_source_threshold": flood_source_threshold,
+        }
+        main_cached = read_cache(BASE_DIR, params, plant_id=plant_id)
+        if main_cached and isinstance(main_cached.get("alarm_summary"), dict):
+            hourly_seasonality = main_cached["alarm_summary"].get("hourly_seasonality")
+            if hourly_seasonality:
+                logger.info(f"[MAIN JSON CACHE] HIT for {plant_id}/hourly_matrix - instant load!")
+                return {
+                    "plant_id": plant_id,
+                    "mode": "actual-calc",
+                    "generated_at": main_cached.get("generated_at"),
+                    "params": {"include_system": include_system},
+                    "matrix": hourly_seasonality,
+                }
+        
+        # PRIORITY 2: Try disk cache (persistent across restarts)
+        disk_cached = load_summary_cache(plant_id, "hourly", hourly_cache_key)
+        if disk_cached:
+            logger.info(f"[DISK CACHE] HIT for {plant_id}/hourly_matrix")
+            return disk_cached
+        
+        # PRIORITY 3: Try RAM cache (faster, 15 min TTL)
+        HOURLY_TTL_SECONDS = 15 * 60
+        try:
+            hourly_cache = app.state.summary_hourly_cache
+        except AttributeError:
+            app.state.summary_hourly_cache = {}
+            hourly_cache = app.state.summary_hourly_cache
+        
+        hourly_cached = hourly_cache.get(hourly_cache_key)
+        if hourly_cached and (time.time() - hourly_cached["ts"] < HOURLY_TTL_SECONDS):
+            logger.info(f"[RAM CACHE] summary/hourly_matrix hit for {plant_id}")
+            return hourly_cached["data"]
+
+        # Optional pre-filter: exclude system/meta sources before heavy classification
+        if not include_system:
+            def is_system(src: str) -> bool:
+                s = str(src or "").strip().upper()
+                return (s == "REPORT" or s.startswith("$") or s.startswith("ACTIVITY") or s.startswith("SYS_") or s.startswith("SYSTEM"))
+            before = len(df)
+            df = df[~df["Source"].apply(is_system)]
+            logger.info(f"Pre-filtered system/meta sources: {before - len(df)} rows removed (include_system=False)")
+
+        # Classify activations (we need the StartTime column)
+        logger.info(f"Computing activations for plant {plant_id}...")
+        activations_df = compute_exclusive_categories_per_activation(
+            df,
+            stale_min=stale_min,
+            chatter_min=chatter_min,
+            unhealthy_threshold=unhealthy_threshold,
+            window_minutes=window_minutes,
+            flood_source_threshold=flood_source_threshold,
+        )
+        
+        if activations_df.empty:
+            return {
+                "plant_id": plant_id,
+                "mode": "actual-calc",
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "params": {"include_system": include_system},
+                "matrix": [],
+            }
+        
+        # Filter system sources if needed
+        if not include_system:
+            def is_system(src: str) -> bool:
+                s = str(src or "").strip().upper()
+                return (s == "REPORT" or s.startswith("$") or s.startswith("ACTIVITY") or s.startswith("SYS_") or s.startswith("SYSTEM"))
+            
+            activations_df = activations_df[~activations_df["Source"].apply(is_system)]
+        
+        # Compute hourly matrix
+        logger.info("Computing hourly seasonality matrix...")
+        matrix_df = compute_hourly_seasonality_matrix(activations_df)
+        
+        matrix = dataframe_to_json_records(matrix_df)
+        
+        resp = {
+            "plant_id": plant_id,
+            "mode": "actual-calc",
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "params": {"include_system": include_system},
+            "matrix": matrix,
+        }
+        
+        # Save to both RAM and disk cache
+        hourly_cache[hourly_cache_key] = {"ts": time.time(), "data": resp}
+        save_summary_cache(plant_id, "hourly", hourly_cache_key, resp)
+        
+        return resp
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error computing hourly matrix for plant {plant_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/actual-calc/{plant_id}/summary/sankey", response_class=ORJSONResponse)
+def get_plant_actual_calc_sankey(
+    plant_id: str,
+    include_system: bool = False,
+):
+    """
+    Get Sankey diagram data for exclusive category flow visualization.
+    
+    Shows the breakdown: Total → Standing/Nuisance/Flood/Other
+    with further breakdown for Standing and Nuisance sub-types.
+    
+    Args:
+        plant_id: Plant identifier
+        include_system: Include system/meta sources
+    
+    Returns:
+        {
+          "plant_id": str,
+          "mode": "actual-calc",
+          "generated_at": str,
+          "params": {...},
+          "nodes": ["Total", "Standing", "Nuisance", "Flood", "Other", ...],
+          "edges": [
+            {"source": "Total", "target": "Standing", "value": 81},
+            {"source": "Standing", "target": "Standing_Stale", "value": 56},
+            ...
+          ],
+          "totals": {
+            "total": 1234,
+            "standing": 81,
+            "standing_stale": 56,
+            "standing_if": 25,
+            "nuisance": 67,
+            "nuisance_chattering": 45,
+            "nuisance_if_chattering": 22,
+            "flood": 900,
+            "other": 186
+          }
+        }
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service not available")
+    
+    if not validate_plant_id(plant_id):
+        raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
+    
+    try:
+        # Add actual-calc dir to path for imports
+        import sys
+        actual_calc_dir = os.path.join(BASE_DIR, "PVCI-actual-calc")
+        if actual_calc_dir not in sys.path:
+            sys.path.insert(0, actual_calc_dir)
+        
+        from actual_calc_service import (
+            load_pvci_merged_csv,
+            compute_exclusive_categories_per_activation,
+            compute_category_sankey,
+        )
+        
+        # Load CSV data
+        df = load_pvci_merged_csv(
+            ALARM_DATA_DIR,
+            plant_id=plant_id,
+        )
+        
+        # Get plant overrides for thresholds
+        overrides = get_plant_overrides(plant_id)
+        stale_min = overrides.get("stale_min", STALE_THRESHOLD_MIN)
+        chatter_min = overrides.get("chatter_min", CHATTER_THRESHOLD_MIN)
+        unhealthy_threshold = overrides.get("unhealthy_threshold", UNHEALTHY_THRESHOLD)
+        window_minutes = overrides.get("window_minutes", WINDOW_MINUTES)
+        flood_source_threshold = FLOOD_SOURCE_THRESHOLD
+        
+        # Build cache key
+        import time
+        sankey_cache_key = (
+            plant_id,
+            include_system,
+            stale_min,
+            chatter_min,
+            unhealthy_threshold,
+            window_minutes,
+            flood_source_threshold,
+        )
+        
+        # PRIORITY 1: Try to read from pre-computed main JSON cache (FASTEST)
+        params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": unhealthy_threshold,
+            "window_minutes": window_minutes,
+            "flood_source_threshold": flood_source_threshold,
+        }
+        main_cached = read_cache(BASE_DIR, params, plant_id=plant_id)
+        if main_cached and isinstance(main_cached.get("alarm_summary"), dict):
+            sankey_composition = main_cached["alarm_summary"].get("sankey_composition")
+            if sankey_composition:
+                logger.info(f"[MAIN JSON CACHE] HIT for {plant_id}/sankey - instant load!")
+                return {
+                    "plant_id": plant_id,
+                    "mode": "actual-calc",
+                    "generated_at": main_cached.get("generated_at"),
+                    "params": {"include_system": include_system},
+                    "nodes": sankey_composition.get("nodes", []),
+                    "edges": sankey_composition.get("edges", []),
+                    "totals": sankey_composition.get("totals", {}),
+                }
+        
+        # PRIORITY 2: Try disk cache (persistent across restarts)
+        disk_cached = load_summary_cache(plant_id, "sankey", sankey_cache_key)
+        if disk_cached:
+            logger.info(f"[DISK CACHE] HIT for {plant_id}/sankey")
+            return disk_cached
+        
+        # PRIORITY 3: Try RAM cache (faster, 15 min TTL)
+        SANKEY_TTL_SECONDS = 15 * 60
+        try:
+            sankey_cache = app.state.summary_sankey_cache
+        except AttributeError:
+            app.state.summary_sankey_cache = {}
+            sankey_cache = app.state.summary_sankey_cache
+        
+        sankey_cached = sankey_cache.get(sankey_cache_key)
+        if sankey_cached and (time.time() - sankey_cached["ts"] < SANKEY_TTL_SECONDS):
+            logger.info(f"[RAM CACHE] summary/sankey hit for {plant_id}")
+            return sankey_cached["data"]
+        
+        # Optional pre-filter: exclude system/meta sources before heavy classification
+        if not include_system:
+            def is_system(src: str) -> bool:
+                s = str(src or "").strip().upper()
+                return (s == "REPORT" or s.startswith("$") or s.startswith("ACTIVITY") or s.startswith("SYS_") or s.startswith("SYSTEM"))
+            before = len(df)
+            df = df[~df["Source"].apply(is_system)]
+            logger.info(f"Pre-filtered system/meta sources: {before - len(df)} rows removed (include_system=False)")
+
+        # Classify activations
+        logger.info(f"Computing exclusive categories for Sankey (plant {plant_id})...")
+        activations_df = compute_exclusive_categories_per_activation(
+            df,
+            stale_min=stale_min,
+            chatter_min=chatter_min,
+            unhealthy_threshold=unhealthy_threshold,
+            window_minutes=window_minutes,
+            flood_source_threshold=flood_source_threshold,
+        )
+        
+        if activations_df.empty:
+            return {
+                "plant_id": plant_id,
+                "mode": "actual-calc",
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "params": {"include_system": include_system},
+                "nodes": ["Total"],
+                "edges": [],
+                "totals": {"total": 0, "standing": 0, "nuisance": 0, "flood": 0, "other": 0},
+            }
+        
+        # Filter system sources if needed
+        if not include_system:
+            def is_system(src: str) -> bool:
+                s = str(src or "").strip().upper()
+                return (s == "REPORT" or s.startswith("$") or s.startswith("ACTIVITY") or s.startswith("SYS_") or s.startswith("SYSTEM"))
+            
+            activations_df = activations_df[~activations_df["Source"].apply(is_system)]
+        
+        # Compute Sankey data
+        logger.info("Computing Sankey diagram data...")
+        sankey_data = compute_category_sankey(activations_df)
+        
+        resp = {
+            "plant_id": plant_id,
+            "mode": "actual-calc",
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "params": {"include_system": include_system},
+            "nodes": sankey_data["nodes"],
+            "edges": sankey_data["edges"],
+            "totals": sankey_data["totals"],
+        }
+        
+        # Save to both RAM and disk cache
+        sankey_cache[sankey_cache_key] = {"ts": time.time(), "data": resp}
+        save_summary_cache(plant_id, "sankey", sankey_cache_key, resp)
+        
+        return resp
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error computing Sankey for plant {plant_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

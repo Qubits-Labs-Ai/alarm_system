@@ -116,6 +116,14 @@ def get_plant_csv_info(plant_id: str) -> Optional[Dict[str, str]]:
     }
 
 
+def get_plant_overrides(plant_id: str) -> Dict[str, Any]:
+    plant = get_plant_info(plant_id)
+    if not plant:
+        return {}
+    o = plant.get("overrides")
+    return o if isinstance(o, dict) else {}
+
+
 def validate_plant_id(plant_id: str) -> bool:
     """
     Check if a plant ID is valid and active.

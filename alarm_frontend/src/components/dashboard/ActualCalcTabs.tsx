@@ -18,6 +18,11 @@ import { BadActorsParetoChart } from '../actualCalc/BadActorsParetoChart';
 import { UnhealthyPeriodsBarChart } from '../actualCalc/UnhealthyPeriodsBarChart';
 import FloodsBubbleChart from '../actualCalc/FloodsBubbleChart';
 import ConditionDistributionByLocationActualCalc from '../actualCalc/ConditionDistributionByLocationActualCalc';
+import CategoryTrendArea from '../actualCalc/AlarmSummary/CategoryTrendArea';
+import CompositionSankey from '../actualCalc/AlarmSummary/CompositionSankey';
+import TotalsWaterfall from '../actualCalc/AlarmSummary/TotalsWaterfall';
+import CalendarDailyHeatmap from '../actualCalc/AlarmSummary/CalendarDailyHeatmap';
+import SeasonalityHeatmap from '../actualCalc/AlarmSummary/SeasonalityHeatmap';
 import TopFloodWindowsChart, { TopFloodWindowRow } from './TopFloodWindowsChart';
 import { UnhealthyBarChart } from './UnhealthyBarChart';
 import DateTimeRangePicker from '@/components/dashboard/DateTimeRangePicker';
@@ -346,6 +351,38 @@ export default function ActualCalcTabs({
                   Chatter threshold: {actualCalcData.params.chatter_min}min
                 </p>
               </Card>
+
+              {/* NEW: Alarm Summary Visualizations */}
+              <div className="space-y-6">
+                {/* Row 1: Composition Sankey + Waterfall */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <CompositionSankey
+                    plantId={plantId}
+                    includeSystem={includeSystem}
+                  />
+                  <TotalsWaterfall
+                    plantId={plantId}
+                    includeSystem={includeSystem}
+                  />
+                </div>
+
+                {/* Row 2: Category Trend (full width) */}
+                <CategoryTrendArea
+                  plantId={plantId}
+                  includeSystem={includeSystem}
+                />
+
+                {/* Row 3: Calendar + Seasonality */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <CalendarDailyHeatmap
+                    plantId={plantId}
+                  />
+                  <SeasonalityHeatmap
+                    plantId={plantId}
+                    includeSystem={includeSystem}
+                  />
+                </div>
+              </div>
             </>
           )}
         </TabsContent>

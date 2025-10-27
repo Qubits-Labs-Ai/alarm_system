@@ -242,3 +242,79 @@ export interface ActualCalcBadActorsResponse {
   }>;
   raw?: unknown;
 }
+
+// Alarm Summary: Category Time Series
+export interface CategoryTimeSeriesItem {
+  date: string; // yyyy-mm-dd (day), yyyy-Www (week), yyyy-mm (month)
+  total: number;
+  standing: number;
+  standing_stale: number;
+  standing_instrument_failure: number;
+  nuisance: number;
+  nuisance_chattering: number;
+  nuisance_if_chattering: number;
+  flood: number;
+  other: number;
+}
+
+export interface CategoryTimeSeriesResponse {
+  plant_id: string;
+  mode: string;
+  generated_at: string;
+  params: {
+    grain: 'day' | 'week' | 'month';
+    include_system: boolean;
+    stale_min: number;
+    chatter_min: number;
+    unhealthy_threshold: number;
+    window_minutes: number;
+  };
+  grain: 'day' | 'week' | 'month';
+  series: CategoryTimeSeriesItem[];
+}
+
+// Alarm Summary: Hourly Seasonality Matrix
+export interface HourlyMatrixCell {
+  dow: number; // 0=Monday, 6=Sunday
+  hour: number; // 0-23
+  avg_activations: number;
+}
+
+export interface HourlyMatrixResponse {
+  plant_id: string;
+  mode: string;
+  generated_at: string;
+  params: {
+    include_system: boolean;
+  };
+  matrix: HourlyMatrixCell[];
+}
+
+// Alarm Summary: Sankey Diagram
+export interface SankeyEdge {
+  source: string;
+  target: string;
+  value: number;
+}
+
+export interface SankeyResponse {
+  plant_id: string;
+  mode: string;
+  generated_at: string;
+  params: {
+    include_system: boolean;
+  };
+  nodes: string[];
+  edges: SankeyEdge[];
+  totals: {
+    total: number;
+    standing: number;
+    standing_stale: number;
+    standing_if: number;
+    nuisance: number;
+    nuisance_chattering: number;
+    nuisance_if_chattering: number;
+    flood: number;
+    other: number;
+  };
+}

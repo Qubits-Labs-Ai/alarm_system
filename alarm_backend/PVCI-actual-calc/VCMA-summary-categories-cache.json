@@ -1,0 +1,173 @@
+{
+  "cache_key": [
+    "VCMA",
+    "day",
+    true,
+    60,
+    10,
+    10,
+    10,
+    2
+  ],
+  "cached_at": 1761570324.2627697,
+  "data": {
+    "plant_id": "VCMA",
+    "mode": "actual-calc",
+    "generated_at": "2025-10-27T13:05:24.205005Z",
+    "params": {
+      "grain": "day",
+      "include_system": true,
+      "stale_min": 60,
+      "chatter_min": 10,
+      "unhealthy_threshold": 10,
+      "window_minutes": 10
+    },
+    "grain": "day",
+    "series": [
+      {
+        "date": "2025-01-30",
+        "total": 1863,
+        "standing": 83,
+        "standing_stale": 83,
+        "standing_instrument_failure": 0,
+        "nuisance": 1510,
+        "nuisance_chattering": 1506,
+        "nuisance_if_chattering": 4,
+        "flood": 4,
+        "other": 266
+      },
+      {
+        "date": "2025-01-31",
+        "total": 4267,
+        "standing": 142,
+        "standing_stale": 142,
+        "standing_instrument_failure": 0,
+        "nuisance": 3647,
+        "nuisance_chattering": 3631,
+        "nuisance_if_chattering": 16,
+        "flood": 73,
+        "other": 405
+      },
+      {
+        "date": "2025-02-13",
+        "total": 4148,
+        "standing": 51,
+        "standing_stale": 51,
+        "standing_instrument_failure": 0,
+        "nuisance": 3570,
+        "nuisance_chattering": 2125,
+        "nuisance_if_chattering": 1445,
+        "flood": 12,
+        "other": 515
+      },
+      {
+        "date": "2025-02-20",
+        "total": 785,
+        "standing": 7,
+        "standing_stale": 7,
+        "standing_instrument_failure": 0,
+        "nuisance": 705,
+        "nuisance_chattering": 701,
+        "nuisance_if_chattering": 4,
+        "flood": 13,
+        "other": 60
+      },
+      {
+        "date": "2025-02-21",
+        "total": 7517,
+        "standing": 50,
+        "standing_stale": 50,
+        "standing_instrument_failure": 0,
+        "nuisance": 6775,
+        "nuisance_chattering": 5863,
+        "nuisance_if_chattering": 912,
+        "flood": 113,
+        "other": 579
+      },
+      {
+        "date": "2025-02-22",
+        "total": 6742,
+        "standing": 50,
+        "standing_stale": 50,
+        "standing_instrument_failure": 0,
+        "nuisance": 5842,
+        "nuisance_chattering": 5796,
+        "nuisance_if_chattering": 46,
+        "flood": 125,
+        "other": 725
+      },
+      {
+        "date": "2025-02-23",
+        "total": 2651,
+        "standing": 39,
+        "standing_stale": 39,
+        "standing_instrument_failure": 0,
+        "nuisance": 1894,
+        "nuisance_chattering": 1867,
+        "nuisance_if_chattering": 27,
+        "flood": 2,
+        "other": 716
+      },
+      {
+        "date": "2025-02-24",
+        "total": 5460,
+        "standing": 45,
+        "standing_stale": 45,
+        "standing_instrument_failure": 0,
+        "nuisance": 4798,
+        "nuisance_chattering": 4737,
+        "nuisance_if_chattering": 61,
+        "flood": 40,
+        "other": 577
+      },
+      {
+        "date": "2025-02-25",
+        "total": 7292,
+        "standing": 34,
+        "standing_stale": 34,
+        "standing_instrument_failure": 0,
+        "nuisance": 6632,
+        "nuisance_chattering": 6549,
+        "nuisance_if_chattering": 83,
+        "flood": 38,
+        "other": 588
+      },
+      {
+        "date": "2025-02-26",
+        "total": 7132,
+        "standing": 31,
+        "standing_stale": 31,
+        "standing_instrument_failure": 0,
+        "nuisance": 6388,
+        "nuisance_chattering": 6262,
+        "nuisance_if_chattering": 126,
+        "flood": 38,
+        "other": 675
+      },
+      {
+        "date": "2025-02-27",
+        "total": 626,
+        "standing": 5,
+        "standing_stale": 5,
+        "standing_instrument_failure": 0,
+        "nuisance": 553,
+        "nuisance_chattering": 547,
+        "nuisance_if_chattering": 6,
+        "flood": 6,
+        "other": 62
+      },
+      {
+        "date": "2025-10-27",
+        "total": 14811,
+        "standing": 274,
+        "standing_stale": 273,
+        "standing_instrument_failure": 1,
+        "nuisance": 10191,
+        "nuisance_chattering": 8589,
+        "nuisance_if_chattering": 1602,
+        "flood": 12,
+        "other": 4334
+      }
+    ]
+  }
+}

@@ -530,3 +530,74 @@ export async function regeneratePlantActualCalcCache(
     clearTimeout(timeoutId);
   }
 }
+
+// ==================== ALARM SUMMARY: CATEGORY TIME SERIES ====================
+
+/**
+ * Fetch exclusive category time series (Standing/Nuisance/Flood/Other) aggregated by day/week/month
+ */
+export async function fetchPlantActualCalcCategoryTimeSeries(
+  plantId: string,
+  params?: {
+    grain?: 'day' | 'week' | 'month';
+    include_system?: boolean;
+    timeout_ms?: number;
+  }
+): Promise<import('@/types/actualCalc').CategoryTimeSeriesResponse> {
+  const {
+    grain = 'day',
+    include_system = false,
+    timeout_ms,
+  } = params || {};
+
+  const url = new URL(`${API_BASE_URL}/actual-calc/${plantId}/summary/categories`);
+  url.searchParams.set('grain', grain);
+  url.searchParams.set('include_system', String(include_system));
+
+  // Cache for 15 minutes (computation is expensive)
+  return fetchWithCache(url.toString(), 15 * 60 * 1000, timeout_ms);
+}
+
+/**
+ * Fetch hour-of-day × day-of-week seasonality matrix for alarm activations
+ */
+export async function fetchPlantActualCalcHourlyMatrix(
+  plantId: string,
+  params?: {
+    include_system?: boolean;
+    timeout_ms?: number;
+  }
+): Promise<import('@/types/actualCalc').HourlyMatrixResponse> {
+  const {
+    include_system = false,
+    timeout_ms,
+  } = params || {};
+
+  const url = new URL(`${API_BASE_URL}/actual-calc/${plantId}/summary/hourly_matrix`);
+  url.searchParams.set('include_system', String(include_system));
+
+  // Cache for 15 minutes (computation is expensive)
+  return fetchWithCache(url.toString(), 15 * 60 * 1000, timeout_ms);
+}
+
+/**
+ * Fetch Sankey diagram data for exclusive category flow visualization
+ */
+export async function fetchPlantActualCalcSankey(
+  plantId: string,
+  params?: {
+    include_system?: boolean;
+    timeout_ms?: number;
+  }
+): Promise<import('@/types/actualCalc').SankeyResponse> {
+  const {
+    include_system = false,
+    timeout_ms,
+  } = params || {};
+
+  const url = new URL(`${API_BASE_URL}/actual-calc/${plantId}/summary/sankey`);
+  url.searchParams.set('include_system', String(include_system));
+
+  // Cache for 15 minutes (computation is expensive)
+  return fetchWithCache(url.toString(), 15 * 60 * 1000, timeout_ms);
+}

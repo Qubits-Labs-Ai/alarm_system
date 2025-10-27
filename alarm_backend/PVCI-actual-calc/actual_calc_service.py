@@ -187,6 +187,9 @@ from datetime import datetime, timedelta
 from typing import Tuple, Dict, Any, Optional
 from collections import deque
 import argparse
+
+# Keywords for Instrument Failure detection
+INSTRUMENT_KEYWORDS = ["FAIL", "BAD", "INSTRUMENT"]
 import json
 
 # Add parent directory to path for plant_registry import
@@ -206,8 +209,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Centralized defaults for CSV location
-DEFAULT_CSV_RELATIVE_PATH = os.getenv("DEFAULT_CSV_RELATIVE_PATH", "PVCI-merged")
-DEFAULT_CSV_FILE_NAME = os.getenv("DEFAULT_CSV_FILE_NAME", "All_Merged.csv")
+DEFAULT_CSV_RELATIVE_PATH = os.getenv("DEFAULT_CSV_RELATIVE_PATH", "VCMA")
+DEFAULT_CSV_FILE_NAME = os.getenv("DEFAULT_CSV_FILE_NAME", "VCMA.csv")
 
 # Default thresholds (can be overridden via parameters)
 STALE_THRESHOLD_MIN = 60  # minutes until an active alarm is considered standing/stale classification point
@@ -1105,8 +1108,33 @@ def load_pvci_merged_csv(
         # Step 3: Validate required columns exist
         validate_required_columns(df, csv_path)
         
-        # Step 4: Parse Event Time
-        df["Event Time"] = pd.to_datetime(df["Event Time"], errors='coerce')
+        # Step 4: Parse Event Time (fast path with known format, fallback to generic)
+        # Known formats: 
+        #   - "1/1/2025  12:00:04 AM"  (VCMA) => "%m/%d/%Y %I:%M:%S %p"
+        #   - "2025-01-01 00:00:00"    (PVCI) => "%Y-%m-%d %H:%M:%S"
+        # Normalize whitespace first
+        et = df["Event Time"].astype(str).str.strip()
+        et = et.str.replace(r"\s+", " ", regex=True)
+        
+        # Try AM/PM format first (VCMA)
+        parsed = pd.to_datetime(et, format="%m/%d/%Y %I:%M:%S %p", errors="coerce")
+        
+        # Try ISO format for remaining (PVCI)
+        if parsed.isna().any():
+            need_iso = parsed.isna() & et.notna()
+            if need_iso.any():
+                parsed.loc[need_iso] = pd.to_datetime(et[need_iso], format="%Y-%m-%d %H:%M:%S", errors="coerce")
+        
+        # Final fallback: flexible parser (suppressed warning)
+        if parsed.isna().any():
+            need_fallback = parsed.isna() & et.notna()
+            if need_fallback.any():
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", UserWarning)
+                    parsed.loc[need_fallback] = pd.to_datetime(et[need_fallback], errors="coerce")
+        
+        df["Event Time"] = parsed
         
         # Step 5: Clean Action column
         df['Action'] = df['Action'].astype(str).str.strip().replace({'nan': ''})
@@ -1167,7 +1195,7 @@ def run_actual_calc(
     # Dynamic CSV path support
     csv_relative_path: str = None,
     csv_file_name: str = None,
-) -> Tuple[pd.DataFrame, Dict[str, Any], pd.DataFrame, Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[pd.DataFrame, Dict[str, Any], pd.DataFrame, Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any], list, Dict[str, Any]]:
     """Run actual calculation with specified thresholds on any CSV file.
     
     This function now supports dynamic CSV file processing:
@@ -1192,7 +1220,8 @@ def run_actual_calc(
         csv_file_name: Optional CSV filename (e.g., "merged_data.csv")
         
     Returns:
-        Tuple of (summary_df, kpis_dict, cycles_df, unhealthy_dict, floods_dict, bad_actors_dict, frequency_dict, source_meta_dict)
+        Tuple of (summary_df, kpis_dict, cycles_df, unhealthy_dict, floods_dict, bad_actors_dict, 
+                 frequency_dict, source_meta_dict, category_summary_dict, hourly_matrix_list, sankey_data_dict)
     
     Example:
         # Use default CSV (backward compatible)
@@ -1219,9 +1248,45 @@ def run_actual_calc(
     ACT_WINDOW_UNACCEPTABLE_OP = act_window_unacceptable_op
     ACT_WINDOW_UNACCEPTABLE_THRESHOLD = act_window_unacceptable_threshold
     
-    # Log calculation parameters
-    plant_name = plant_id or "default"
-    csv_info = f"plant_id={plant_name}, csv_path={csv_relative_path or DEFAULT_CSV_RELATIVE_PATH}/{csv_file_name or DEFAULT_CSV_FILE_NAME}"
+    # Log calculation parameters with EFFECTIVE plant and CSV path
+    # Resolve effective CSV from registry when plant_id is provided without explicit CSV params
+    eff_rel = csv_relative_path
+    eff_file = csv_file_name
+    eff_plant = plant_id
+    try:
+        if plant_id and csv_relative_path is None and csv_file_name is None:
+            _ci = get_plant_csv_info(plant_id)
+            if _ci:
+                eff_rel = _ci.get("csv_relative_path", eff_rel)
+                eff_file = _ci.get("csv_filename", eff_file)
+        # If plant_id not provided, try to infer from CSV hints
+        if not eff_plant:
+            # infer by matching registry csv_filename
+            for _pid in ["PVCI", "VCMA"]:
+                _info = get_plant_csv_info(_pid)
+                if _info and eff_file and str(_info.get("csv_filename", "")).lower() == str(eff_file).lower():
+                    eff_plant = _pid
+                    break
+            # infer from relative path folder name
+            if not eff_plant and eff_rel:
+                _last = str(eff_rel).replace("\\", "/").split("/")[-1].upper()
+                if _last in ("PVCI-MERGED", "PVCI"):
+                    eff_plant = "PVCI"
+                elif _last in ("VCMA",):
+                    eff_plant = "VCMA"
+            # infer from filename stem
+            if not eff_plant and eff_file:
+                _stem = os.path.splitext(str(eff_file))[0].upper()
+                if _stem in ("PVCI", "VCMA"):
+                    eff_plant = _stem
+    except Exception:
+        pass
+
+    # Fallbacks
+    eff_rel = eff_rel or DEFAULT_CSV_RELATIVE_PATH
+    eff_file = eff_file or DEFAULT_CSV_FILE_NAME
+    plant_label = eff_plant or "default"
+    csv_info = f"plant_id={plant_label}, csv_path={eff_rel}/{eff_file}"
     logger.info(
         f"Running actual calculation with {csv_info}, "
         f"stale_min={stale_min}, chatter_min={chatter_min}, "
@@ -1374,6 +1439,47 @@ def run_actual_calc(
         f"overall_health_pct={kpis['activation_overall_health_pct']:.2f}%"
     )
     
+    # ========================================================================
+    # PRE-COMPUTE ALARM SUMMARY VISUALIZATIONS (for instant frontend loading)
+    # ========================================================================
+    logger.info("Pre-computing alarm summary visualizations...")
+    summary_start = datetime.now()
+    
+    # First, build exclusive category labels per activation
+    classified_activations = compute_exclusive_categories_per_activation(
+        df,
+        stale_min=stale_min,
+        chatter_min=chatter_min,
+        unhealthy_threshold=unhealthy_threshold,
+        window_minutes=window_minutes,
+        flood_source_threshold=flood_source_threshold,
+    )
+    
+    # 1. Category Time Series (for CategoryTrendArea chart)
+    # Compute all three grains so they're cached
+    category_series_daily = compute_category_time_series(classified_activations, grain="day")
+    category_series_weekly = compute_category_time_series(classified_activations, grain="week")
+    category_series_monthly = compute_category_time_series(classified_activations, grain="month")
+    
+    category_summary = {
+        "daily": dataframe_to_json_records(category_series_daily),
+        "weekly": dataframe_to_json_records(category_series_weekly),
+        "monthly": dataframe_to_json_records(category_series_monthly),
+    }
+    
+    # 2. Hourly Seasonality Matrix (for SeasonalityHeatmap chart)
+    hourly_matrix_df = compute_hourly_seasonality_matrix(classified_activations)
+    hourly_matrix = dataframe_to_json_records(hourly_matrix_df)
+    
+    # 3. Sankey Composition (for CompositionSankey chart)
+    sankey_data = compute_category_sankey(classified_activations)
+    
+    summary_dur = (datetime.now() - summary_start).total_seconds()
+    logger.info(f"Alarm summary visualizations pre-computed in {summary_dur:.2f}s")
+    logger.info(f"  - Category series: {len(category_series_daily)} daily, {len(category_series_weekly)} weekly, {len(category_series_monthly)} monthly")
+    logger.info(f"  - Hourly matrix: {len(hourly_matrix)} hour-dow cells")
+    logger.info(f"  - Sankey: {len(sankey_data.get('nodes', []))} nodes, {len(sankey_data.get('edges', []))} edges")
+    
     # Store CSV path info for cache functions
     # This will be used by write_cache to generate appropriate cache filename
     logger.info(f"Calculation complete. Returning results for {csv_info}")
@@ -1435,7 +1541,19 @@ def run_actual_calc(
         }
         source_meta[src] = meta
 
-    return summary, kpis, cycles, unhealthy_dict, floods_dict, bad_actors_dict, frequency_dict, source_meta
+    return (
+        summary, 
+        kpis, 
+        cycles, 
+        unhealthy_dict, 
+        floods_dict, 
+        bad_actors_dict, 
+        frequency_dict, 
+        source_meta,
+        category_summary,  # NEW: Pre-computed category time series
+        hourly_matrix,     # NEW: Pre-computed hourly seasonality
+        sankey_data,       # NEW: Pre-computed sankey composition
+    )
 
 
 def run_actual_calc_with_cache(
@@ -1533,7 +1651,7 @@ def run_actual_calc_with_cache(
     
     # Run calculation
     logger.info("Running fresh calculation...")
-    summary, kpis, cycles, unhealthy, floods, bad_actors, frequency, source_meta = run_actual_calc(
+    summary, kpis, cycles, unhealthy, floods, bad_actors, frequency, source_meta, category_summary, hourly_matrix, sankey_data = run_actual_calc(
         alarm_data_dir,
         plant_id=plant_id,
         csv_relative_path=csv_relative_path,
@@ -1558,6 +1676,9 @@ def run_actual_calc_with_cache(
             bad_actors=bad_actors,
             frequency=frequency,
             source_meta=source_meta,
+            category_summary=category_summary,
+            hourly_matrix=hourly_matrix,
+            sankey_data=sankey_data,
         )
         
         # Read back the cache to return complete structure
@@ -1583,6 +1704,490 @@ def run_actual_calc_with_cache(
         "frequency": frequency,
         "params": params,
         "source_meta": source_meta,
+        "alarm_summary": {
+            "category_time_series": category_summary or {},
+            "hourly_seasonality": hourly_matrix or [],
+            "sankey_composition": sankey_data or {},
+        },
+    }
+
+
+# ---------- ALARM SUMMARY: EXCLUSIVE CATEGORY CLASSIFICATION ----------
+
+def compute_exclusive_categories_per_activation(
+    df: pd.DataFrame,
+    stale_min: int = 60,
+    chatter_min: int = 10,
+    unhealthy_threshold: int = 10,
+    window_minutes: int = 10,
+    flood_source_threshold: int = 2,
+) -> pd.DataFrame:
+    """
+    Classify each unique alarm activation into mutually exclusive categories using precedence:
+    Standing > Nuisance (Chattering, IF-Chattering) > Flood > Other
+    
+    Returns DataFrame with columns:
+      - Source: alarm source
+      - StartTime: activation timestamp
+      - Category: one of "Standing", "Nuisance_Chattering", "Nuisance_IF_Chattering", "Flood", "Other"
+      - duration_minutes: time standing if Standing category (else None)
+      - chattering_episode: bool indicating if part of chattering episode
+      - in_flood: bool indicating if activation occurred during a flood window
+      
+    NOTE: Assumes input DataFrame is already sorted by ['Source', 'Event Time']
+    """
+    df = df.copy()
+    df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+    df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+    if "Condition" in df.columns:
+        df["Condition"] = df["Condition"].fillna("").astype(str).str.upper().str.strip()
+    
+    # Step 1: Extract all unique activations with their metadata
+    activations = []
+    for src, group in df.groupby("Source"):
+        state = "IDLE"
+        active_start = None
+        active_condition = ""
+        alarm_times = []
+        
+        for _, row in group.iterrows():
+            action = row["Action"]
+            t = row["Event Time"]
+            cond = row.get("Condition", "") if "Condition" in group.columns else ""
+            
+            # New activation
+            if action == "" and state in ("IDLE", "ACKED"):
+                activations.append({
+                    "Source": src,
+                    "StartTime": t,
+                    "Condition": cond,
+                })
+                alarm_times.append(t)
+                active_start = t
+                active_condition = cond
+                state = "ACTIVE"
+            
+            # ACK
+            elif action == "ACK" and state == "ACTIVE":
+                state = "ACKED"
+            
+            # OK (clear)
+            elif action == "OK":
+                state = "IDLE"
+                active_start = None
+                active_condition = ""
+    
+    activations_df = pd.DataFrame(activations)
+    if activations_df.empty:
+        return activations_df
+    
+    # Step 2: Identify Standing alarms (duration >= stale_min)
+    standing_sources = set()
+    standing_times = set()
+    for src, group in df.groupby("Source"):
+        state = "IDLE"
+        active_start = None
+        active_condition = ""
+        standing_flag = False
+        
+        for _, row in group.iterrows():
+            action = row["Action"]
+            t = row["Event Time"]
+            cond = row.get("Condition", "") if "Condition" in df.columns else ""
+            
+            # New alarm
+            if action == "" and state in ["IDLE", "ACKED"]:
+                state = "ACTIVE"
+                active_start = t
+                active_condition = cond
+                standing_flag = False
+            
+            # ACK
+            elif action == "ACK" and state == "ACTIVE":
+                state = "ACKED"
+            
+            # OK
+            elif action == "OK" and state in ["ACTIVE", "ACKED"]:
+                state = "IDLE"
+                active_start = None
+                standing_flag = False
+            
+            # Check standing
+            if state == "ACTIVE" and active_start is not None and pd.notna(t):
+                duration_min = (t - active_start).total_seconds() / 60.0
+                if duration_min >= stale_min and not standing_flag:
+                    standing_flag = True
+                    standing_sources.add(src)
+                    standing_times.add((src, active_start))
+    
+    # Step 3: Identify Chattering episodes (sliding window logic)
+    chattering_sources_times = set()
+    for src, group in activations_df[activations_df["Source"] == src].iterrows() if not activations_df.empty else []:
+        pass  # We'll use the full activations_df approach below
+    
+    # Build chattering per source using deque
+    from collections import deque
+    for src, src_activations in activations_df.groupby("Source"):
+        times = sorted(src_activations["StartTime"].tolist())
+        dq = deque()
+        in_chatter = False
+        
+        for t in times:
+            # Evict old
+            while dq and (t - dq[0]).total_seconds() / 60 > chatter_min:
+                dq.popleft()
+                if len(dq) < 3:  # CHATTER_MIN_COUNT = 3
+                    in_chatter = False
+            dq.append(t)
+            
+            # Mark if we hit threshold
+            if not in_chatter and len(dq) >= 3:
+                in_chatter = True
+                # Mark all times in current window as chattering
+                for time_in_window in dq:
+                    chattering_sources_times.add((src, time_in_window))
+            elif in_chatter:
+                # Continue marking
+                chattering_sources_times.add((src, t))
+    
+    # Step 4: Identify Flood windows (overlapping unhealthy from >= 2 sources)
+    window = timedelta(minutes=window_minutes)
+    unhealthy_periods = []
+    for src, g in activations_df.groupby("Source"):
+        times = g["StartTime"].sort_values().tolist()
+        start = 0
+        for end, t_end in enumerate(times):
+            while times[start] < t_end - window:
+                start += 1
+            count = end - start + 1
+            if count >= unhealthy_threshold:
+                unhealthy_periods.append({
+                    "Source": src,
+                    "Window_Start": times[start],
+                    "Window_End": t_end,
+                    "Count": count,
+                })
+    
+    unhealthy_df = pd.DataFrame(unhealthy_periods)
+    flood_windows = []
+    if not unhealthy_df.empty:
+        # Merge same-source periods
+        merged = []
+        for src, g in unhealthy_df.groupby("Source"):
+            g = g.sort_values("Window_Start")
+            s = e = None
+            for _, row in g.iterrows():
+                if s is None:
+                    s, e = row["Window_Start"], row["Window_End"]
+                elif row["Window_Start"] <= e:
+                    e = max(e, row["Window_End"])
+                else:
+                    merged.append({"Source": src, "Start": s, "End": e})
+                    s, e = row["Window_Start"], row["Window_End"]
+            if s is not None:
+                merged.append({"Source": src, "Start": s, "End": e})
+        merged_df = pd.DataFrame(merged)
+        
+        # Find overlapping periods (flood condition)
+        for _, row in merged_df.iterrows():
+            s1, e1 = row["Start"], row["End"]
+            overlapping = merged_df[(merged_df["Start"] <= e1) & (merged_df["End"] >= s1)]
+            sources = set(overlapping["Source"])
+            if len(sources) >= flood_source_threshold:
+                flood_windows.append({"Start": s1, "End": e1, "Sources": list(sources)})
+        
+        flood_windows = pd.DataFrame(flood_windows).drop_duplicates(subset=["Start", "End"]).to_dict(orient="records") if flood_windows else []
+    
+    # Build set of (source, time) that occurred in flood windows
+    flood_activations = set()
+    for fw in flood_windows:
+        s_flood, e_flood = fw["Start"], fw["End"]
+        involved = fw["Sources"]
+        for _, act in activations_df[
+            (activations_df["StartTime"] >= s_flood) &
+            (activations_df["StartTime"] <= e_flood) &
+            (activations_df["Source"].isin(involved))
+        ].iterrows():
+            flood_activations.add((act["Source"], act["StartTime"]))
+    
+    # Step 5: Classify each activation using precedence
+    def classify_activation(row):
+        src = row["Source"]
+        t = row["StartTime"]
+        cond = row.get("Condition", "")
+        
+        # Check Standing (highest precedence)
+        if (src, t) in standing_times:
+            # Distinguish Instrument Failure vs Stale
+            if any(k in str(cond).upper() for k in INSTRUMENT_KEYWORDS):
+                return "Standing_Instrument_Failure"
+            else:
+                return "Standing_Stale"
+        
+        # Check Nuisance (chattering)
+        if (src, t) in chattering_sources_times:
+            # Distinguish Instrument Failure (Chattering) vs regular Chattering
+            if any(k in str(cond).upper() for k in INSTRUMENT_KEYWORDS):
+                return "Nuisance_IF_Chattering"
+            else:
+                return "Nuisance_Chattering"
+        
+        # Check Flood
+        if (src, t) in flood_activations:
+            return "Flood"
+        
+        # Default: Other
+        return "Other"
+    
+    activations_df["Category"] = activations_df.apply(classify_activation, axis=1)
+    
+    logger.info(
+        f"Category classification complete: "
+        f"{(activations_df['Category'] == 'Standing_Stale').sum() + (activations_df['Category'] == 'Standing_Instrument_Failure').sum()} Standing, "
+        f"{(activations_df['Category'] == 'Nuisance_Chattering').sum() + (activations_df['Category'] == 'Nuisance_IF_Chattering').sum()} Nuisance, "
+        f"{(activations_df['Category'] == 'Flood').sum()} Flood, "
+        f"{(activations_df['Category'] == 'Other').sum()} Other"
+    )
+    
+    return activations_df
+
+
+def compute_category_time_series(
+    activations_df: pd.DataFrame,
+    grain: str = "day",
+    start_date: pd.Timestamp = None,
+    end_date: pd.Timestamp = None,
+) -> pd.DataFrame:
+    """
+    Aggregate exclusive category counts by time grain (day, week, month).
+    
+    Args:
+        activations_df: DataFrame from compute_exclusive_categories_per_activation
+        grain: "day", "week", or "month"
+        start_date: Optional start date to fill gaps (defaults to min StartTime)
+        end_date: Optional end date to fill gaps (defaults to max StartTime)
+    
+    Returns:
+        DataFrame with columns:
+          - date: period start (yyyy-mm-dd for day, yyyy-Www for week, yyyy-mm for month)
+          - total: total activations
+          - standing_stale, standing_instrument_failure: standing sub-types
+          - nuisance_chattering, nuisance_if_chattering: nuisance sub-types
+          - flood, other: remaining categories
+    """
+    if activations_df.empty:
+        return pd.DataFrame()
+    
+    df = activations_df.copy()
+    df["StartTime"] = pd.to_datetime(df["StartTime"])
+    
+    # Determine period column based on grain
+    if grain == "week":
+        df["Period"] = df["StartTime"].dt.to_period("W").dt.start_time
+    elif grain == "month":
+        df["Period"] = df["StartTime"].dt.to_period("M").dt.start_time
+    else:  # day
+        df["Period"] = df["StartTime"].dt.date
+        df["Period"] = pd.to_datetime(df["Period"])
+    
+    # Aggregate by Period and Category
+    grouped = df.groupby(["Period", "Category"]).size().reset_index(name="Count")
+    
+    # Pivot to get categories as columns
+    pivot = grouped.pivot(index="Period", columns="Category", values="Count").fillna(0).astype(int)
+    
+    # Ensure all category columns exist
+    for cat in ["Standing_Stale", "Standing_Instrument_Failure", "Nuisance_Chattering", "Nuisance_IF_Chattering", "Flood", "Other"]:
+        if cat not in pivot.columns:
+            pivot[cat] = 0
+    
+    # Rename columns to match API contract (snake_case)
+    pivot = pivot.rename(columns={
+        "Standing_Stale": "standing_stale",
+        "Standing_Instrument_Failure": "standing_instrument_failure",
+        "Nuisance_Chattering": "nuisance_chattering",
+        "Nuisance_IF_Chattering": "nuisance_if_chattering",
+        "Flood": "flood",
+        "Other": "other",
+    })
+    
+    # Compute Standing and Nuisance totals
+    pivot["standing"] = pivot["standing_stale"] + pivot["standing_instrument_failure"]
+    pivot["nuisance"] = pivot["nuisance_chattering"] + pivot["nuisance_if_chattering"]
+    
+    # Total
+    pivot["total"] = pivot[["standing", "nuisance", "flood", "other"]].sum(axis=1)
+    
+    # Fill gaps in date range if needed
+    if start_date or end_date:
+        start = start_date or df["StartTime"].min()
+        end = end_date or df["StartTime"].max()
+        if grain == "week":
+            all_periods = pd.date_range(start=start, end=end, freq="W-MON")
+        elif grain == "month":
+            all_periods = pd.date_range(start=start, end=end, freq="MS")
+        else:
+            all_periods = pd.date_range(start=start, end=end, freq="D")
+        
+        pivot = pivot.reindex(all_periods, fill_value=0)
+    
+    # Reset index and format date
+    pivot = pivot.reset_index()
+    pivot = pivot.rename(columns={"Period": "date"})
+    
+    # Format date string based on grain
+    if grain == "week":
+        pivot["date"] = pivot["date"].dt.strftime("%Y-W%U")
+    elif grain == "month":
+        pivot["date"] = pivot["date"].dt.strftime("%Y-%m")
+    else:
+        pivot["date"] = pivot["date"].dt.strftime("%Y-%m-%d")
+    
+    # Select and order columns
+    cols = [
+        "date", "total", "standing", "standing_stale", "standing_instrument_failure",
+        "nuisance", "nuisance_chattering", "nuisance_if_chattering", "flood", "other"
+    ]
+    result = pivot[[c for c in cols if c in pivot.columns]]
+    
+    return result
+
+
+def compute_hourly_seasonality_matrix(activations_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute average activations per hour-of-day × day-of-week for seasonality heatmap.
+    
+    Args:
+        activations_df: DataFrame with StartTime column
+    
+    Returns:
+        DataFrame with columns:
+          - dow: day of week (0=Monday, 6=Sunday)
+          - hour: hour of day (0-23)
+          - avg_activations: average count across all weeks
+    """
+    if activations_df.empty:
+        return pd.DataFrame(columns=["dow", "hour", "avg_activations"])
+    
+    df = activations_df.copy()
+    df["StartTime"] = pd.to_datetime(df["StartTime"])
+    df["DOW"] = df["StartTime"].dt.dayofweek  # 0=Monday
+    df["Hour"] = df["StartTime"].dt.hour
+    df["Week"] = df["StartTime"].dt.isocalendar().week
+    df["Year"] = df["StartTime"].dt.year
+    
+    # Count activations per (Year, Week, DOW, Hour)
+    grouped = df.groupby(["Year", "Week", "DOW", "Hour"]).size().reset_index(name="Count")
+    
+    # Average across weeks
+    avg_by_dow_hour = grouped.groupby(["DOW", "Hour"])["Count"].mean().reset_index(name="avg_activations")
+    
+    # Ensure all 7×24 cells exist (fill missing with 0)
+    all_combos = pd.MultiIndex.from_product([range(7), range(24)], names=["DOW", "Hour"])
+    avg_by_dow_hour = avg_by_dow_hour.set_index(["DOW", "Hour"]).reindex(all_combos, fill_value=0.0).reset_index()
+    
+    # Rename DOW to dow, Hour to hour for API consistency
+    avg_by_dow_hour = avg_by_dow_hour.rename(columns={"DOW": "dow", "Hour": "hour"})
+    
+    # Round to 2 decimals
+    avg_by_dow_hour["avg_activations"] = avg_by_dow_hour["avg_activations"].round(2)
+    
+    return avg_by_dow_hour
+
+
+def compute_category_sankey(activations_df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Generate Sankey diagram data (nodes and edges) for exclusive category flow visualization.
+    
+    Flow structure:
+      Total → Standing/Nuisance/Flood/Other
+      Standing → Standing_Stale / Standing_IF
+      Nuisance → Nuisance_Chattering / Nuisance_IF_Chattering
+    
+    Args:
+        activations_df: DataFrame from compute_exclusive_categories_per_activation (with Category column)
+    
+    Returns:
+        Dict with:
+          - nodes: list of node names
+          - edges: list of {source, target, value} dicts
+          - totals: dict with category counts
+    """
+    if activations_df.empty or "Category" not in activations_df.columns:
+        return {
+            "nodes": ["Total"],
+            "edges": [],
+            "totals": {"total": 0, "standing": 0, "nuisance": 0, "flood": 0, "other": 0},
+        }
+    
+    # Count by category
+    category_counts = activations_df["Category"].value_counts().to_dict()
+    
+    total = len(activations_df)
+    standing_stale = category_counts.get("Standing_Stale", 0)
+    standing_if = category_counts.get("Standing_Instrument_Failure", 0)
+    nuisance_chat = category_counts.get("Nuisance_Chattering", 0)
+    nuisance_if_chat = category_counts.get("Nuisance_IF_Chattering", 0)
+    flood = category_counts.get("Flood", 0)
+    other = category_counts.get("Other", 0)
+    
+    standing_total = standing_stale + standing_if
+    nuisance_total = nuisance_chat + nuisance_if_chat
+    
+    # Build nodes list
+    nodes = [
+        "Total",
+        "Standing",
+        "Nuisance",
+        "Flood",
+        "Other",
+        "Standing_Stale",
+        "Standing_IF",
+        "Nuisance_Chattering",
+        "Nuisance_IF_Chattering",
+    ]
+    
+    # Build edges (only include non-zero flows)
+    edges = []
+    
+    # Level 1: Total → main categories
+    if standing_total > 0:
+        edges.append({"source": "Total", "target": "Standing", "value": standing_total})
+    if nuisance_total > 0:
+        edges.append({"source": "Total", "target": "Nuisance", "value": nuisance_total})
+    if flood > 0:
+        edges.append({"source": "Total", "target": "Flood", "value": flood})
+    if other > 0:
+        edges.append({"source": "Total", "target": "Other", "value": other})
+    
+    # Level 2: Standing sub-types
+    if standing_stale > 0:
+        edges.append({"source": "Standing", "target": "Standing_Stale", "value": standing_stale})
+    if standing_if > 0:
+        edges.append({"source": "Standing", "target": "Standing_IF", "value": standing_if})
+    
+    # Level 2: Nuisance sub-types
+    if nuisance_chat > 0:
+        edges.append({"source": "Nuisance", "target": "Nuisance_Chattering", "value": nuisance_chat})
+    if nuisance_if_chat > 0:
+        edges.append({"source": "Nuisance", "target": "Nuisance_IF_Chattering", "value": nuisance_if_chat})
+    
+    totals = {
+        "total": total,
+        "standing": standing_total,
+        "standing_stale": standing_stale,
+        "standing_if": standing_if,
+        "nuisance": nuisance_total,
+        "nuisance_chattering": nuisance_chat,
+        "nuisance_if_chattering": nuisance_if_chat,
+        "flood": flood,
+        "other": other,
+    }
+    
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "totals": totals,
     }
 
 
@@ -1778,6 +2383,9 @@ def write_cache(
     bad_actors: Dict[str, Any] | None = None,
     frequency: Dict[str, Any] | None = None,
     source_meta: Dict[str, Any] | None = None,
+    category_summary: Dict[str, Any] | None = None,
+    hourly_matrix: list | None = None,
+    sankey_data: Dict[str, Any] | None = None,
 ) -> None:
     """Write calculation results to cache JSON with CSV metadata.
     
@@ -1903,6 +2511,20 @@ def write_cache(
             cache_data["frequency"] = frequency
         if isinstance(source_meta, dict):
             cache_data["source_meta"] = source_meta
+        
+        # Attach pre-computed summary visualizations (NEW - for instant loading)
+        if isinstance(category_summary, dict):
+            cache_data["alarm_summary"] = cache_data.get("alarm_summary", {})
+            cache_data["alarm_summary"]["category_time_series"] = category_summary
+            logger.info("Added category time series to cache (daily/weekly/monthly)")
+        if isinstance(hourly_matrix, list):
+            cache_data["alarm_summary"] = cache_data.get("alarm_summary", {})
+            cache_data["alarm_summary"]["hourly_seasonality"] = hourly_matrix
+            logger.info(f"Added hourly seasonality matrix to cache ({len(hourly_matrix)} cells)")
+        if isinstance(sankey_data, dict):
+            cache_data["alarm_summary"] = cache_data.get("alarm_summary", {})
+            cache_data["alarm_summary"]["sankey_composition"] = sankey_data
+            logger.info(f"Added sankey composition to cache ({len(sankey_data.get('nodes', []))} nodes)")
         
         # Write atomically (write to temp, then rename)
         temp_path = cache_path + ".tmp"

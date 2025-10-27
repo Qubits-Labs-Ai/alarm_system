@@ -68,7 +68,7 @@ export function ActualCalcPage() {
             include_per_source: false,
             include_cycles: false,
             force_recompute: true,
-            timeout_ms: 180000,
+            timeout_ms: 360000,
           });
           if (recomputed?.overall?.activation_overall_health_pct) {
             overall = recomputed;

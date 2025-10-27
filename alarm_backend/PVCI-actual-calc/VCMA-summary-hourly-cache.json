@@ -1,0 +1,862 @@
+{
+  "cache_key": [
+    "VCMA",
+    true,
+    60,
+    10,
+    10,
+    10,
+    2
+  ],
+  "cached_at": 1761570325.6202679,
+  "data": {
+    "plant_id": "VCMA",
+    "mode": "actual-calc",
+    "generated_at": "2025-10-27T13:05:25.620267Z",
+    "params": {
+      "include_system": true
+    },
+    "matrix": [
+      {
+        "dow": 0,
+        "hour": 0,
+        "avg_activations": 377.0
+      },
+      {
+        "dow": 0,
+        "hour": 1,
+        "avg_activations": 362.5
+      },
+      {
+        "dow": 0,
+        "hour": 2,
+        "avg_activations": 334.5
+      },
+      {
+        "dow": 0,
+        "hour": 3,
+        "avg_activations": 587.5
+      },
+      {
+        "dow": 0,
+        "hour": 4,
+        "avg_activations": 491.0
+      },
+      {
+        "dow": 0,
+        "hour": 5,
+        "avg_activations": 344.5
+      },
+      {
+        "dow": 0,
+        "hour": 6,
+        "avg_activations": 411.5
+      },
+      {
+        "dow": 0,
+        "hour": 7,
+        "avg_activations": 399.5
+      },
+      {
+        "dow": 0,
+        "hour": 8,
+        "avg_activations": 399.5
+      },
+      {
+        "dow": 0,
+        "hour": 9,
+        "avg_activations": 451.5
+      },
+      {
+        "dow": 0,
+        "hour": 10,
+        "avg_activations": 431.5
+      },
+      {
+        "dow": 0,
+        "hour": 11,
+        "avg_activations": 424.0
+      },
+      {
+        "dow": 0,
+        "hour": 12,
+        "avg_activations": 386.5
+      },
+      {
+        "dow": 0,
+        "hour": 13,
+        "avg_activations": 428.0
+      },
+      {
+        "dow": 0,
+        "hour": 14,
+        "avg_activations": 417.5
+      },
+      {
+        "dow": 0,
+        "hour": 15,
+        "avg_activations": 439.0
+      },
+      {
+        "dow": 0,
+        "hour": 16,
+        "avg_activations": 427.0
+      },
+      {
+        "dow": 0,
+        "hour": 17,
+        "avg_activations": 449.5
+      },
+      {
+        "dow": 0,
+        "hour": 18,
+        "avg_activations": 445.5
+      },
+      {
+        "dow": 0,
+        "hour": 19,
+        "avg_activations": 450.5
+      },
+      {
+        "dow": 0,
+        "hour": 20,
+        "avg_activations": 422.0
+      },
+      {
+        "dow": 0,
+        "hour": 21,
+        "avg_activations": 444.5
+      },
+      {
+        "dow": 0,
+        "hour": 22,
+        "avg_activations": 453.5
+      },
+      {
+        "dow": 0,
+        "hour": 23,
+        "avg_activations": 357.5
+      },
+      {
+        "dow": 1,
+        "hour": 0,
+        "avg_activations": 195.0
+      },
+      {
+        "dow": 1,
+        "hour": 1,
+        "avg_activations": 313.0
+      },
+      {
+        "dow": 1,
+        "hour": 2,
+        "avg_activations": 233.0
+      },
+      {
+        "dow": 1,
+        "hour": 3,
+        "avg_activations": 224.0
+      },
+      {
+        "dow": 1,
+        "hour": 4,
+        "avg_activations": 241.0
+      },
+      {
+        "dow": 1,
+        "hour": 5,
+        "avg_activations": 248.0
+      },
+      {
+        "dow": 1,
+        "hour": 6,
+        "avg_activations": 291.0
+      },
+      {
+        "dow": 1,
+        "hour": 7,
+        "avg_activations": 214.0
+      },
+      {
+        "dow": 1,
+        "hour": 8,
+        "avg_activations": 308.0
+      },
+      {
+        "dow": 1,
+        "hour": 9,
+        "avg_activations": 300.0
+      },
+      {
+        "dow": 1,
+        "hour": 10,
+        "avg_activations": 367.0
+      },
+      {
+        "dow": 1,
+        "hour": 11,
+        "avg_activations": 327.0
+      },
+      {
+        "dow": 1,
+        "hour": 12,
+        "avg_activations": 357.0
+      },
+      {
+        "dow": 1,
+        "hour": 13,
+        "avg_activations": 362.0
+      },
+      {
+        "dow": 1,
+        "hour": 14,
+        "avg_activations": 335.0
+      },
+      {
+        "dow": 1,
+        "hour": 15,
+        "avg_activations": 431.0
+      },
+      {
+        "dow": 1,
+        "hour": 16,
+        "avg_activations": 446.0
+      },
+      {
+        "dow": 1,
+        "hour": 17,
+        "avg_activations": 327.0
+      },
+      {
+        "dow": 1,
+        "hour": 18,
+        "avg_activations": 342.0
+      },
+      {
+        "dow": 1,
+        "hour": 19,
+        "avg_activations": 351.0
+      },
+      {
+        "dow": 1,
+        "hour": 20,
+        "avg_activations": 350.0
+      },
+      {
+        "dow": 1,
+        "hour": 21,
+        "avg_activations": 293.0
+      },
+      {
+        "dow": 1,
+        "hour": 22,
+        "avg_activations": 239.0
+      },
+      {
+        "dow": 1,
+        "hour": 23,
+        "avg_activations": 198.0
+      },
+      {
+        "dow": 2,
+        "hour": 0,
+        "avg_activations": 248.0
+      },
+      {
+        "dow": 2,
+        "hour": 1,
+        "avg_activations": 273.0
+      },
+      {
+        "dow": 2,
+        "hour": 2,
+        "avg_activations": 291.0
+      },
+      {
+        "dow": 2,
+        "hour": 3,
+        "avg_activations": 262.0
+      },
+      {
+        "dow": 2,
+        "hour": 4,
+        "avg_activations": 258.0
+      },
+      {
+        "dow": 2,
+        "hour": 5,
+        "avg_activations": 333.0
+      },
+      {
+        "dow": 2,
+        "hour": 6,
+        "avg_activations": 348.0
+      },
+      {
+        "dow": 2,
+        "hour": 7,
+        "avg_activations": 336.0
+      },
+      {
+        "dow": 2,
+        "hour": 8,
+        "avg_activations": 329.0
+      },
+      {
+        "dow": 2,
+        "hour": 9,
+        "avg_activations": 316.0
+      },
+      {
+        "dow": 2,
+        "hour": 10,
+        "avg_activations": 296.0
+      },
+      {
+        "dow": 2,
+        "hour": 11,
+        "avg_activations": 374.0
+      },
+      {
+        "dow": 2,
+        "hour": 12,
+        "avg_activations": 318.0
+      },
+      {
+        "dow": 2,
+        "hour": 13,
+        "avg_activations": 339.0
+      },
+      {
+        "dow": 2,
+        "hour": 14,
+        "avg_activations": 290.0
+      },
+      {
+        "dow": 2,
+        "hour": 15,
+        "avg_activations": 289.0
+      },
+      {
+        "dow": 2,
+        "hour": 16,
+        "avg_activations": 269.0
+      },
+      {
+        "dow": 2,
+        "hour": 17,
+        "avg_activations": 304.0
+      },
+      {
+        "dow": 2,
+        "hour": 18,
+        "avg_activations": 285.0
+      },
+      {
+        "dow": 2,
+        "hour": 19,
+        "avg_activations": 253.0
+      },
+      {
+        "dow": 2,
+        "hour": 20,
+        "avg_activations": 307.0
+      },
+      {
+        "dow": 2,
+        "hour": 21,
+        "avg_activations": 297.0
+      },
+      {
+        "dow": 2,
+        "hour": 22,
+        "avg_activations": 264.0
+      },
+      {
+        "dow": 2,
+        "hour": 23,
+        "avg_activations": 253.0
+      },
+      {
+        "dow": 3,
+        "hour": 0,
+        "avg_activations": 258.0
+      },
+      {
+        "dow": 3,
+        "hour": 1,
+        "avg_activations": 186.0
+      },
+      {
+        "dow": 3,
+        "hour": 2,
+        "avg_activations": 76.0
+      },
+      {
+        "dow": 3,
+        "hour": 3,
+        "avg_activations": 132.0
+      },
+      {
+        "dow": 3,
+        "hour": 4,
+        "avg_activations": 62.0
+      },
+      {
+        "dow": 3,
+        "hour": 5,
+        "avg_activations": 142.0
+      },
+      {
+        "dow": 3,
+        "hour": 6,
+        "avg_activations": 423.0
+      },
+      {
+        "dow": 3,
+        "hour": 7,
+        "avg_activations": 257.0
+      },
+      {
+        "dow": 3,
+        "hour": 8,
+        "avg_activations": 672.0
+      },
+      {
+        "dow": 3,
+        "hour": 9,
+        "avg_activations": 240.0
+      },
+      {
+        "dow": 3,
+        "hour": 10,
+        "avg_activations": 197.0
+      },
+      {
+        "dow": 3,
+        "hour": 11,
+        "avg_activations": 508.0
+      },
+      {
+        "dow": 3,
+        "hour": 12,
+        "avg_activations": 240.0
+      },
+      {
+        "dow": 3,
+        "hour": 13,
+        "avg_activations": 204.0
+      },
+      {
+        "dow": 3,
+        "hour": 14,
+        "avg_activations": 127.5
+      },
+      {
+        "dow": 3,
+        "hour": 15,
+        "avg_activations": 162.0
+      },
+      {
+        "dow": 3,
+        "hour": 16,
+        "avg_activations": 186.0
+      },
+      {
+        "dow": 3,
+        "hour": 17,
+        "avg_activations": 212.5
+      },
+      {
+        "dow": 3,
+        "hour": 18,
+        "avg_activations": 201.0
+      },
+      {
+        "dow": 3,
+        "hour": 19,
+        "avg_activations": 219.0
+      },
+      {
+        "dow": 3,
+        "hour": 20,
+        "avg_activations": 229.0
+      },
+      {
+        "dow": 3,
+        "hour": 21,
+        "avg_activations": 194.5
+      },
+      {
+        "dow": 3,
+        "hour": 22,
+        "avg_activations": 252.0
+      },
+      {
+        "dow": 3,
+        "hour": 23,
+        "avg_activations": 193.5
+      },
+      {
+        "dow": 4,
+        "hour": 0,
+        "avg_activations": 215.0
+      },
+      {
+        "dow": 4,
+        "hour": 1,
+        "avg_activations": 159.0
+      },
+      {
+        "dow": 4,
+        "hour": 2,
+        "avg_activations": 149.5
+      },
+      {
+        "dow": 4,
+        "hour": 3,
+        "avg_activations": 158.0
+      },
+      {
+        "dow": 4,
+        "hour": 4,
+        "avg_activations": 155.5
+      },
+      {
+        "dow": 4,
+        "hour": 5,
+        "avg_activations": 194.5
+      },
+      {
+        "dow": 4,
+        "hour": 6,
+        "avg_activations": 222.0
+      },
+      {
+        "dow": 4,
+        "hour": 7,
+        "avg_activations": 253.5
+      },
+      {
+        "dow": 4,
+        "hour": 8,
+        "avg_activations": 319.5
+      },
+      {
+        "dow": 4,
+        "hour": 9,
+        "avg_activations": 346.0
+      },
+      {
+        "dow": 4,
+        "hour": 10,
+        "avg_activations": 306.5
+      },
+      {
+        "dow": 4,
+        "hour": 11,
+        "avg_activations": 229.5
+      },
+      {
+        "dow": 4,
+        "hour": 12,
+        "avg_activations": 262.5
+      },
+      {
+        "dow": 4,
+        "hour": 13,
+        "avg_activations": 399.0
+      },
+      {
+        "dow": 4,
+        "hour": 14,
+        "avg_activations": 330.0
+      },
+      {
+        "dow": 4,
+        "hour": 15,
+        "avg_activations": 254.0
+      },
+      {
+        "dow": 4,
+        "hour": 16,
+        "avg_activations": 250.5
+      },
+      {
+        "dow": 4,
+        "hour": 17,
+        "avg_activations": 261.5
+      },
+      {
+        "dow": 4,
+        "hour": 18,
+        "avg_activations": 224.0
+      },
+      {
+        "dow": 4,
+        "hour": 19,
+        "avg_activations": 296.0
+      },
+      {
+        "dow": 4,
+        "hour": 20,
+        "avg_activations": 236.0
+      },
+      {
+        "dow": 4,
+        "hour": 21,
+        "avg_activations": 236.5
+      },
+      {
+        "dow": 4,
+        "hour": 22,
+        "avg_activations": 253.5
+      },
+      {
+        "dow": 4,
+        "hour": 23,
+        "avg_activations": 180.0
+      },
+      {
+        "dow": 5,
+        "hour": 0,
+        "avg_activations": 283.0
+      },
+      {
+        "dow": 5,
+        "hour": 1,
+        "avg_activations": 280.0
+      },
+      {
+        "dow": 5,
+        "hour": 2,
+        "avg_activations": 309.0
+      },
+      {
+        "dow": 5,
+        "hour": 3,
+        "avg_activations": 291.0
+      },
+      {
+        "dow": 5,
+        "hour": 4,
+        "avg_activations": 272.0
+      },
+      {
+        "dow": 5,
+        "hour": 5,
+        "avg_activations": 262.0
+      },
+      {
+        "dow": 5,
+        "hour": 6,
+        "avg_activations": 271.0
+      },
+      {
+        "dow": 5,
+        "hour": 7,
+        "avg_activations": 270.0
+      },
+      {
+        "dow": 5,
+        "hour": 8,
+        "avg_activations": 295.0
+      },
+      {
+        "dow": 5,
+        "hour": 9,
+        "avg_activations": 357.0
+      },
+      {
+        "dow": 5,
+        "hour": 10,
+        "avg_activations": 494.0
+      },
+      {
+        "dow": 5,
+        "hour": 11,
+        "avg_activations": 341.0
+      },
+      {
+        "dow": 5,
+        "hour": 12,
+        "avg_activations": 364.0
+      },
+      {
+        "dow": 5,
+        "hour": 13,
+        "avg_activations": 392.0
+      },
+      {
+        "dow": 5,
+        "hour": 14,
+        "avg_activations": 344.0
+      },
+      {
+        "dow": 5,
+        "hour": 15,
+        "avg_activations": 300.0
+      },
+      {
+        "dow": 5,
+        "hour": 16,
+        "avg_activations": 264.0
+      },
+      {
+        "dow": 5,
+        "hour": 17,
+        "avg_activations": 283.0
+      },
+      {
+        "dow": 5,
+        "hour": 18,
+        "avg_activations": 243.0
+      },
+      {
+        "dow": 5,
+        "hour": 19,
+        "avg_activations": 250.0
+      },
+      {
+        "dow": 5,
+        "hour": 20,
+        "avg_activations": 174.0
+      },
+      {
+        "dow": 5,
+        "hour": 21,
+        "avg_activations": 118.0
+      },
+      {
+        "dow": 5,
+        "hour": 22,
+        "avg_activations": 156.0
+      },
+      {
+        "dow": 5,
+        "hour": 23,
+        "avg_activations": 129.0
+      },
+      {
+        "dow": 6,
+        "hour": 0,
+        "avg_activations": 114.0
+      },
+      {
+        "dow": 6,
+        "hour": 1,
+        "avg_activations": 86.0
+      },
+      {
+        "dow": 6,
+        "hour": 2,
+        "avg_activations": 135.0
+      },
+      {
+        "dow": 6,
+        "hour": 3,
+        "avg_activations": 128.0
+      },
+      {
+        "dow": 6,
+        "hour": 4,
+        "avg_activations": 106.0
+      },
+      {
+        "dow": 6,
+        "hour": 5,
+        "avg_activations": 92.0
+      },
+      {
+        "dow": 6,
+        "hour": 6,
+        "avg_activations": 87.0
+      },
+      {
+        "dow": 6,
+        "hour": 7,
+        "avg_activations": 68.0
+      },
+      {
+        "dow": 6,
+        "hour": 8,
+        "avg_activations": 89.0
+      },
+      {
+        "dow": 6,
+        "hour": 9,
+        "avg_activations": 91.0
+      },
+      {
+        "dow": 6,
+        "hour": 10,
+        "avg_activations": 234.0
+      },
+      {
+        "dow": 6,
+        "hour": 11,
+        "avg_activations": 110.0
+      },
+      {
+        "dow": 6,
+        "hour": 12,
+        "avg_activations": 105.0
+      },
+      {
+        "dow": 6,
+        "hour": 13,
+        "avg_activations": 107.0
+      },
+      {
+        "dow": 6,
+        "hour": 14,
+        "avg_activations": 112.0
+      },
+      {
+        "dow": 6,
+        "hour": 15,
+        "avg_activations": 163.0
+      },
+      {
+        "dow": 6,
+        "hour": 16,
+        "avg_activations": 138.0
+      },
+      {
+        "dow": 6,
+        "hour": 17,
+        "avg_activations": 115.0
+      },
+      {
+        "dow": 6,
+        "hour": 18,
+        "avg_activations": 112.0
+      },
+      {
+        "dow": 6,
+        "hour": 19,
+        "avg_activations": 90.0
+      },
+      {
+        "dow": 6,
+        "hour": 20,
+        "avg_activations": 89.0
+      },
+      {
+        "dow": 6,
+        "hour": 21,
+        "avg_activations": 109.0
+      },
+      {
+        "dow": 6,
+        "hour": 22,
+        "avg_activations": 81.0
+      },
+      {
+        "dow": 6,
+        "hour": 23,
+        "avg_activations": 90.0
+      }
+    ]
+  }
+}
