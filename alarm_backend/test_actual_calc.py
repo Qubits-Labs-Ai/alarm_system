@@ -14,7 +14,7 @@ sys.path.insert(0, str(backend_dir / "PVCI-actual-calc"))
 
 # Import service
 from actual_calc_service import (
-    run_actual_calc, write_cache, read_cache,
+    run_actual_calc, write_cache, read_cache, get_cache_path,
     UNHEALTHY_THRESHOLD, WINDOW_MINUTES, FLOOD_SOURCE_THRESHOLD,
     ACT_WINDOW_OVERLOAD_OP, ACT_WINDOW_OVERLOAD_THRESHOLD,
     ACT_WINDOW_UNACCEPTABLE_OP, ACT_WINDOW_UNACCEPTABLE_THRESHOLD
@@ -58,13 +58,13 @@ def test_actual_calc(use_cache: bool = False):
         cached = read_cache(str(backend_dir), params) if use_cache else None
         if cached:
             logger.info("Cache exists with matching params; skipping compute.")
-            cache_path = backend_dir / "PVCI-actual-calc" / "actual-calc.json"
+            cache_path = Path(get_cache_path(str(backend_dir)))
             size_mb = cache_path.stat().st_size / 1024 / 1024 if cache_path.exists() else 0
             logger.info(f"Cache: {cache_path} ({size_mb:.2f} MB)")
             return True
         
-        # Run calculation (signature returns unhealthy, floods, bad_actors, and frequency)
-        summary_df, kpis, cycles_df, unhealthy, floods, bad_actors, frequency = run_actual_calc(
+        # Run calculation (now returns unhealthy, floods, bad_actors, frequency, and optionally source_meta)
+        ret = run_actual_calc(
             str(alarm_data_dir),
             stale_min=60,
             chatter_min=10,
@@ -76,6 +76,12 @@ def test_actual_calc(use_cache: bool = False):
             act_window_unacceptable_op=ACT_WINDOW_UNACCEPTABLE_OP,
             act_window_unacceptable_threshold=ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
         )
+        try:
+            summary_df, kpis, cycles_df, unhealthy, floods, bad_actors, frequency, source_meta = ret
+        except ValueError:
+            # Backward compatibility with older 7-tuple signature
+            summary_df, kpis, cycles_df, unhealthy, floods, bad_actors, frequency = ret
+            source_meta = {}
         
         # Validate results
         assert not summary_df.empty, "Per-source summary is empty"
@@ -87,12 +93,31 @@ def test_actual_calc(use_cache: bool = False):
         logger.info(f"  Frequency KPIs:   {frequency.get('summary', {})}")
         
         # Write cache (includes unhealthy, floods, bad_actors, frequency)
-        write_cache(str(backend_dir), summary_df, kpis, cycles_df, params, str(alarm_data_dir), unhealthy=unhealthy, floods=floods, bad_actors=bad_actors, frequency=frequency)
+        write_cache(
+            str(backend_dir),
+            summary_df,
+            kpis,
+            cycles_df,
+            params,
+            str(alarm_data_dir),
+            unhealthy=unhealthy,
+            floods=floods,
+            bad_actors=bad_actors,
+            frequency=frequency,
+            source_meta=source_meta,
+        )
         
-        cache_path = backend_dir / "PVCI-actual-calc" / "actual-calc.json"
+        cache_path = Path(get_cache_path(str(backend_dir)))
         if cache_path.exists():
             cache_size_mb = cache_path.stat().st_size / 1024 / 1024
             logger.info(f"Cache written: {cache_path} ({cache_size_mb:.2f} MB)")
+            try:
+                import json
+                data = json.loads(cache_path.read_text(encoding='utf-8'))
+                sm = data.get("source_meta") or {}
+                logger.info(f"source_meta entries: {len(sm)}")
+            except Exception:
+                pass
         else:
             logger.error("Cache file not created!")
             return False

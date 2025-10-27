@@ -1226,7 +1226,7 @@ def _build_prompt(title: str, data: Any) -> str:
     prompt = (
         f"You are an expert Alarm Management analyst. Analyze an alarm flooding chart called '{title}'.\n"
         "The chart shows time-windowed incidents where a source exceeded 10 alarms in 10 minutes.\n"
-        "Fields per incident (when present): source, peak_window_start/end, flood_count or hits, threshold, over_by, rate_per_min, priority, location_tag, condition, description.\n\n"
+        "Fields per incident (when present): source, peak_window_start/end, flood_count or hits, threshold, over_by, rate_per_min, priority, location_tag, condition, top_sources, total_at_location, description, incidents (windows), risk_score.\n\n"
         "Context summary (computed):\n"
         f"- Total incidents: {summary['total_incidents']}\n"
         f"- Unique sources: {summary['unique_sources']}\n"
@@ -1273,6 +1273,14 @@ def generate_insights_endpoint(payload: InsightRequest, regenerate: bool = False
                     "priority": r.get("priority") or r.get("priority_severity"),
                     "rate_per_min": r.get("rate_per_min"),
                     "over_by": r.get("over_by"),
+                    "incidents": r.get("incidents"),
+                    "risk_score": r.get("risk_score"),
+                    "location_tag": r.get("location_tag"),
+                    "condition": r.get("condition"),
+                    "total_at_location": r.get("total_at_location"),
+                    "top_sources": r.get("top_sources"),
+                    "peak_window_start": r.get("peak_window_start"),
+                    "peak_window_end": r.get("peak_window_end"),
                 })
 
         messages = [
@@ -2012,6 +2020,8 @@ try:
         dataframe_to_json_records,
         kpis_to_json_safe,
         # Centralized activation/flood thresholds for cache params
+        STALE_THRESHOLD_MIN,
+        CHATTER_THRESHOLD_MIN,
         ACT_WINDOW_OVERLOAD_OP,
         ACT_WINDOW_OVERLOAD_THRESHOLD,
         ACT_WINDOW_UNACCEPTABLE_OP,
@@ -3008,3 +3018,149 @@ def regenerate_plant_actual_calc_cache(
         logger.error(f"Error regenerating cache for plant {plant_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/actual-calc/{plant_id}/condition-distribution", response_class=ORJSONResponse)
+def get_plant_actual_calc_condition_distribution(
+    plant_id: str,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    window_mode: str = "peak",  # peak | recent
+    include_system: bool = False,
+    top: int = 10,
+    sort: str = "total"  # total | az
+):
+    """Aggregate condition-by-location for any plant using cached floods + source_meta.
+
+    - If start_time/end_time provided: aggregate over windows overlapping the range.
+    - Else use window_mode: 'peak' (max flood_count) or 'recent' (latest end).
+    - include_system filters sources like REPORT, $, ACTIVITY*, SYS_*, SYSTEM.
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service not available")
+
+    if not validate_plant_id(plant_id):
+        raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
+
+    try:
+        # Build params consistent with cache
+        params = {
+            "stale_min": STALE_THRESHOLD_MIN,
+            "chatter_min": CHATTER_THRESHOLD_MIN,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
+
+        cached = read_cache(BASE_DIR, params, plant_id=plant_id)
+        if not cached:
+            raise HTTPException(status_code=404, detail=f"No cached data for plant {plant_id}")
+
+        floods = (cached.get("floods") or {}).get("windows") or []
+        source_meta = cached.get("source_meta") or {}
+
+        def is_system(src: str) -> bool:
+            s = str(src or "").strip().upper()
+            return (s == "REPORT" or s.startswith("$") or s.startswith("ACTIVITY") or s.startswith("SYS_") or s.startswith("SYSTEM"))
+
+        # Select windows
+        sel_windows = []
+        if start_time and end_time:
+            s_ms = datetime.fromisoformat(start_time.replace("Z", "+00:00")).timestamp() * 1000
+            e_ms = datetime.fromisoformat(end_time.replace("Z", "+00:00")).timestamp() * 1000
+            for w in floods:
+                ws = datetime.fromisoformat(str(w.get("start")).replace("Z", "+00:00")).timestamp() * 1000
+                we = datetime.fromisoformat(str(w.get("end")).replace("Z", "+00:00")).timestamp() * 1000
+                overlap = max(0, min(e_ms, we) - max(s_ms, ws))
+                if overlap > 0:
+                    sel_windows.append(w)
+        else:
+            if not floods:
+                sel_windows = []
+            elif window_mode == "recent":
+                sel = max(floods, key=lambda w: str(w.get("end") or ""))
+                sel_windows = [sel]
+            else:  # peak
+                sel = max(floods, key=lambda w: (int(w.get("flood_count") or 0), float(w.get("rate_per_min") or 0.0)))
+                sel_windows = [sel]
+
+        # Aggregate per source across selected windows
+        from collections import defaultdict, Counter
+        source_counts: dict[str, int] = defaultdict(int)
+        latest_ts: int | None = None
+        for w in sel_windows:
+            srcs = (w.get("sources_involved") or {})
+            for src, cnt in srcs.items():
+                if not include_system and is_system(src):
+                    continue
+                source_counts[str(src)] += int(cnt or 0)
+            try:
+                ts = datetime.fromisoformat(str(w.get("end")).replace("Z", "+00:00")).timestamp()
+                latest_ts = max(latest_ts or 0, int(ts))
+            except Exception:
+                pass
+
+        # Build location -> condition stacks
+        per_loc = defaultdict(lambda: {"total": 0, "by_condition": Counter()})
+        for src, count in source_counts.items():
+            meta = source_meta.get(src) or {}
+            location = (meta.get("location_tag") or "Unknown Location")
+            # Prefer proportional split by conditions_count if available
+            cond_counts = meta.get("conditions_count") or {}
+            if cond_counts:
+                total_cond = sum(int(v or 0) for v in cond_counts.values()) or 1
+                for cond, cval in cond_counts.items():
+                    share = (int(cval or 0) / total_cond) * count
+                    per_loc[location]["by_condition"][str(cond or "NOT PROVIDED").upper()] += share
+                per_loc[location]["total"] += count
+            else:
+                cond = str(meta.get("condition") or "NOT PROVIDED").upper()
+                per_loc[location]["by_condition"][cond] += count
+                per_loc[location]["total"] += count
+
+        # Materialize rows
+        items = []
+        for location, d in per_loc.items():
+            items.append({
+                "location": location,
+                "total": int(round(d["total"])),
+                "by_condition": {k: int(round(v)) for k, v in d["by_condition"].items()},
+                "latest_ts": latest_ts,
+            })
+
+        # Sort & top
+        if sort == "az":
+            items.sort(key=lambda r: str(r.get("location") or ""))
+        else:
+            items.sort(key=lambda r: int(r.get("total") or 0), reverse=True)
+        if isinstance(top, int) and top > 0:
+            items = items[: top]
+
+        # Observation range
+        if start_time and end_time:
+            obs = {"start": start_time, "end": end_time}
+        elif sel_windows:
+            s0 = sel_windows[0].get("start")
+            e0 = sel_windows[0].get("end")
+            obs = {"start": s0, "end": e0}
+        else:
+            obs = cached.get("sample_range") or {"start": None, "end": None}
+
+        return {
+            "plant_id": cached.get("plant_id", plant_id),
+            "plant_folder": cached.get("plant_folder"),
+            "mode": "actual-calc",
+            "generated_at": cached.get("generated_at"),
+            "params": {"window_minutes": WINDOW_MINUTES, "include_system": include_system, "window_mode": window_mode},
+            "observation_range": obs,
+            "items": items,
+            "raw": None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in plant {plant_id} condition-distribution: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

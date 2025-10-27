@@ -1167,7 +1167,7 @@ def run_actual_calc(
     # Dynamic CSV path support
     csv_relative_path: str = None,
     csv_file_name: str = None,
-) -> Tuple[pd.DataFrame, Dict[str, Any], pd.DataFrame, Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[pd.DataFrame, Dict[str, Any], pd.DataFrame, Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
     """Run actual calculation with specified thresholds on any CSV file.
     
     This function now supports dynamic CSV file processing:
@@ -1192,7 +1192,7 @@ def run_actual_calc(
         csv_file_name: Optional CSV filename (e.g., "merged_data.csv")
         
     Returns:
-        Tuple of (summary_df, kpis_dict, cycles_df, unhealthy_dict, floods_dict, bad_actors_dict, frequency_dict)
+        Tuple of (summary_df, kpis_dict, cycles_df, unhealthy_dict, floods_dict, bad_actors_dict, frequency_dict, source_meta_dict)
     
     Example:
         # Use default CSV (backward compatible)
@@ -1378,7 +1378,64 @@ def run_actual_calc(
     # This will be used by write_cache to generate appropriate cache filename
     logger.info(f"Calculation complete. Returning results for {csv_info}")
     
-    return summary, kpis, cycles, unhealthy_dict, floods_dict, bad_actors_dict, frequency_dict
+    # Build per-source metadata from unique alarm starts
+    from collections import Counter, defaultdict
+    def _s(x):
+        try:
+            return str(x).strip()
+        except Exception:
+            return ""
+    def _mode(vals: list[str]) -> str:
+        v = [ _s(t) for t in vals if _s(t) ]
+        return Counter(v).most_common(1)[0][0] if v else ""
+    def _is_system(src: str) -> bool:
+        s = (_s(src) or "").upper()
+        return (s == "REPORT" or s.startswith("$") or s.startswith("ACTIVITY") or s.startswith("SYS_") or s.startswith("SYSTEM"))
+
+    unique_samples: list[dict] = []
+    for src, g in df.groupby("Source"):
+        g = g.sort_values("Event Time")
+        state = "IDLE"
+        for _, row in g.iterrows():
+            a = _s(row.get("Action"))
+            if a == "" and state in ("IDLE", "ACKED"):
+                unique_samples.append({
+                    "source": src,
+                    "event_time": row.get("Event Time"),
+                    "location_tag": _s(row.get("Location Tag")),
+                    "condition": _s(row.get("Condition")),
+                    "priority": _s(row.get("Priority")),
+                    "description": _s(row.get("Description")),
+                    "units": _s(row.get("Units")),
+                    "setpoint_value": _s(row.get("Value", row.get("Setpoint Value"))),
+                })
+                state = "ACTIVE"
+            elif a == "ACK" and state == "ACTIVE":
+                state = "ACKED"
+            elif a == "OK" and state in ("ACTIVE", "ACKED"):
+                state = "IDLE"
+
+    by_src: dict[str, list[dict]] = defaultdict(list)
+    for r in unique_samples:
+        by_src[r["source"]].append(r)
+
+    source_meta: Dict[str, Any] = {}
+    for src, rows in by_src.items():
+        conds = [ (_s(rr.get("condition")) or "NOT PROVIDED").upper() for rr in rows ]
+        conditions_count = dict(Counter(conds))
+        meta = {
+            "location_tag": _mode([rr.get("location_tag", "") for rr in rows]) or "Unknown Location",
+            "condition": _mode(conds) or "NOT PROVIDED",
+            "priority": _mode([rr.get("priority", "") for rr in rows]),
+            "description": _mode([rr.get("description", "") for rr in rows]),
+            "units": _mode([rr.get("units", "") for rr in rows]),
+            "setpoint_value": _mode([rr.get("setpoint_value", "") for rr in rows]),
+            "conditions_count": conditions_count,
+            "is_system": _is_system(src),
+        }
+        source_meta[src] = meta
+
+    return summary, kpis, cycles, unhealthy_dict, floods_dict, bad_actors_dict, frequency_dict, source_meta
 
 
 def run_actual_calc_with_cache(
@@ -1476,7 +1533,7 @@ def run_actual_calc_with_cache(
     
     # Run calculation
     logger.info("Running fresh calculation...")
-    summary, kpis, cycles, unhealthy, floods, bad_actors, frequency = run_actual_calc(
+    summary, kpis, cycles, unhealthy, floods, bad_actors, frequency, source_meta = run_actual_calc(
         alarm_data_dir,
         plant_id=plant_id,
         csv_relative_path=csv_relative_path,
@@ -1500,6 +1557,7 @@ def run_actual_calc_with_cache(
             floods=floods,
             bad_actors=bad_actors,
             frequency=frequency,
+            source_meta=source_meta,
         )
         
         # Read back the cache to return complete structure
@@ -1524,6 +1582,7 @@ def run_actual_calc_with_cache(
         "bad_actors": bad_actors,
         "frequency": frequency,
         "params": params,
+        "source_meta": source_meta,
     }
 
 
@@ -1718,6 +1777,7 @@ def write_cache(
     floods: Dict[str, Any] | None = None,
     bad_actors: Dict[str, Any] | None = None,
     frequency: Dict[str, Any] | None = None,
+    source_meta: Dict[str, Any] | None = None,
 ) -> None:
     """Write calculation results to cache JSON with CSV metadata.
     
@@ -1815,7 +1875,7 @@ def write_cache(
                 "total_cycles": len(cycles_df),
             },
             "sample_range": sample_range,
-            "_version": "1.1"
+            "_version": "1.2"
         }
 
         # Attach unhealthy & floods & bad_actors & frequency if provided
@@ -1841,6 +1901,8 @@ def write_cache(
                 cache_data["counts"]["total_bad_actors"] = 0
         if isinstance(frequency, dict):
             cache_data["frequency"] = frequency
+        if isinstance(source_meta, dict):
+            cache_data["source_meta"] = source_meta
         
         # Write atomically (write to temp, then rename)
         temp_path = cache_path + ".tmp"

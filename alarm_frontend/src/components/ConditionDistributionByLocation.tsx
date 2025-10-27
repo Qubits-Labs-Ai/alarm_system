@@ -233,17 +233,26 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
       return { chartData: [] as any[], conditionKeys: [] as string[], colorByCondition: new Map<string, string>(), totalLocations: 0, highThreshold: Number.POSITIVE_INFINITY, hasVeryHigh: false };
     }
 
-    // Step 1: group by (location, condition)
+    // Step 1: group by (location, condition) and track per-source contributions
     const byLocCond = new Map<string, Map<string, number>>();
+    const byLocCondSrc = new Map<string, Map<string, Map<string, number>>>();
     const latestByLoc = new Map<string, number>();
 
     for (const r of records) {
       const loc = normalizeLocation((r as any).location_tag);
       const cond = (r as any).condition || 'Not Provided';
       const flood = (r as any).flood_count ?? (r as any).hits ?? 0;
+      const src = String((r as any).source || 'Unknown');
       if (!byLocCond.has(loc)) byLocCond.set(loc, new Map());
       const inner = byLocCond.get(loc)!;
       inner.set(cond, (inner.get(cond) ?? 0) + flood);
+
+      // Track per-source contribution for top-sources per condition
+      if (!byLocCondSrc.has(loc)) byLocCondSrc.set(loc, new Map());
+      const condMap = byLocCondSrc.get(loc)!;
+      if (!condMap.has(cond)) condMap.set(cond, new Map());
+      const srcMap = condMap.get(cond)!;
+      srcMap.set(src, (srcMap.get(src) ?? 0) + flood);
 
       const ts = new Date((r as any).peak_window_start || r.event_time || r.bin_end || r.bin_end).getTime();
       latestByLoc.set(loc, Math.max(latestByLoc.get(loc) ?? 0, ts));
@@ -291,12 +300,22 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
     // Step 6: materialize dataset for Recharts
     const data = rows.map(row => {
       const obj: any = { location: row.location, total: row.total, latestTs: row.latestTs };
+      const topByCond: Record<string, Array<{ name: string; count: number }>> = {};
       let other = 0;
       for (const [cond, v] of row.m) {
         if (condKeys.includes(cond)) obj[cond] = v;
         else other += v;
+
+        // compute top sources for this condition at this location
+        const srcMap = byLocCondSrc.get(row.location)?.get(cond);
+        if (srcMap && srcMap.size > 0) {
+          const TOP = 5;
+          const sorted = Array.from(srcMap.entries()).sort((a, b) => b[1] - a[1]);
+          topByCond[cond] = sorted.slice(0, TOP).map(([name, count]) => ({ name, count }));
+        }
       }
       if (condKeys.includes('Other') && other > 0) obj['Other'] = other;
+      (obj as any).__byCondTopSources = topByCond;
       return obj;
     });
 
@@ -317,12 +336,34 @@ const ConditionDistributionByLocation: React.FC<ConditionDistributionByLocationP
     return { chartData: data, conditionKeys: condKeys, colorByCondition, totalLocations: rows.length, highThreshold, hasVeryHigh };
   }, [records, sortBy, topLocations]);
 
-  // AI Insight handler: send per-location totals as incidents the backend can summarize
+  // AI Insight handler: send one record per visible bar segment
   const handleInsightClick = () => {
-    const payload = (chartData || []).map((row: any) => ({
-      source: String(row.location),
-      flood_count: Number(row.total || 0),
-    }));
+    const payload: Array<{
+      source: string;
+      location_tag: string;
+      condition: string;
+      flood_count: number;
+      total_at_location?: number;
+      top_sources?: Array<{ name: string; count: number }>;
+      peak_window_end?: string;
+    }> = [];
+
+    (chartData || []).forEach((row: any) => {
+      (conditionKeys || []).forEach((k: string) => {
+        const v = row[k];
+        if (typeof v === 'number' && v > 0) {
+          payload.push({
+            source: String(row.location),
+            location_tag: String(row.location),
+            condition: k,
+            flood_count: v,
+            total_at_location: row.total,
+            top_sources: (row.__byCondTopSources?.[k] || []).slice(0, 5),
+            peak_window_end: row.latestTs ? new Date(row.latestTs).toISOString() : undefined,
+          });
+        }
+      });
+    });
     const title = `Condition Distribution by Location — ${plantLabel} — ${selectedMonth} — ${timeRange} — ${windowMode} — Top ${topLocations} — ${sortBy} — Highlight:${highlightVeryHigh}`;
     openInsightModal(payload, title);
   };

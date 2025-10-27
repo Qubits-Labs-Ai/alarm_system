@@ -13,8 +13,13 @@ import { InsightButton } from '@/components/insights/InsightButton';
 import { useInsightModal } from '@/components/insights/useInsightModal';
 
 interface UnhealthyPeriodRecord {
-  Source: string;
-  Unhealthy_Periods: number;
+  Source?: string;
+  source?: string;
+  Unhealthy_Periods: number | string;
+  unhealthy_periods?: number | string;
+  count?: number | string;
+  hits?: number | string;
+  flood_count?: number | string;
 }
 
 interface UnhealthyPeriodsBarChartProps {
@@ -69,35 +74,62 @@ export function UnhealthyPeriodsBarChart({
   const processedData = useMemo(() => {
     const filtered = includeSystem 
       ? data 
-      : data.filter(d => !isMetaSource(d.Source));
+      : data.filter(d => !isMetaSource(String(d.Source ?? d.source ?? '')));
+
+    const toNumber = (val: unknown) => {
+      if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
+      if (typeof val === 'string') {
+        const cleaned = val.replace(/[,\s]/g, '');
+        const n = Number(cleaned);
+        return Number.isFinite(n) ? n : 0;
+      }
+      return 0;
+    };
+    const getPeriods = (r: UnhealthyPeriodRecord) => toNumber(r.Unhealthy_Periods ?? r.unhealthy_periods ?? r.count ?? r.hits ?? r.flood_count ?? 0);
 
     // Sort by unhealthy periods descending
-    const sorted = [...filtered].sort((a, b) => b.Unhealthy_Periods - a.Unhealthy_Periods);
+    const sorted = [...filtered].sort((a, b) => getPeriods(b) - getPeriods(a));
 
     // Take top N
     const topRecords = sorted.slice(0, topN);
 
-    return topRecords.map((record, idx) => ({
-      source: record.Source,
-      periods: record.Unhealthy_Periods,
-      severity: getSeverityLevel(record.Unhealthy_Periods),
-      color: getSeverityColor(record.Unhealthy_Periods),
-      isMeta: isMetaSource(record.Source),
-      index: idx,
-    }));
+    const rows = topRecords.map((record, idx) => {
+      const periods = getPeriods(record);
+      const src = String(record.Source ?? record.source ?? 'Unknown');
+      return {
+        source: src,
+        periods: Number.isFinite(periods) ? periods : 0,
+        severity: getSeverityLevel(Number.isFinite(periods) ? periods : 0),
+        color: getSeverityColor(Number.isFinite(periods) ? periods : 0),
+        isMeta: isMetaSource(src),
+        index: idx,
+      };
+    });
+    return rows.filter(r => Number.isFinite(r.periods));
   }, [data, includeSystem, topN]);
 
   // Distribution data: group sources by severity buckets
   const distributionData = useMemo(() => {
     const filtered = includeSystem 
       ? data 
-      : data.filter(d => !isMetaSource(d.Source));
+      : data.filter(d => !isMetaSource(String(d.Source ?? d.source ?? '')));
+
+    const toNumber = (val: unknown) => {
+      if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
+      if (typeof val === 'string') {
+        const cleaned = val.replace(/[,\s]/g, '');
+        const n = Number(cleaned);
+        return Number.isFinite(n) ? n : 0;
+      }
+      return 0;
+    };
+    const get = (r: UnhealthyPeriodRecord) => toNumber(r.Unhealthy_Periods ?? r.unhealthy_periods ?? r.count ?? r.hits ?? r.flood_count ?? 0);
 
     const buckets = {
-      critical: filtered.filter(d => d.Unhealthy_Periods > 100).length,
-      high: filtered.filter(d => d.Unhealthy_Periods > 50 && d.Unhealthy_Periods <= 100).length,
-      medium: filtered.filter(d => d.Unhealthy_Periods > 20 && d.Unhealthy_Periods <= 50).length,
-      low: filtered.filter(d => d.Unhealthy_Periods > 0 && d.Unhealthy_Periods <= 20).length,
+      critical: filtered.filter(d => get(d) > 100).length,
+      high: filtered.filter(d => get(d) > 50 && get(d) <= 100).length,
+      medium: filtered.filter(d => get(d) > 20 && get(d) <= 50).length,
+      low: filtered.filter(d => get(d) > 0 && get(d) <= 20).length,
     };
 
     return [
@@ -110,13 +142,26 @@ export function UnhealthyPeriodsBarChart({
 
   // Stats
   const totalSources = useMemo(() => {
-    const filtered = includeSystem ? data : data.filter(d => !isMetaSource(d.Source));
+    const filtered = includeSystem ? data : data.filter(d => !isMetaSource(String(d.Source ?? d.source ?? '')));
     return filtered.length;
   }, [data, includeSystem]);
 
   const totalPeriods = useMemo(() => {
-    const filtered = includeSystem ? data : data.filter(d => !isMetaSource(d.Source));
-    return filtered.reduce((sum, d) => sum + d.Unhealthy_Periods, 0);
+    const filtered = includeSystem ? data : data.filter(d => !isMetaSource(String(d.Source ?? d.source ?? '')));
+    const toNumber = (val: unknown) => {
+      if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
+      if (typeof val === 'string') {
+        const cleaned = val.replace(/[,\s]/g, '');
+        const n = Number(cleaned);
+        return Number.isFinite(n) ? n : 0;
+      }
+      return 0;
+    };
+    const get = (r: UnhealthyPeriodRecord) => toNumber(r.Unhealthy_Periods ?? r.unhealthy_periods ?? r.count ?? 0);
+    return filtered.reduce((sum, d) => {
+      const add = get(d);
+      return Number.isFinite(add) ? sum + add : sum;
+    }, 0);
   }, [data, includeSystem]);
 
   const avgPeriods = useMemo(() => {
@@ -124,16 +169,19 @@ export function UnhealthyPeriodsBarChart({
   }, [totalSources, totalPeriods]);
 
   const maxPeriods = useMemo(() => {
-    return processedData.length > 0 ? Math.max(...processedData.map(d => d.periods)) : 0;
+    if (processedData.length === 0) return 0;
+    const nums = processedData.map(d => Number(d.periods)).filter(n => Number.isFinite(n));
+    return nums.length > 0 ? Math.max(...nums) : 0;
   }, [processedData]);
 
   const handleInsightClick = () => {
     const payload = processedData.map(d => ({
       source: d.source,
-      unhealthy_periods: d.periods,
-      severity: d.severity,
+      flood_count: d.periods,
+      priority: d.severity,
+      priority_severity: d.severity,
     }));
-    openInsightModal(payload, `Unhealthy Periods - Top ${topN} Sources`);
+    openInsightModal(payload, `Unhealthy Periods — Top ${topN} — ${windowMinutes}-min windows — Threshold >${threshold}`);
   };
 
   if (isLoading) {
@@ -276,8 +324,9 @@ export function UnhealthyPeriodsBarChart({
                     width={110}
                     tick={{ fontSize: 12 }}
                     tickFormatter={(value) => {
+                      const s = String(value ?? '');
                       const maxLen = 15;
-                      return value.length > maxLen ? value.substring(0, maxLen) + '...' : value;
+                      return s.length > maxLen ? s.substring(0, maxLen) + '...' : s;
                     }}
                   />
 
@@ -297,28 +346,30 @@ export function UnhealthyPeriodsBarChart({
                     cursor={{ fill: 'transparent' }}
                     content={({ active, payload }) => {
                       if (active && payload && payload.length) {
-                        const data = payload[0].payload;
+                        type RowPayload = { source: string; periods: number; severity: string; color?: string; isMeta?: boolean };
+                        const data = payload[0]?.payload as RowPayload | undefined;
+                        const pVal = Number.isFinite(Number(data?.periods)) ? Number(data?.periods) : 0;
                         return (
                           <div className="bg-popover border border-border rounded-lg shadow-lg p-3 min-w-[220px]">
-                            <p className="font-semibold mb-2 text-foreground">{data.source}</p>
+                            <p className="font-semibold mb-2 text-foreground">{String(data?.source ?? '')}</p>
                             <div className="space-y-1 text-sm">
                               <p>
                                 <span className="text-muted-foreground">Unhealthy Periods: </span>
-                                <span className="font-semibold">{data.periods.toLocaleString()}</span>
+                                <span className="font-semibold">{pVal.toLocaleString()}</span>
                               </p>
                               <p>
                                 <span className="text-muted-foreground">Severity: </span>
                                 <span 
                                   className="font-semibold capitalize"
-                                  style={{ color: data.color }}
+                                  style={{ color: String(data?.color || CHART_GREEN_PRIMARY) }}
                                 >
-                                  {data.severity}
+                                  {String(data?.severity ?? '')}
                                 </span>
                               </p>
                               <p className="text-xs text-muted-foreground pt-1">
                                 {windowMinutes}-min windows with &gt;{threshold} activations
                               </p>
-                              {data.isMeta && (
+                              {Boolean(data?.isMeta) && (
                                 <p className="text-xs text-muted-foreground italic">System/meta source</p>
                               )}
                             </div>
@@ -429,15 +480,15 @@ export function UnhealthyPeriodsBarChart({
           </div>
           <div className="p-3 rounded border bg-muted/30">
             <p className="text-muted-foreground text-xs">Total Periods</p>
-            <p className="text-xl font-bold">{totalPeriods.toLocaleString()}</p>
+            <p className="text-xl font-bold">{(Number.isFinite(totalPeriods) ? totalPeriods : 0).toLocaleString()}</p>
           </div>
           <div className="p-3 rounded border bg-muted/30">
             <p className="text-muted-foreground text-xs">Avg per Source</p>
-            <p className="text-xl font-bold">{avgPeriods.toFixed(1)}</p>
+            <p className="text-xl font-bold">{(Number.isFinite(avgPeriods) ? avgPeriods : 0).toFixed(1)}</p>
           </div>
           <div className="p-3 rounded border bg-muted/30">
             <p className="text-muted-foreground text-xs">Max</p>
-            <p className="text-xl font-bold">{maxPeriods.toLocaleString()}</p>
+            <p className="text-xl font-bold">{(Number.isFinite(maxPeriods) ? maxPeriods : 0).toLocaleString()}</p>
           </div>
         </div>
       </CardContent>
