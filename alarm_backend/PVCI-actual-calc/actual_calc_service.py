@@ -970,34 +970,55 @@ def get_activation_peak_details(
 
 # ---------- DATA LOADING ----------
 
-def detect_metadata_rows(csv_path: str, max_check_rows: int = 10) -> int:
+def detect_metadata_rows(csv_path: str, max_check_rows: int = 10) -> tuple[int, pd.Timestamp | None]:
     """Detect how many metadata rows exist at the top of the CSV file.
     
     Metadata rows typically lack proper timestamps or have descriptive text.
     This function checks the first few rows to find where actual data starts.
+    Also extracts report datetime if found in metadata (used for truncated time reconstruction).
     
     Args:
         csv_path: Path to the CSV file
         max_check_rows: Maximum number of rows to check for metadata
         
     Returns:
-        Number of rows to skip (0 if no metadata detected)
+        Tuple of (skiprows, report_datetime):
+            - skiprows: Number of rows to skip (0 if no metadata detected)
+            - report_datetime: Timestamp from "Date/Time of Report" if found, else None
     """
+    import re
+    
     try:
         # Read first few rows without header assumption
         sample = pd.read_csv(csv_path, nrows=max_check_rows, header=None)
         
+        report_datetime = None
+        skip_rows = 0
+        
         # Try to find the header row (contains "Event Time" or "Source")
         for idx, row in sample.iterrows():
             row_str = ' '.join(str(val).lower() for val in row.values if pd.notna(val))
+            
+            # Check for report datetime in metadata
+            if 'date/time of report' in row_str or 'datetime of report' in row_str:
+                # Extract datetime after the label
+                # Format: "Date/Time of Report: 3/18/2025 11:41:41"
+                match = re.search(r'report[:\s]+(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}:\d{2})', row_str, re.IGNORECASE)
+                if match:
+                    try:
+                        report_datetime = pd.to_datetime(match.group(1), format="%m/%d/%Y %H:%M:%S")
+                        logger.info(f"Found report datetime in metadata: {report_datetime}")
+                    except Exception:
+                        pass
+            
             if 'event time' in row_str and 'source' in row_str:
-                return int(idx)
+                skip_rows = int(idx)
+                break
         
-        # No metadata detected
-        return 0
+        return skip_rows, report_datetime
     except Exception as e:
         logger.warning(f"Metadata detection failed: {e}. Assuming no metadata rows.")
-        return 0
+        return 0, None
 
 
 def validate_required_columns(df: pd.DataFrame, csv_path: str) -> None:
@@ -1094,8 +1115,8 @@ def load_pvci_merged_csv(
     logger.info(f"Loading CSV from: {csv_path}")
     
     try:
-        # Step 1: Detect and skip metadata rows
-        skiprows = detect_metadata_rows(csv_path)
+        # Step 1: Detect and skip metadata rows, extract report datetime if present
+        skiprows, report_datetime = detect_metadata_rows(csv_path)
         if skiprows > 0:
             logger.info(f"Detected {skiprows} metadata row(s) at top of file. Skipping...")
         
@@ -1108,33 +1129,217 @@ def load_pvci_merged_csv(
         # Step 3: Validate required columns exist
         validate_required_columns(df, csv_path)
         
-        # Step 4: Parse Event Time (fast path with known format, fallback to generic)
+        # Step 4: Parse Event Time with forward-fill for time-only values
         # Known formats: 
         #   - "1/1/2025  12:00:04 AM"  (VCMA) => "%m/%d/%Y %I:%M:%S %p"
         #   - "2025-01-01 00:00:00"    (PVCI) => "%Y-%m-%d %H:%M:%S"
+        #   - "12:00:14 AM" (time-only) => needs date from previous row
+        #
+        # Strategy: Detect time-only rows, forward-fill dates from previous valid rows,
+        # then reconstruct full datetimes before sorting
+        
+        import re
+        
         # Normalize whitespace first
         et = df["Event Time"].astype(str).str.strip()
         et = et.str.replace(r"\s+", " ", regex=True)
         
-        # Try AM/PM format first (VCMA)
-        parsed = pd.to_datetime(et, format="%m/%d/%Y %I:%M:%S %p", errors="coerce")
+        # Regex patterns to identify row types
+        # Full datetime patterns (have both date and time)
+        pattern_full_ampm = r'^\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}:\d{2}\s+(AM|PM)$'
+        pattern_full_iso = r'^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$'
         
-        # Try ISO format for remaining (PVCI)
-        if parsed.isna().any():
-            need_iso = parsed.isna() & et.notna()
-            if need_iso.any():
-                parsed.loc[need_iso] = pd.to_datetime(et[need_iso], format="%Y-%m-%d %H:%M:%S", errors="coerce")
+        # Time-only patterns (missing date component)
+        pattern_time_ampm = r'^\d{1,2}:\d{2}:\d{2}\s+(AM|PM)$'
+        pattern_time_24h = r'^\d{1,2}:\d{2}:\d{2}$'
         
-        # Final fallback: flexible parser (suppressed warning)
-        if parsed.isna().any():
-            need_fallback = parsed.isna() & et.notna()
+        # Truncated time patterns (missing date AND hour, showing only MM:SS or MM:SS.S)
+        # Common in VCMA exports: "59:56.2" means 59 minutes, 56.2 seconds
+        pattern_mmss = r'^\d{1,2}:\d{2}(\.\d+)?$'
+        
+        # Identify row types
+        is_full_ampm = et.str.match(pattern_full_ampm, na=False)
+        is_full_iso = et.str.match(pattern_full_iso, na=False)
+        is_time_ampm = et.str.match(pattern_time_ampm, na=False)
+        is_time_24h = et.str.match(pattern_time_24h, na=False)
+        is_mmss = et.str.match(pattern_mmss, na=False)
+        
+        # IMPORTANT: Disambiguate HH:MM:SS (time_24h) from MM:SS (mmss)
+        # If a value matches both patterns, check if it has 3 segments with colon
+        # HH:MM:SS has 2 colons, MM:SS has 1 colon
+        ambiguous = is_time_24h & is_mmss
+        if ambiguous.any():
+            colon_count = et[ambiguous].str.count(':')
+            is_time_24h.loc[ambiguous] = (colon_count == 2)
+            is_mmss.loc[ambiguous] = (colon_count == 1)
+        
+        is_full_datetime = is_full_ampm | is_full_iso
+        is_time_only = is_time_ampm | is_time_24h
+        is_truncated = is_mmss
+        
+        time_only_count = is_time_only.sum()
+        truncated_count = is_truncated.sum()
+        if time_only_count > 0:
+            logger.info(f"Detected {time_only_count} rows with time-only values (missing date)")
+        if truncated_count > 0:
+            logger.info(f"Detected {truncated_count} rows with truncated time (MM:SS format, missing date and hour)")
+        
+        # Extract full timestamps from full datetime rows (for forward-fill to truncated times)
+        full_timestamp_series = pd.Series([pd.NaT] * len(et), index=et.index, dtype='datetime64[ns]')
+        
+        # Also extract just dates from full datetime rows (for time-only rows)
+        date_series = pd.Series([None] * len(et), index=et.index, dtype=object)
+        
+        # Parse dates AND full timestamps from AM/PM format rows
+        if is_full_ampm.any():
+            ampm_timestamps = pd.to_datetime(
+                et[is_full_ampm], 
+                format="%m/%d/%Y %I:%M:%S %p", 
+                errors="coerce"
+            )
+            full_timestamp_series.loc[is_full_ampm] = ampm_timestamps
+            date_series.loc[is_full_ampm] = ampm_timestamps.dt.date
+        
+        # Parse dates AND full timestamps from ISO format rows
+        if is_full_iso.any():
+            iso_timestamps = pd.to_datetime(
+                et[is_full_iso], 
+                format="%Y-%m-%d %H:%M:%S", 
+                errors="coerce"
+            )
+            full_timestamp_series.loc[is_full_iso] = iso_timestamps
+            date_series.loc[is_full_iso] = iso_timestamps.dt.date
+        
+        # Forward-fill dates for time-only rows AND full timestamps for truncated rows
+        # If CSV has a report datetime in metadata and no full timestamps in data, seed with it
+        if report_datetime is not None and full_timestamp_series.isna().all():
+            logger.info(f"No full timestamps in data; using report datetime as seed: {report_datetime}")
+            full_timestamp_series.iloc[0] = report_datetime
+        
+        # This carries the most recent valid date/timestamp forward to rows missing them
+        date_series_filled = date_series.ffill()
+        full_timestamp_series_filled = full_timestamp_series.ffill()
+        
+        # Count how many time-only rows got a date via forward-fill
+        time_only_fixed = (is_time_only & date_series_filled.notna()).sum()
+        time_only_still_missing = (is_time_only & date_series_filled.isna()).sum()
+        
+        # Count how many truncated rows got a timestamp via forward-fill
+        truncated_fixed = (is_truncated & full_timestamp_series_filled.notna()).sum()
+        truncated_still_missing = (is_truncated & full_timestamp_series_filled.isna()).sum()
+        
+        if time_only_fixed > 0:
+            logger.info(f"✓ Fixed {time_only_fixed} time-only rows by forward-filling dates")
+        if time_only_still_missing > 0:
+            logger.warning(
+                f"⚠ {time_only_still_missing} time-only rows at start of file with no previous date "
+                f"(will be dropped)"
+            )
+        if truncated_fixed > 0:
+            logger.info(f"✓ Fixed {truncated_fixed} truncated time rows by forward-filling full timestamps")
+        if truncated_still_missing > 0:
+            logger.warning(
+                f"⚠ {truncated_still_missing} truncated rows at start of file with no previous timestamp "
+                f"(will be dropped)"
+            )
+        
+        # Now reconstruct full datetimes
+        parsed = pd.Series([pd.NaT] * len(et), index=et.index, dtype='datetime64[ns]')
+        
+        # Parse full datetime rows with strict formats
+        if is_full_ampm.any():
+            parsed.loc[is_full_ampm] = pd.to_datetime(
+                et[is_full_ampm], 
+                format="%m/%d/%Y %I:%M:%S %p", 
+                errors="coerce"
+            )
+        
+        if is_full_iso.any():
+            parsed.loc[is_full_iso] = pd.to_datetime(
+                et[is_full_iso], 
+                format="%Y-%m-%d %H:%M:%S", 
+                errors="coerce"
+            )
+        
+        # Reconstruct time-only rows by combining forward-filled date + time string
+        time_only_with_date = is_time_only & date_series_filled.notna()
+        if time_only_with_date.any():
+            # Build full datetime strings from date + time
+            date_strs = date_series_filled[time_only_with_date].astype(str)
+            time_strs = et[time_only_with_date]
+            combined = date_strs + " " + time_strs
+            
+            # Parse AM/PM time-only rows
+            time_only_ampm_mask = time_only_with_date & is_time_ampm
+            if time_only_ampm_mask.any():
+                parsed.loc[time_only_ampm_mask] = pd.to_datetime(
+                    combined[time_only_ampm_mask],
+                    format="%Y-%m-%d %I:%M:%S %p",
+                    errors="coerce"
+                )
+            
+            # Parse 24h time-only rows
+            time_only_24h_mask = time_only_with_date & is_time_24h
+            if time_only_24h_mask.any():
+                parsed.loc[time_only_24h_mask] = pd.to_datetime(
+                    combined[time_only_24h_mask],
+                    format="%Y-%m-%d %H:%M:%S",
+                    errors="coerce"
+                )
+        
+        # Reconstruct truncated rows (MM:SS.S format) by updating forward-filled timestamp
+        truncated_with_timestamp = is_truncated & full_timestamp_series_filled.notna()
+        if truncated_with_timestamp.any():
+            # For each truncated row, parse MM:SS.S and update the forward-filled timestamp
+            base_timestamps = full_timestamp_series_filled[truncated_with_timestamp].copy()
+            mmss_strs = et[truncated_with_timestamp]
+            
+            # Parse MM:SS or MM:SS.S to extract minutes and seconds
+            for idx in mmss_strs.index:
+                try:
+                    mmss_val = str(mmss_strs[idx])
+                    parts = mmss_val.split(':')
+                    if len(parts) == 2:
+                        minutes = int(parts[0])
+                        seconds_parts = parts[1].split('.')
+                        seconds = int(seconds_parts[0])
+                        microseconds = 0
+                        if len(seconds_parts) > 1:
+                            # Convert fractional seconds to microseconds
+                            frac = seconds_parts[1].ljust(6, '0')[:6]  # Pad or trim to 6 digits
+                            microseconds = int(frac)
+                        
+                        # Get base timestamp and update its minute/second/microsecond
+                        base_ts = base_timestamps[idx]
+                        if pd.notna(base_ts):
+                            new_ts = base_ts.replace(minute=minutes, second=seconds, microsecond=microseconds)
+                            parsed.loc[idx] = new_ts
+                except Exception:
+                    # If parsing fails, leave as NaT (will be dropped)
+                    pass
+        
+        # Final fallback for any remaining unparsed non-standard formats
+        # (only for rows that didn't match our patterns)
+        unmatched = ~is_full_datetime & ~is_time_only & ~is_truncated
+        if unmatched.any() and parsed[unmatched].isna().any():
+            need_fallback = unmatched & parsed.isna() & et.notna()
             if need_fallback.any():
                 import warnings
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", UserWarning)
                     parsed.loc[need_fallback] = pd.to_datetime(et[need_fallback], errors="coerce")
+                logger.info(f"Applied generic parser to {need_fallback.sum()} non-standard datetime formats")
         
         df["Event Time"] = parsed
+        
+        # Verify no "today" contamination (safety check)
+        today = pd.Timestamp.now().date()
+        today_count = (parsed.dt.date == today).sum()
+        if today_count > 0:
+            logger.warning(
+                f"⚠ Found {today_count} rows with today's date ({today}) - "
+                f"verify this is intentional and not from time-only parsing errors"
+            )
         
         # Step 5: Clean Action column
         df['Action'] = df['Action'].astype(str).str.strip().replace({'nan': ''})
