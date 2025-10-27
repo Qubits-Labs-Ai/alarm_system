@@ -366,7 +366,8 @@ const UnhealthySourcesWordCloud: React.FC<{ className?: string; plantId?: string
   const handleInsightClick = () => {
     const payload = words.map(w => ({
       source: w.text,
-      flood_count: Math.round(w.weightedSize),
+      flood_count: Number.isFinite(w.floodTotal) ? w.floodTotal : (Number.isFinite(w.maxFlood) ? w.maxFlood : 0),
+      risk_score: Math.round(w.weightedSize),
       priority: w.priority,
     }));
     const title = `Unhealthy Sources Word Cloud — ${plantLabel} — ${selectedMonth} — ${timeRange} — ${windowMode} — Top ${topLimit} — F:${Math.round(floodWeight*100)}%/B:${Math.round(binsWeight*100)}%`;

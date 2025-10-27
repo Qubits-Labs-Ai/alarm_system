@@ -27,6 +27,29 @@ export interface ActualCalcKPIs {
   peak_10min_window_end?: string | null;
 }
 
+// Condition Distribution by Location (Actual-Calc)
+export interface ConditionDistItem {
+  location: string;
+  total: number;
+  by_condition: Record<string, number>;
+  latest_ts?: number;
+}
+
+export interface ActualCalcConditionDistributionResponse {
+  plant_id?: string;
+  plant_folder: string;
+  mode: string;
+  generated_at: string;
+  params: {
+    window_minutes: number;
+    include_system?: boolean;
+    window_mode?: string;
+  };
+  observation_range?: { start: string | null; end: string | null };
+  items: ConditionDistItem[];
+  raw?: unknown;
+}
+
 export interface PeakDetailsResponse {
   window: { start: string; end: string };
   total: number; // sum of unique activations across sources within the window

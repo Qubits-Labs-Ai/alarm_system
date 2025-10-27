@@ -110,8 +110,8 @@ export function BadActorsParetoChart({
   const handleInsightClick = () => {
     const payload = processedData.map(d => ({
       source: d.source,
-      total_alarms: d.alarms,
-      flood_windows: d.windows,
+      flood_count: d.alarms,
+      incidents: d.windows,
       share_pct: d.sharePct,
       cumulative_pct: d.cumulativePct,
     }));

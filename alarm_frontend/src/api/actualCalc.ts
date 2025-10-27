@@ -12,6 +12,7 @@ import {
   ActualCalcFloodsResponse,
   ActualCalcBadActorsResponse,
   PeakDetailsResponse,
+  ActualCalcConditionDistributionResponse,
 } from '@/types/actualCalc';
 
 // Simple cache reuse from plantHealth.ts pattern
@@ -22,6 +23,42 @@ const STORAGE_PREFIX = 'ams.apiCache.v1:';
 
 function now() {
   return Date.now();
+}
+
+/**
+ * Fetch Condition Distribution by Location for any plant (actual-calc)
+ */
+export async function fetchPlantActualCalcConditionDistribution(
+  plantId: string,
+  params?: {
+    start_time?: string;
+    end_time?: string;
+    window_mode?: 'peak' | 'recent';
+    include_system?: boolean;
+    top?: number;
+    sort?: 'total' | 'az';
+    timeout_ms?: number;
+  }
+): Promise<ActualCalcConditionDistributionResponse> {
+  const {
+    start_time,
+    end_time,
+    window_mode = 'peak',
+    include_system = false,
+    top = 10,
+    sort = 'total',
+    timeout_ms,
+  } = params || {};
+
+  const url = new URL(`${API_BASE_URL}/actual-calc/${plantId}/condition-distribution`);
+  if (start_time) url.searchParams.set('start_time', start_time);
+  if (end_time) url.searchParams.set('end_time', end_time);
+  if (!start_time || !end_time) url.searchParams.set('window_mode', window_mode);
+  url.searchParams.set('include_system', String(include_system));
+  url.searchParams.set('top', String(top));
+  url.searchParams.set('sort', sort);
+
+  return fetchWithCache<ActualCalcConditionDistributionResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
 }
 
 /**

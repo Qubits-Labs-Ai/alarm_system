@@ -27,8 +27,8 @@ export default function BadActorsCard({ data, totalFloodCount, includeSystem = t
   const handleInsight = () => {
     const payload = top.map(a => ({
       source: a.Source,
-      total_in_floods: a.Total_Alarm_In_Floods,
-      windows: a.Flood_Involvement_Count,
+      flood_count: a.Total_Alarm_In_Floods,
+      incidents: a.Flood_Involvement_Count,
       share_pct: totalFloodCount && totalFloodCount > 0 ? Math.round((a.Total_Alarm_In_Floods / totalFloodCount) * 1000) / 10 : null,
     }))
     openInsightModal(payload, `Bad Actors — Top ${limit}`)

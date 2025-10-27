@@ -17,6 +17,7 @@ import { AlarmFrequencyTrendChart } from './AlarmFrequencyTrendChart';
 import { BadActorsParetoChart } from '../actualCalc/BadActorsParetoChart';
 import { UnhealthyPeriodsBarChart } from '../actualCalc/UnhealthyPeriodsBarChart';
 import FloodsBubbleChart from '../actualCalc/FloodsBubbleChart';
+import ConditionDistributionByLocationActualCalc from '../actualCalc/ConditionDistributionByLocationActualCalc';
 import TopFloodWindowsChart, { TopFloodWindowRow } from './TopFloodWindowsChart';
 import { UnhealthyBarChart } from './UnhealthyBarChart';
 import DateTimeRangePicker from '@/components/dashboard/DateTimeRangePicker';
@@ -551,7 +552,7 @@ export default function ActualCalcTabs({
               {/* Unhealthy Periods Distribution Chart */}
               {actualCalcUnhealthy && (
                 <UnhealthyPeriodsBarChart
-                  data={detailedAnalyticsData.rangeUnhealthy ?? actualCalcUnhealthy.per_source}
+                  data={detailedAnalyticsData.windowBars ?? detailedAnalyticsData.rangeBars ?? detailedAnalyticsData.aggBars}
                   threshold={detailedAnalyticsData.threshold}
                   windowMinutes={actualCalcUnhealthy.params?.window_minutes || 10}
                   topN={unhealthyPeriodsTopN}
@@ -562,10 +563,19 @@ export default function ActualCalcTabs({
                   activeRangeEnd={analyticsRange?.endTime}
                 />
               )}
+
+              {/* Condition Distribution by Location (Actual-Calc) */}
+              <ConditionDistributionByLocationActualCalc
+                className="mt-2"
+                plantId={plantId}
+                includeSystem={includeSystem}
+                startTime={analyticsRange?.startTime}
+                endTime={analyticsRange?.endTime}
+              />
             </>
           )}
         </TabsContent>
       </Tabs>
     </div>
   );
-}
+};

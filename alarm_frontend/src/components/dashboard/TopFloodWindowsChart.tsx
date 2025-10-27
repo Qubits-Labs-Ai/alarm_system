@@ -80,6 +80,7 @@ export default function TopFloodWindowsChart({ data, threshold, topK, onTopKChan
   const handleInsightClick = () => {
     // Prepare concise payload for AI insight generator
     const payload = rows.map(r => ({
+      source: r.short_label || r.label,
       id: r.id,
       label: r.label,
       start: r.start,

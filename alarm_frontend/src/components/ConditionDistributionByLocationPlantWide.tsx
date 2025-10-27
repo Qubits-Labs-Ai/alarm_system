@@ -445,6 +445,8 @@ const ConditionDistributionByLocationPlantWide: React.FC<Props> = ({
         flood_count: number;
         total_at_location?: number;
         top_sources?: Array<{ name: string; count: number }>;
+        peak_window_start?: string;
+        peak_window_end?: string;
       }> = [];
 
       (chartData || []).forEach((row: any) => {
@@ -458,6 +460,8 @@ const ConditionDistributionByLocationPlantWide: React.FC<Props> = ({
               flood_count: v,
               total_at_location: row.total,
               top_sources: (row.__byCondTopSources?.[k] || []).slice(0, 5),
+              peak_window_start: activeWindow?.start,
+              peak_window_end: activeWindow?.end,
             });
           }
         });
