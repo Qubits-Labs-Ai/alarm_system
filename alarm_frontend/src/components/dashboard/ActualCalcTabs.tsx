@@ -46,7 +46,7 @@ import WeeklyComplianceBars from './WeeklyComplianceBars';
 
 interface ActualCalcTabsProps {
   // Data
-  actualCalcData: ActualCalcOverallResponse;
+  actualCalcData: ActualCalcOverallResponse | null;
   actualCalcUnhealthy: ActualCalcUnhealthyResponse | null;
   actualCalcFloods: ActualCalcFloodsResponse | null;
   actualCalcBadActors: ActualCalcBadActorsResponse | null;

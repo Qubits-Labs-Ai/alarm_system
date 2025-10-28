@@ -85,7 +85,7 @@ export function ActualCalcPage() {
       
       try {
         setLoadingStage('Fetching calculation results...');
-        const [overall, unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
+        let [overall, unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
           fetchPvciActualCalcOverall({ stale_min: 60, chatter_min: 10, include_per_source: false, include_cycles: false, timeout_ms: timeout }),
           fetchPvciActualCalcUnhealthy({ stale_min: 60, chatter_min: 10, limit: 500, timeout_ms: timeout }),
           fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200, timeout_ms: timeout }),
