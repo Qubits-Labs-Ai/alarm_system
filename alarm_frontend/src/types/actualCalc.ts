@@ -152,6 +152,12 @@ export interface ActualCalcOverallResponse {
   counts: ActualCalcCounts;
   sample_range: ActualCalcSampleRange;
   frequency?: FrequencyMetrics;  // New frequency block
+  alarm_summary?: {
+    sankey_composition?: SankeyResponse;
+    sankey_composition_all?: SankeyResponse;
+    sankey_composition_no_system?: SankeyResponse;
+    [key: string]: any;  // Other summary fields
+  };
   per_source?: PerSourceRecord[];
   per_source_pagination?: ActualCalcPagination;
   cycles?: AlarmCycle[];

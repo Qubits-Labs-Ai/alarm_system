@@ -10,6 +10,7 @@ interface Props {
   className?: string;
   plantId: string;
   includeSystem?: boolean;
+  preloadedData?: SankeyResponse | null;
 }
 
 const CATEGORY_COLORS = {
@@ -24,16 +25,24 @@ const TotalsWaterfall: React.FC<Props> = ({
   className,
   plantId,
   includeSystem = false,
+  preloadedData = null,
 }) => {
-  const [loading, setLoading] = React.useState<boolean>(true);
+  const [loading, setLoading] = React.useState<boolean>(!preloadedData);
   const [error, setError] = React.useState<string | null>(null);
-  const [data, setData] = React.useState<SankeyResponse | null>(null);
+  const [data, setData] = React.useState<SankeyResponse | null>(preloadedData);
   const reqRef = React.useRef(0);
 
   React.useEffect(() => {
+    // Use preloaded data if available
+    if (preloadedData) {
+      setData(preloadedData);
+      setLoading(false);
+      return;
+    }
+    // Otherwise fetch
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plantId, includeSystem]);
+  }, [plantId, includeSystem, preloadedData]);
 
   async function fetchData() {
     try {

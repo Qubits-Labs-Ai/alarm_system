@@ -448,10 +448,20 @@ export default function ActualCalcTabs({
                   <CompositionSankey
                     plantId={plantId}
                     includeSystem={includeSystem}
+                    preloadedData={
+                      includeSystem
+                        ? (actualCalcData.alarm_summary?.sankey_composition_all || actualCalcData.alarm_summary?.sankey_composition || null)
+                        : (actualCalcData.alarm_summary?.sankey_composition_no_system || actualCalcData.alarm_summary?.sankey_composition || null)
+                    }
                   />
                   <TotalsWaterfall
                     plantId={plantId}
                     includeSystem={includeSystem}
+                    preloadedData={
+                      includeSystem
+                        ? (actualCalcData.alarm_summary?.sankey_composition_all || actualCalcData.alarm_summary?.sankey_composition || null)
+                        : (actualCalcData.alarm_summary?.sankey_composition_no_system || actualCalcData.alarm_summary?.sankey_composition || null)
+                    }
                   />
                 </div>
 
