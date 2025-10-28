@@ -3760,7 +3760,7 @@ def get_plant_actual_calc_sankey(
         main_cached = read_cache(BASE_DIR, params, plant_id=plant_id)
         if main_cached and isinstance(main_cached.get("alarm_summary"), dict):
             sankey_composition = main_cached["alarm_summary"].get("sankey_composition")
-            if sankey_composition:
+            if sankey_composition and include_system:
                 logger.info(f"[MAIN JSON CACHE] HIT for {plant_id}/sankey - instant load!")
                 return {
                     "plant_id": plant_id,

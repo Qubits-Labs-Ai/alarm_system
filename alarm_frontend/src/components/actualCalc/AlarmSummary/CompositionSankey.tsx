@@ -194,7 +194,7 @@ const CompositionSankey: React.FC<Props> = ({
           {/* Total */}
           <div className="flex items-center gap-4">
             <div className="w-32 text-sm font-medium text-muted-foreground text-right">Total Alarms</div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <div
                 className="h-12 rounded flex items-center justify-between px-4 text-white font-semibold"
                 style={{ backgroundColor: CHART_GREEN_PALE, color: 'var(--foreground)' }}
@@ -205,12 +205,10 @@ const CompositionSankey: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Arrow */}
+          {/* Spacer */}
           <div className="flex items-center gap-4">
             <div className="w-32"></div>
-            <div className="flex-1 flex justify-center">
-              <div className="text-2xl text-muted-foreground">↓</div>
-            </div>
+            <div className="flex-1" />
           </div>
 
           {/* Standing */}
@@ -219,7 +217,7 @@ const CompositionSankey: React.FC<Props> = ({
               <div className="w-32 text-sm font-medium text-right" style={{ color: CATEGORY_COLORS.standing }}>
                 Standing
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <div
                   className="h-10 rounded flex items-center justify-between px-3 text-white text-sm"
                   style={{ backgroundColor: CATEGORY_COLORS.standing, width: `${standingPct}%`, minWidth: '120px' }}
@@ -233,8 +231,8 @@ const CompositionSankey: React.FC<Props> = ({
                     {totals.standing_stale > 0 && (
                       <div className="flex items-center gap-2 text-xs">
                         <div
-                          className="h-6 rounded px-2 flex items-center"
-                          style={{ backgroundColor: CATEGORY_COLORS.standing_stale, width: `${standingStalePct * standingPct / 100}%`, minWidth: '80px', color: 'white' }}
+                          className="h-6 rounded px-2 flex items-center overflow-hidden whitespace-nowrap text-ellipsis"
+                          style={{ backgroundColor: CATEGORY_COLORS.standing_stale, width: `${standingStalePct * standingPct / 100}%`, minWidth: 0, color: 'white' }}
                         >
                           Stale: {totals.standing_stale.toLocaleString()}
                         </div>
@@ -243,8 +241,8 @@ const CompositionSankey: React.FC<Props> = ({
                     {totals.standing_if > 0 && (
                       <div className="flex items-center gap-2 text-xs">
                         <div
-                          className="h-6 rounded px-2 flex items-center"
-                          style={{ backgroundColor: CATEGORY_COLORS.standing_if, width: `${standingIfPct * standingPct / 100}%`, minWidth: '80px', color: 'white' }}
+                          className="h-6 rounded px-2 flex items-center overflow-hidden whitespace-nowrap text-ellipsis"
+                          style={{ backgroundColor: CATEGORY_COLORS.standing_if, width: `${standingIfPct * standingPct / 100}%`, minWidth: 0, color: 'white' }}
                         >
                           IF: {totals.standing_if.toLocaleString()}
                         </div>
@@ -262,7 +260,7 @@ const CompositionSankey: React.FC<Props> = ({
               <div className="w-32 text-sm font-medium text-right" style={{ color: CATEGORY_COLORS.nuisance }}>
                 Nuisance
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <div
                   className="h-10 rounded flex items-center justify-between px-3 text-white text-sm"
                   style={{ backgroundColor: CATEGORY_COLORS.nuisance, width: `${nuisancePct}%`, minWidth: '120px' }}
@@ -276,8 +274,8 @@ const CompositionSankey: React.FC<Props> = ({
                     {totals.nuisance_chattering > 0 && (
                       <div className="flex items-center gap-2 text-xs">
                         <div
-                          className="h-6 rounded px-2 flex items-center"
-                          style={{ backgroundColor: CATEGORY_COLORS.nuisance_chattering, width: `${nuisanceChatterPct * nuisancePct / 100}%`, minWidth: '80px', color: 'white' }}
+                          className="h-6 rounded px-2 flex items-center overflow-hidden whitespace-nowrap text-ellipsis"
+                          style={{ backgroundColor: CATEGORY_COLORS.nuisance_chattering, width: `${nuisanceChatterPct * nuisancePct / 100}%`, minWidth: 0, color: 'white' }}
                         >
                           Chattering: {totals.nuisance_chattering.toLocaleString()}
                         </div>
@@ -286,8 +284,8 @@ const CompositionSankey: React.FC<Props> = ({
                     {totals.nuisance_if_chattering > 0 && (
                       <div className="flex items-center gap-2 text-xs">
                         <div
-                          className="h-6 rounded px-2 flex items-center"
-                          style={{ backgroundColor: CATEGORY_COLORS.nuisance_if_chattering, width: `${nuisanceIfChatterPct * nuisancePct / 100}%`, minWidth: '80px', color: 'white' }}
+                          className="h-6 rounded px-2 flex items-center overflow-hidden whitespace-nowrap text-ellipsis"
+                          style={{ backgroundColor: CATEGORY_COLORS.nuisance_if_chattering, width: `${nuisanceIfChatterPct * nuisancePct / 100}%`, minWidth: 0, color: 'white' }}
                         >
                           IF-Chatter: {totals.nuisance_if_chattering.toLocaleString()}
                         </div>
@@ -305,7 +303,7 @@ const CompositionSankey: React.FC<Props> = ({
               <div className="w-32 text-sm font-medium text-right" style={{ color: CATEGORY_COLORS.flood }}>
                 Flood
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <div
                   className="h-10 rounded flex items-center justify-between px-3 text-white text-sm"
                   style={{ backgroundColor: CATEGORY_COLORS.flood, width: `${floodPct}%`, minWidth: '120px' }}
@@ -323,7 +321,7 @@ const CompositionSankey: React.FC<Props> = ({
               <div className="w-32 text-sm font-medium text-right" style={{ color: CATEGORY_COLORS.other }}>
                 Other
               </div>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <div
                   className="h-10 rounded flex items-center justify-between px-3 text-white text-sm"
                   style={{ backgroundColor: CATEGORY_COLORS.other, width: `${otherPct}%`, minWidth: '120px' }}

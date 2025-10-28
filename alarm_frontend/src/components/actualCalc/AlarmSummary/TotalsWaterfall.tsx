@@ -43,7 +43,7 @@ const TotalsWaterfall: React.FC<Props> = ({
 
       const response = await fetchPlantActualCalcSankey(plantId, {
         include_system: includeSystem,
-        timeout_ms: 60000,
+        timeout_ms: 360000,
       });
 
       if (myReq === reqRef.current) {
@@ -147,7 +147,7 @@ const TotalsWaterfall: React.FC<Props> = ({
             const isLast = idx === items.length - 1;
             const barHeight = Math.abs(item.value);
             const barHeightPct = (barHeight / maxValue) * 100;
-            const offsetPct = isFirst || isLast ? 0 : ((item.cumulative + Math.abs(item.value)) / maxValue) * 100;
+            const leftPct = isFirst ? 0 : isLast ? 0 : (item.cumulative / maxValue) * 100;
 
             return (
               <div key={item.label} className="flex items-center gap-3">
@@ -155,12 +155,12 @@ const TotalsWaterfall: React.FC<Props> = ({
                 <div className="w-24 text-sm font-medium text-right">{item.label}</div>
 
                 {/* Bar Container */}
-                <div className="flex-1 relative h-14 bg-muted/20 rounded">
-                  {/* Offset spacer for intermediate bars */}
+                <div className="flex-1 relative h-14 bg-muted/20 rounded overflow-hidden">
+                  {/* Baseline for intermediate bars */}
                   {!isFirst && !isLast && (
                     <div
-                      className="absolute left-0 top-0 bottom-0 bg-transparent border-r border-dashed border-muted-foreground/30"
-                      style={{ width: `${100 - offsetPct}%` }}
+                      className="absolute top-0 bottom-0 border-l border-dashed border-muted-foreground/30"
+                      style={{ left: `${leftPct}%` }}
                     />
                   )}
 
@@ -170,8 +170,7 @@ const TotalsWaterfall: React.FC<Props> = ({
                     style={{
                       backgroundColor: item.color,
                       width: `${barHeightPct}%`,
-                      right: isFirst || isLast ? 'auto' : 0,
-                      left: isFirst || isLast ? 0 : 'auto',
+                      left: `${leftPct}%`,
                     }}
                   >
                     <span>{item.type === 'decrease' ? `−${barHeight.toLocaleString()}` : barHeight.toLocaleString()}</span>
@@ -179,10 +178,10 @@ const TotalsWaterfall: React.FC<Props> = ({
                   </div>
 
                   {/* Cumulative Label */}
-                  {!isLast && (
+                  {!isFirst && !isLast && (
                     <div
-                      className="absolute top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium"
-                      style={{ right: `${100 - (item.cumulative / maxValue) * 100}%`, transform: 'translateX(50%) translateY(-50%)' }}
+                      className="absolute top-1/2 text-xs text-muted-foreground font-medium"
+                      style={{ left: `${leftPct}%`, transform: 'translate(-50%, -50%)' }}
                     >
                       {item.cumulative.toLocaleString()}
                     </div>

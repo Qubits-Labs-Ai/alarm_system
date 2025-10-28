@@ -8,16 +8,18 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ActualCalcOverallResponse } from '@/types/actualCalc';
+import { fetchPlantActualCalcSankey } from '@/api/actualCalc';
 
 type Props = {
   data: ActualCalcOverallResponse;
+  plantId: string;
   standingTotal?: number; // optional override
   instrumentsFaultyTotal?: number; // optional override
   instrumentsFaultyChatteringTotal?: number; // optional override for chattering instruments faulty
   staleTotal?: number; // optional override
 };
 
-function StatNode({ title, value, nodeRef, bg }: { title: string; value: number; nodeRef: React.RefObject<HTMLDivElement>; bg?: string }) {
+function StatNode({ title, value, nodeRef, bg, split }: { title: string; value: number; nodeRef: React.RefObject<HTMLDivElement>; bg?: string; split?: { operational: number; system: number } }) {
   return (
     <div ref={nodeRef} className="inline-block relative">
       <Card
@@ -33,19 +35,44 @@ function StatNode({ title, value, nodeRef, bg }: { title: string; value: number;
           <div className="text-xl sm:text-2xl font-bold text-center">
             {Number(value || 0).toLocaleString()}
           </div>
+          {split && (split.operational > 0 || split.system > 0) && (
+            <div className="mt-3">
+              <div className="h-2 w-full rounded bg-muted overflow-hidden border border-border">
+                <div
+                  className="h-full bg-primary/70"
+                  style={{ width: `${Math.max(0, Math.min(100, (split.operational / Math.max(1, split.operational + split.system)) * 100))}%` }}
+                />
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                <div className="flex items-center justify-start gap-1">
+                  <span className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--primary)' }} />
+                  <span>Operational</span>
+                  <span className="text-foreground font-medium ml-1">{Number(split.operational || 0).toLocaleString()}</span>
+                </div>
+                <div className="flex items-center justify-end gap-1">
+                  <span className="inline-block w-2 h-2 rounded-sm" style={{ background: 'var(--muted-foreground)' }} />
+                  <span>System</span>
+                  <span className="text-foreground font-medium ml-1">{Number(split.system || 0).toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
   );
 }
 
-export function ActualCalcTree({ data, standingTotal: standingOverride = 0, instrumentsFaultyTotal: faultyOverride = 0, instrumentsFaultyChatteringTotal: faultyChatteringOverride = 0, staleTotal: staleOverride = 0 }: Props) {
-  const totalAlarms = Number(data?.counts?.total_alarms || 0);
-  const standingTotal = Number(data?.counts?.total_standing ?? standingOverride ?? 0);
-  const instrumentsFaultyTotal = Number(data?.counts?.total_instrument_failure ?? faultyOverride ?? 0);
-  const staleTotal = Number(data?.counts?.total_stale ?? staleOverride ?? 0);
-  const chatteringTotal = Number(data?.counts?.total_chattering || 0);
-  const instrumentsFaultyChatteringTotal = Number(data?.counts?.total_instrument_failure_chattering ?? faultyChatteringOverride ?? 0);
+export function ActualCalcTree({ data, plantId, standingTotal: standingOverride = 0, instrumentsFaultyTotal: faultyOverride = 0, instrumentsFaultyChatteringTotal: faultyChatteringOverride = 0, staleTotal: staleOverride = 0 }: Props) {
+  // Use activation-based counts for consistency with charts (per-activation counts)
+  // Fall back to episode-based counts (per-source counts) for backward compatibility
+  const activationCounts = data?.counts?.activation_based;
+  const totalAlarms = Number(activationCounts?.total_activations ?? data?.counts?.total_alarms ?? 0);
+  const standingTotal = Number(activationCounts?.total_standing ?? data?.counts?.total_standing ?? standingOverride ?? 0);
+  const instrumentsFaultyTotal = Number(activationCounts?.total_standing_if ?? data?.counts?.total_instrument_failure ?? faultyOverride ?? 0);
+  const staleTotal = Number(activationCounts?.total_standing_stale ?? data?.counts?.total_stale ?? staleOverride ?? 0);
+  const chatteringTotal = Number(activationCounts?.total_nuisance_chattering ?? data?.counts?.total_chattering ?? 0);
+  const instrumentsFaultyChatteringTotal = Number(activationCounts?.total_nuisance_if_chattering ?? data?.counts?.total_instrument_failure_chattering ?? faultyChatteringOverride ?? 0);
   const nuisanceTotal = chatteringTotal + instrumentsFaultyChatteringTotal;
 
   // Refs for nodes
@@ -59,6 +86,74 @@ export function ActualCalcTree({ data, standingTotal: standingOverride = 0, inst
 
   const [paths, setPaths] = useState<string[]>([]);
   const faultyChatteringRef = useRef<HTMLDivElement>(null);
+
+  // Sankey totals to compute Operational vs System splits
+  const [sankeyOp, setSankeyOp] = useState<null | {
+    standing: number;
+    standing_stale: number;
+    standing_if: number;
+    nuisance: number;
+    nuisance_chattering: number;
+    nuisance_if_chattering: number;
+    flood: number;
+    other: number;
+  }>(null);
+  const [sankeyAll, setSankeyAll] = useState<typeof sankeyOp>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [op, all] = await Promise.all([
+          fetchPlantActualCalcSankey(plantId, { include_system: false, timeout_ms: 360000 }),
+          fetchPlantActualCalcSankey(plantId, { include_system: true, timeout_ms: 360000 }),
+        ]);
+        if (cancelled) return;
+        setSankeyOp({
+          standing: op.totals.standing,
+          standing_stale: op.totals.standing_stale,
+          standing_if: op.totals.standing_if,
+          nuisance: op.totals.nuisance,
+          nuisance_chattering: op.totals.nuisance_chattering,
+          nuisance_if_chattering: op.totals.nuisance_if_chattering,
+          flood: op.totals.flood,
+          other: op.totals.other,
+        });
+        setSankeyAll({
+          standing: all.totals.standing,
+          standing_stale: all.totals.standing_stale,
+          standing_if: all.totals.standing_if,
+          nuisance: all.totals.nuisance,
+          nuisance_chattering: all.totals.nuisance_chattering,
+          nuisance_if_chattering: all.totals.nuisance_if_chattering,
+          flood: all.totals.flood,
+          other: all.totals.other,
+        });
+      } catch {
+        // ignore errors; splits just won't render
+      }
+    }
+    if (plantId) load();
+    return () => { cancelled = true; };
+  }, [plantId]);
+
+  const sysSplit = (allV?: number, opV?: number) => {
+    const a = Math.max(0, Number(allV || 0));
+    const o = Math.max(0, Number(opV || 0));
+    const sys = Math.max(0, a - o);
+    return { operational: o, system: sys };
+  };
+
+  const scaledSplit = (nodeTotal: number, allV?: number, opV?: number) => {
+    const a = Math.max(0, Number(allV || 0));
+    const o = Math.max(0, Number(opV || 0));
+    const s = Math.max(0, a - o);
+    const denom = a > 0 ? a : o + s;
+    if (denom <= 0 || nodeTotal <= 0) return { operational: 0, system: 0 };
+    const opScaled = Math.round((o / denom) * nodeTotal);
+    const sysScaled = Math.max(0, nodeTotal - opScaled);
+    return { operational: opScaled, system: sysScaled };
+  };
 
   useEffect(() => {
     const compute = () => {
@@ -159,26 +254,70 @@ export function ActualCalcTree({ data, standingTotal: standingOverride = 0, inst
       {/* Row 2: Standing | Nuisance */}
       <div className="grid grid-cols-2 gap-6 md:grid-cols-2 md:gap-16 items-start max-w-5xl mx-auto mb-10">
         <div className="flex justify-center">
-          <StatNode title="Standing Alarm" value={standingTotal} nodeRef={standingRef} bg={bgStanding} />
+          <StatNode
+            title="Standing Alarm"
+            value={standingTotal}
+            nodeRef={standingRef}
+            bg={bgStanding}
+            split={sankeyOp && sankeyAll ? scaledSplit(standingTotal, sankeyAll.standing, sankeyOp.standing) : undefined}
+          />
         </div>
         <div className="flex justify-center">
-          <StatNode title="Nuisance/Repeating Alarms" value={nuisanceTotal} nodeRef={nuisanceRef} bg={bgNuisance} />
+          <StatNode
+            title="Nuisance/Repeating Alarms"
+            value={nuisanceTotal}
+            nodeRef={nuisanceRef}
+            bg={bgNuisance}
+            split={
+              sankeyOp && sankeyAll
+                ? scaledSplit(
+                    nuisanceTotal,
+                    (sankeyAll.nuisance_chattering + sankeyAll.nuisance_if_chattering),
+                    (sankeyOp.nuisance_chattering + sankeyOp.nuisance_if_chattering)
+                  )
+                : undefined
+            }
+          />
         </div>
       </div>
 
       {/* Row 3: Children of Standing and Nuisance */}
       <div className="grid grid-cols-2 gap-6 sm:grid-cols-2 md:grid-cols-4 md:gap-16 items-start max-w-7xl mx-auto">
         <div className="flex justify-center order-1 md:order-1">
-          <StatNode title="Instruments Faulty" value={instrumentsFaultyTotal} nodeRef={faultyRef} bg={bgFaulty} />
+          <StatNode
+            title="Instruments Faulty"
+            value={instrumentsFaultyTotal}
+            nodeRef={faultyRef}
+            bg={bgFaulty}
+            split={sankeyOp && sankeyAll ? scaledSplit(instrumentsFaultyTotal, sankeyAll.standing_if, sankeyOp.standing_if) : undefined}
+          />
         </div>
         <div className="flex justify-center order-3 md:order-2">
-          <StatNode title="Stale Alarms" value={staleTotal} nodeRef={staleRef} bg={bgStale} />
+          <StatNode
+            title="Stale Alarms"
+            value={staleTotal}
+            nodeRef={staleRef}
+            bg={bgStale}
+            split={sankeyOp && sankeyAll ? scaledSplit(staleTotal, sankeyAll.standing_stale, sankeyOp.standing_stale) : undefined}
+          />
         </div>
         <div className="flex justify-center order-2 md:order-3">
-          <StatNode title="Chattering Alarms" value={chatteringTotal} nodeRef={chatteringRef} bg={bgChat} />
+          <StatNode
+            title="Chattering Alarms"
+            value={chatteringTotal}
+            nodeRef={chatteringRef}
+            bg={bgChat}
+            split={sankeyOp && sankeyAll ? scaledSplit(chatteringTotal, sankeyAll.nuisance_chattering, sankeyOp.nuisance_chattering) : undefined}
+          />
         </div>
         <div className="flex justify-center order-4 md:order-4">
-          <StatNode title="Instruments Faulty (Chattering)" value={instrumentsFaultyChatteringTotal} nodeRef={faultyChatteringRef} bg={bgFaultyChat} />
+          <StatNode
+            title="Instruments Faulty (Chattering)"
+            value={instrumentsFaultyChatteringTotal}
+            nodeRef={faultyChatteringRef}
+            bg={bgFaultyChat}
+            split={sankeyOp && sankeyAll ? scaledSplit(instrumentsFaultyChatteringTotal, sankeyAll.nuisance_if_chattering, sankeyOp.nuisance_if_chattering) : undefined}
+          />
         </div>
       </div>
     </div>

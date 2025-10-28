@@ -6,7 +6,7 @@
  * 3. Detailed Analytics - Unhealthy periods, flood windows, and bad actors
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,7 @@ import SeasonalityHeatmap from '../actualCalc/AlarmSummary/SeasonalityHeatmap';
 import TopFloodWindowsChart, { TopFloodWindowRow } from './TopFloodWindowsChart';
 import { UnhealthyBarChart } from './UnhealthyBarChart';
 import DateTimeRangePicker from '@/components/dashboard/DateTimeRangePicker';
+import { fetchPlantActualCalcSankey } from '@/api/actualCalc';
 import { filterWindowsByRange, aggregateBarsFromWindows, buildTopActorsFromWindows, buildUnhealthyPeriodsFromWindows } from '@/lib/actualCalcRange';
 import { 
   ActualCalcOverallResponse, 
@@ -88,6 +89,22 @@ export default function ActualCalcTabs({
   const { badActorsTopN, setBadActorsTopN } = useBadActorsTopN();
   const { unhealthyPeriodsTopN, setUnhealthyPeriodsTopN } = useUnhealthyPeriodsTopN();
   const [analyticsRange, setAnalyticsRange] = useState<{ startTime?: string; endTime?: string } | undefined>(undefined);
+
+  // Hidden toggle: proactively warm Sankey caches for both include_system variants
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await Promise.all([
+          fetchPlantActualCalcSankey(plantId, { include_system: true, timeout_ms: 360000 }),
+          fetchPlantActualCalcSankey(plantId, { include_system: false, timeout_ms: 360000 }),
+        ]);
+      } catch {
+        // ignore; charts/Tree will handle retries and errors
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [plantId]);
 
   // Loading state skeleton for KPIs
   const loadingKPIs = {
@@ -304,7 +321,7 @@ export default function ActualCalcTabs({
               />
 
               {/* Tree Structure */}
-              <ActualCalcTree data={actualCalcData} />
+              <ActualCalcTree data={actualCalcData} plantId={plantId} />
 
               {/* Summary Statistics Card */}
               <Card className="bg-card rounded-lg border p-6">

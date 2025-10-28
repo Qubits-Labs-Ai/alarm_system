@@ -2730,6 +2730,23 @@ def write_cache(
             cache_data["alarm_summary"] = cache_data.get("alarm_summary", {})
             cache_data["alarm_summary"]["sankey_composition"] = sankey_data
             logger.info(f"Added sankey composition to cache ({len(sankey_data.get('nodes', []))} nodes)")
+            
+            # Add activation-based counts for consistency with charts
+            # These counts are per-activation (more accurate for alarm management)
+            totals = sankey_data.get("totals", {})
+            if totals:
+                cache_data["counts"]["activation_based"] = {
+                    "total_activations": int(totals.get("total", 0)),
+                    "total_standing": int(totals.get("standing", 0)),
+                    "total_standing_stale": int(totals.get("standing_stale", 0)),
+                    "total_standing_if": int(totals.get("standing_if", 0)),
+                    "total_nuisance": int(totals.get("nuisance", 0)),
+                    "total_nuisance_chattering": int(totals.get("nuisance_chattering", 0)),
+                    "total_nuisance_if_chattering": int(totals.get("nuisance_if_chattering", 0)),
+                    "total_flood": int(totals.get("flood", 0)),
+                    "total_other": int(totals.get("other", 0)),
+                }
+                logger.info(f"Added activation-based counts to cache: {cache_data['counts']['activation_based']['total_activations']} activations")
         
         # Write atomically (write to temp, then rename)
         temp_path = cache_path + ".tmp"

@@ -1,20 +1,20 @@
 {
   "cache_key": [
     "PVCI",
-    true,
+    false,
     60,
     10,
     10,
     10,
     2
   ],
-  "cached_at": 1761571315.4423516,
+  "cached_at": 1761638891.5000966,
   "data": {
     "plant_id": "PVCI",
     "mode": "actual-calc",
-    "generated_at": "2025-10-27T13:21:55.440353Z",
+    "generated_at": "2025-10-28T08:08:11.500096Z",
     "params": {
-      "include_system": true
+      "include_system": false
     },
     "nodes": [
       "Total",
@@ -31,7 +31,7 @@
       {
         "source": "Total",
         "target": "Standing",
-        "value": 3896
+        "value": 3892
       },
       {
         "source": "Total",
@@ -46,12 +46,12 @@
       {
         "source": "Total",
         "target": "Other",
-        "value": 55058
+        "value": 55054
       },
       {
         "source": "Standing",
         "target": "Standing_Stale",
-        "value": 3868
+        "value": 3864
       },
       {
         "source": "Standing",
@@ -70,15 +70,15 @@
       }
     ],
     "totals": {
-      "total": 97329,
-      "standing": 3896,
-      "standing_stale": 3868,
+      "total": 97321,
+      "standing": 3892,
+      "standing_stale": 3864,
       "standing_if": 28,
       "nuisance": 38374,
       "nuisance_chattering": 14126,
       "nuisance_if_chattering": 24248,
       "flood": 1,
-      "other": 55058
+      "other": 55054
     }
   }
 }
