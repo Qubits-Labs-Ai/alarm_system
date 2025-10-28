@@ -3365,9 +3365,22 @@ def get_plant_actual_calc_category_time_series(
         }
         main_cached = read_cache(BASE_DIR, params, plant_id=plant_id)
         if main_cached and isinstance(main_cached.get("alarm_summary"), dict):
-            category_time_series = main_cached["alarm_summary"].get("category_time_series", {})
+            alarm_summary = main_cached["alarm_summary"] or {}
+            # Select correct variant
+            if include_system:
+                category_time_series = (
+                    alarm_summary.get("category_time_series_all")
+                    or alarm_summary.get("category_time_series")
+                    or {}
+                )
+            else:
+                category_time_series = (
+                    alarm_summary.get("category_time_series_no_system")
+                    or alarm_summary.get("category_time_series")
+                    or {}
+                )
             if category_time_series and grain in category_time_series:
-                logger.info(f"[MAIN JSON CACHE] HIT for {plant_id}/categories (grain={grain}) - instant load!")
+                logger.info(f"[MAIN JSON CACHE] HIT for {plant_id}/categories (grain={grain}, include_system={include_system}) - instant load!")
                 return {
                     "plant_id": plant_id,
                     "mode": "actual-calc",
@@ -3570,9 +3583,19 @@ def get_plant_actual_calc_hourly_matrix(
         }
         main_cached = read_cache(BASE_DIR, params, plant_id=plant_id)
         if main_cached and isinstance(main_cached.get("alarm_summary"), dict):
-            hourly_seasonality = main_cached["alarm_summary"].get("hourly_seasonality")
+            alarm_summary = main_cached["alarm_summary"] or {}
+            if include_system:
+                hourly_seasonality = (
+                    alarm_summary.get("hourly_seasonality_all")
+                    or alarm_summary.get("hourly_seasonality")
+                )
+            else:
+                hourly_seasonality = (
+                    alarm_summary.get("hourly_seasonality_no_system")
+                    or alarm_summary.get("hourly_seasonality")
+                )
             if hourly_seasonality:
-                logger.info(f"[MAIN JSON CACHE] HIT for {plant_id}/hourly_matrix - instant load!")
+                logger.info(f"[MAIN JSON CACHE] HIT for {plant_id}/hourly_matrix (include_system={include_system}) - instant load!")
                 return {
                     "plant_id": plant_id,
                     "mode": "actual-calc",
@@ -3759,9 +3782,20 @@ def get_plant_actual_calc_sankey(
         }
         main_cached = read_cache(BASE_DIR, params, plant_id=plant_id)
         if main_cached and isinstance(main_cached.get("alarm_summary"), dict):
-            sankey_composition = main_cached["alarm_summary"].get("sankey_composition")
-            if sankey_composition and include_system:
-                logger.info(f"[MAIN JSON CACHE] HIT for {plant_id}/sankey - instant load!")
+            alarm_summary = main_cached["alarm_summary"] or {}
+            # Prefer dual-variant keys when available; fallback to legacy single variant
+            if include_system:
+                sankey_composition = (
+                    alarm_summary.get("sankey_composition_all")
+                    or alarm_summary.get("sankey_composition")
+                )
+            else:
+                sankey_composition = (
+                    alarm_summary.get("sankey_composition_no_system")
+                    or alarm_summary.get("sankey_composition")
+                )
+            if sankey_composition:
+                logger.info(f"[MAIN JSON CACHE] HIT for {plant_id}/sankey - instant load! include_system={include_system}")
                 return {
                     "plant_id": plant_id,
                     "mode": "actual-calc",

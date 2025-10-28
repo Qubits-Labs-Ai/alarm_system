@@ -194,13 +194,33 @@ export function ActualCalcTree({ data, plantId, standingTotal: standingOverride 
     };
 
     // compute after mount and on resize
-    const raf = requestAnimationFrame(compute);
-    window.addEventListener('resize', compute);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('resize', compute);
+    let raf: number | null = null;
+    const schedule = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(compute);
     };
-  }, [totalAlarms, standingTotal, instrumentsFaultyTotal, chatteringTotal]);
+    schedule();
+    window.addEventListener('resize', schedule);
+
+    const ro = new ResizeObserver(() => schedule());
+    const els = [
+      rootRef.current,
+      standingRef.current,
+      nuisanceRef.current,
+      faultyRef.current,
+      staleRef.current,
+      chatteringRef.current,
+      faultyChatteringRef.current,
+      containerRef.current,
+    ].filter(Boolean) as HTMLElement[];
+    els.forEach((el) => ro.observe(el));
+
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener('resize', schedule);
+      ro.disconnect();
+    };
+  }, [totalAlarms, standingTotal, instrumentsFaultyTotal, chatteringTotal, staleTotal, instrumentsFaultyChatteringTotal, sankeyOp, sankeyAll]);
 
   const values = [
     standingTotal,

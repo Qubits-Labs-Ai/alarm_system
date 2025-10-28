@@ -1660,28 +1660,60 @@ def run_actual_calc(
         flood_source_threshold=flood_source_threshold,
     )
     
+    # 0. Prepare a no-system view of activations for strict include_system filtering
+    def _is_system_cat(src: str) -> bool:
+        s = str(src or "").strip().upper()
+        return (s == "REPORT" or s.startswith("$") or s.startswith("ACTIVITY") or s.startswith("SYS_") or s.startswith("SYSTEM"))
+
+    try:
+        classified_no_system_for_cats = classified_activations[~classified_activations["Source"].apply(_is_system_cat)]
+    except Exception:
+        classified_no_system_for_cats = classified_activations
+
     # 1. Category Time Series (for CategoryTrendArea chart)
-    # Compute all three grains so they're cached
-    category_series_daily = compute_category_time_series(classified_activations, grain="day")
-    category_series_weekly = compute_category_time_series(classified_activations, grain="week")
-    category_series_monthly = compute_category_time_series(classified_activations, grain="month")
-    
+    # Compute all three grains for BOTH variants so they're cached
+    category_series_daily_all = compute_category_time_series(classified_activations, grain="day")
+    category_series_weekly_all = compute_category_time_series(classified_activations, grain="week")
+    category_series_monthly_all = compute_category_time_series(classified_activations, grain="month")
+
+    category_series_daily_no_sys = compute_category_time_series(classified_no_system_for_cats, grain="day")
+    category_series_weekly_no_sys = compute_category_time_series(classified_no_system_for_cats, grain="week")
+    category_series_monthly_no_sys = compute_category_time_series(classified_no_system_for_cats, grain="month")
+
     category_summary = {
-        "daily": dataframe_to_json_records(category_series_daily),
-        "weekly": dataframe_to_json_records(category_series_weekly),
-        "monthly": dataframe_to_json_records(category_series_monthly),
+        "daily": dataframe_to_json_records(category_series_daily_all),
+        "weekly": dataframe_to_json_records(category_series_weekly_all),
+        "monthly": dataframe_to_json_records(category_series_monthly_all),
     }
-    
+    category_summary_no_system = {
+        "daily": dataframe_to_json_records(category_series_daily_no_sys),
+        "weekly": dataframe_to_json_records(category_series_weekly_no_sys),
+        "monthly": dataframe_to_json_records(category_series_monthly_no_sys),
+    }
+
     # 2. Hourly Seasonality Matrix (for SeasonalityHeatmap chart)
-    hourly_matrix_df = compute_hourly_seasonality_matrix(classified_activations)
-    hourly_matrix = dataframe_to_json_records(hourly_matrix_df)
+    hourly_matrix_df_all = compute_hourly_seasonality_matrix(classified_activations)
+    hourly_matrix = dataframe_to_json_records(hourly_matrix_df_all)
+
+    hourly_matrix_df_no_sys = compute_hourly_seasonality_matrix(classified_no_system_for_cats)
+    hourly_matrix_no_system = dataframe_to_json_records(hourly_matrix_df_no_sys)
     
     # 3. Sankey Composition (for CompositionSankey chart)
+    #    Compute two variants: including system/meta sources (ALL) and excluding them (NO_SYSTEM)
+    def _is_system(src: str) -> bool:
+        s = str(src or "").strip().upper()
+        return (s == "REPORT" or s.startswith("$") or s.startswith("ACTIVITY") or s.startswith("SYS_") or s.startswith("SYSTEM"))
+
     sankey_data = compute_category_sankey(classified_activations)
+    try:
+        classified_no_system = classified_activations[~classified_activations["Source"].apply(_is_system)]
+    except Exception:
+        classified_no_system = classified_activations
+    sankey_data_no_system = compute_category_sankey(classified_no_system)
     
     summary_dur = (datetime.now() - summary_start).total_seconds()
     logger.info(f"Alarm summary visualizations pre-computed in {summary_dur:.2f}s")
-    logger.info(f"  - Category series: {len(category_series_daily)} daily, {len(category_series_weekly)} weekly, {len(category_series_monthly)} monthly")
+    logger.info(f"  - Category series: {len(category_series_daily_all)} daily, {len(category_series_weekly_all)} weekly, {len(category_series_monthly_all)} monthly")
     logger.info(f"  - Hourly matrix: {len(hourly_matrix)} hour-dow cells")
     logger.info(f"  - Sankey: {len(sankey_data.get('nodes', []))} nodes, {len(sankey_data.get('edges', []))} edges")
     
@@ -1755,9 +1787,12 @@ def run_actual_calc(
         bad_actors_dict, 
         frequency_dict, 
         source_meta,
-        category_summary,  # NEW: Pre-computed category time series
-        hourly_matrix,     # NEW: Pre-computed hourly seasonality
-        sankey_data,       # NEW: Pre-computed sankey composition
+        category_summary,              # Pre-computed category time series (ALL)
+        hourly_matrix,                 # Pre-computed hourly seasonality (ALL)
+        sankey_data,                   # Pre-computed sankey composition (ALL)
+        category_summary_no_system,    # Pre-computed category time series (NO_SYSTEM)
+        hourly_matrix_no_system,       # Pre-computed hourly seasonality (NO_SYSTEM)
+        sankey_data_no_system,         # Pre-computed sankey composition (NO_SYSTEM)
     )
 
 
@@ -1856,7 +1891,7 @@ def run_actual_calc_with_cache(
     
     # Run calculation
     logger.info("Running fresh calculation...")
-    summary, kpis, cycles, unhealthy, floods, bad_actors, frequency, source_meta, category_summary, hourly_matrix, sankey_data = run_actual_calc(
+    summary, kpis, cycles, unhealthy, floods, bad_actors, frequency, source_meta, category_summary, hourly_matrix, sankey_data, category_summary_no_system, hourly_matrix_no_system, sankey_data_no_system = run_actual_calc(
         alarm_data_dir,
         plant_id=plant_id,
         csv_relative_path=csv_relative_path,
@@ -1882,8 +1917,11 @@ def run_actual_calc_with_cache(
             frequency=frequency,
             source_meta=source_meta,
             category_summary=category_summary,
+            category_summary_no_system=category_summary_no_system,
             hourly_matrix=hourly_matrix,
+            hourly_matrix_no_system=hourly_matrix_no_system,
             sankey_data=sankey_data,
+            sankey_data_no_system=sankey_data_no_system,
         )
         
         # Read back the cache to return complete structure
@@ -1911,8 +1949,14 @@ def run_actual_calc_with_cache(
         "source_meta": source_meta,
         "alarm_summary": {
             "category_time_series": category_summary or {},
+            "category_time_series_all": category_summary or {},
+            "category_time_series_no_system": category_summary_no_system or {},
             "hourly_seasonality": hourly_matrix or [],
+            "hourly_seasonality_all": hourly_matrix or [],
+            "hourly_seasonality_no_system": hourly_matrix_no_system or [],
             "sankey_composition": sankey_data or {},
+            "sankey_composition_all": sankey_data or {},
+            "sankey_composition_no_system": sankey_data_no_system or {},
         },
     }
 
@@ -2589,8 +2633,11 @@ def write_cache(
     frequency: Dict[str, Any] | None = None,
     source_meta: Dict[str, Any] | None = None,
     category_summary: Dict[str, Any] | None = None,
+    category_summary_no_system: Dict[str, Any] | None = None,
     hourly_matrix: list | None = None,
+    hourly_matrix_no_system: list | None = None,
     sankey_data: Dict[str, Any] | None = None,
+    sankey_data_no_system: Dict[str, Any] | None = None,
 ) -> None:
     """Write calculation results to cache JSON with CSV metadata.
     
@@ -2721,15 +2768,29 @@ def write_cache(
         if isinstance(category_summary, dict):
             cache_data["alarm_summary"] = cache_data.get("alarm_summary", {})
             cache_data["alarm_summary"]["category_time_series"] = category_summary
+            cache_data["alarm_summary"]["category_time_series_all"] = category_summary
             logger.info("Added category time series to cache (daily/weekly/monthly)")
+        if isinstance(category_summary_no_system, dict):
+            cache_data["alarm_summary"] = cache_data.get("alarm_summary", {})
+            cache_data["alarm_summary"]["category_time_series_no_system"] = category_summary_no_system
         if isinstance(hourly_matrix, list):
             cache_data["alarm_summary"] = cache_data.get("alarm_summary", {})
             cache_data["alarm_summary"]["hourly_seasonality"] = hourly_matrix
+            cache_data["alarm_summary"]["hourly_seasonality_all"] = hourly_matrix
             logger.info(f"Added hourly seasonality matrix to cache ({len(hourly_matrix)} cells)")
+        if isinstance(hourly_matrix_no_system, list):
+            cache_data["alarm_summary"] = cache_data.get("alarm_summary", {})
+            cache_data["alarm_summary"]["hourly_seasonality_no_system"] = hourly_matrix_no_system
         if isinstance(sankey_data, dict):
             cache_data["alarm_summary"] = cache_data.get("alarm_summary", {})
             cache_data["alarm_summary"]["sankey_composition"] = sankey_data
+            cache_data["alarm_summary"]["sankey_composition_all"] = sankey_data
             logger.info(f"Added sankey composition to cache ({len(sankey_data.get('nodes', []))} nodes)")
+
+        if isinstance(sankey_data_no_system, dict):
+            cache_data["alarm_summary"] = cache_data.get("alarm_summary", {})
+            cache_data["alarm_summary"]["sankey_composition_no_system"] = sankey_data_no_system
+            logger.info(f"Added no-system sankey composition to cache ({len(sankey_data_no_system.get('nodes', []))} nodes)")
             
             # Add activation-based counts for consistency with charts
             # These counts are per-activation (more accurate for alarm management)

@@ -36,6 +36,12 @@ import {
 } from '@/types/actualCalc';
 import { UnhealthyBar } from '@/types/dashboard';
 
+// New Frequency Metrics charts
+import ComplianceDonut from './ComplianceDonut';
+import FrequencyDailyHistogram from './FrequencyDailyHistogram';
+import RollingAverageControlChart from './RollingAverageControlChart';
+import WeeklyComplianceBars from './WeeklyComplianceBars';
+
 interface ActualCalcTabsProps {
   // Data
   actualCalcData: ActualCalcOverallResponse;
@@ -61,7 +67,7 @@ interface ActualCalcTabsProps {
 
 // Additional state needed for new charts
 const useBadActorsTopN = () => {
-  const [badActorsTopN, setBadActorsTopN] = useState<5 | 10 | 15 | 20>(10);
+  const [badActorsTopN, setBadActorsTopN] = useState<5 | 10 | 15 | 20 | 'all'>(10);
   return { badActorsTopN, setBadActorsTopN };
 };
 
@@ -95,10 +101,7 @@ export default function ActualCalcTabs({
     let cancelled = false;
     (async () => {
       try {
-        await Promise.all([
-          fetchPlantActualCalcSankey(plantId, { include_system: true, timeout_ms: 360000 }),
-          fetchPlantActualCalcSankey(plantId, { include_system: false, timeout_ms: 360000 }),
-        ]);
+        await fetchPlantActualCalcSankey(plantId, { include_system: true, timeout_ms: 120000 });
       } catch {
         // ignore; charts/Tree will handle retries and errors
       }
@@ -143,6 +146,9 @@ export default function ActualCalcTabs({
       is_over_720: over720Dates.has(item.Date),
     }));
   })() : [];
+
+  const isoThreshold = actualCalcData?.frequency?.params?.iso_threshold ?? 288;
+  const unacceptableThreshold = actualCalcData?.frequency?.params?.unacceptable_threshold ?? 720;
 
   // Prepare data for Detailed Analytics tab
   const detailedAnalyticsData = (() => {
@@ -440,6 +446,32 @@ export default function ActualCalcTabs({
                   daysOver288={actualCalcData.frequency.summary.days_over_288_count}
                   daysOver720={actualCalcData.frequency.summary.days_unacceptable_count}
                 />
+              )}
+
+              {actualCalcData.frequency && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <ComplianceDonut
+                    data={actualCalcData.frequency.alarms_per_day}
+                    isoThreshold={isoThreshold}
+                    unacceptableThreshold={unacceptableThreshold}
+                  />
+                  <FrequencyDailyHistogram
+                    data={actualCalcData.frequency.alarms_per_day}
+                    isoThreshold={isoThreshold}
+                    unacceptableThreshold={unacceptableThreshold}
+                  />
+                  <RollingAverageControlChart
+                    data={actualCalcData.frequency.alarms_per_day}
+                    isoThreshold={isoThreshold}
+                    unacceptableThreshold={unacceptableThreshold}
+                    window={7}
+                  />
+                  <WeeklyComplianceBars
+                    data={actualCalcData.frequency.alarms_per_day}
+                    isoThreshold={isoThreshold}
+                    unacceptableThreshold={unacceptableThreshold}
+                  />
+                </div>
               )}
             </>
           )}

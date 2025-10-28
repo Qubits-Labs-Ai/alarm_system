@@ -9,11 +9,11 @@
     10,
     2
   ],
-  "cached_at": 1761570324.2627697,
+  "cached_at": 1761661598.5568757,
   "data": {
     "plant_id": "VCMA",
     "mode": "actual-calc",
-    "generated_at": "2025-10-27T13:05:24.205005Z",
+    "generated_at": "2025-10-28T14:26:38.556875Z",
     "params": {
       "grain": "day",
       "include_system": true,
@@ -51,14 +51,14 @@
       {
         "date": "2025-02-13",
         "total": 4148,
-        "standing": 51,
-        "standing_stale": 51,
+        "standing": 52,
+        "standing_stale": 52,
         "standing_instrument_failure": 0,
         "nuisance": 3570,
         "nuisance_chattering": 2125,
         "nuisance_if_chattering": 1445,
         "flood": 12,
-        "other": 515
+        "other": 514
       },
       {
         "date": "2025-02-20",
@@ -75,14 +75,14 @@
       {
         "date": "2025-02-21",
         "total": 7517,
-        "standing": 50,
-        "standing_stale": 50,
+        "standing": 51,
+        "standing_stale": 51,
         "standing_instrument_failure": 0,
         "nuisance": 6775,
         "nuisance_chattering": 5863,
         "nuisance_if_chattering": 912,
         "flood": 113,
-        "other": 579
+        "other": 578
       },
       {
         "date": "2025-02-22",
@@ -135,14 +135,14 @@
       {
         "date": "2025-02-26",
         "total": 7132,
-        "standing": 31,
-        "standing_stale": 31,
+        "standing": 34,
+        "standing_stale": 34,
         "standing_instrument_failure": 0,
         "nuisance": 6388,
         "nuisance_chattering": 6262,
         "nuisance_if_chattering": 126,
         "flood": 38,
-        "other": 675
+        "other": 672
       },
       {
         "date": "2025-02-27",
@@ -157,16 +157,16 @@
         "other": 62
       },
       {
-        "date": "2025-10-27",
-        "total": 14811,
-        "standing": 274,
-        "standing_stale": 273,
-        "standing_instrument_failure": 1,
-        "nuisance": 10191,
-        "nuisance_chattering": 8589,
-        "nuisance_if_chattering": 1602,
-        "flood": 12,
-        "other": 4334
+        "date": "2025-03-18",
+        "total": 35115,
+        "standing": 0,
+        "standing_stale": 0,
+        "standing_instrument_failure": 0,
+        "nuisance": 33393,
+        "nuisance_chattering": 29455,
+        "nuisance_if_chattering": 3938,
+        "flood": 17,
+        "other": 1705
       }
     ]
   }
