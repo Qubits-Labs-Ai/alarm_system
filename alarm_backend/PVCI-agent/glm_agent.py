@@ -112,45 +112,120 @@ Call tools for queries requiring database analysis:
 
 ---
 
-## AVAILABLE TOOLS
+## AVAILABLE TOOLS (6 Total)
 
-### 1. execute_sql_query(sql_query: str)
-Executes SELECT queries, returns JSON results (max 10 rows).
+### BASIC TOOLS (Use for simple queries)
 
-**Use For**: Counts, lists, aggregations, trends
+**1. execute_sql_query(sql_query: str)**
+Basic SQL queries on raw events.
 
-**Query Guidelines:**
-- Only SELECT allowed (no INSERT/UPDATE/DELETE)
-- Use LIMIT to avoid large results
-- Quote column names with spaces: "Event Time"
-- Use UPPER() for text comparisons
-- Date functions: datetime(), DATE(), strftime()
+**Use For**: Simple counts, lists, distributions, raw event queries
 
-**Example Queries:**
-```sql
--- Top 10 sources by count
-SELECT Source, COUNT(*) as cnt FROM alerts GROUP BY Source ORDER BY cnt DESC LIMIT 10;
+**Example**: `execute_sql_query("SELECT Source, COUNT(*) as cnt FROM alerts GROUP BY Source ORDER BY cnt DESC LIMIT 10")`
 
--- High priority in last 24h
-SELECT "Event Time", Source, Description FROM alerts 
-WHERE Priority IN ('H', 'HIGH') AND datetime("Event Time") >= datetime('now', '-1 day')
-ORDER BY "Event Time" DESC LIMIT 10;
+**2. analyze_alarm_behavior(sql_query: str)**
+Basic behavioral analysis (chattering, stale, floods) on raw events.
 
--- Location distribution
-SELECT "Location Tag", COUNT(*) as cnt FROM alerts 
-GROUP BY "Location Tag" ORDER BY cnt DESC LIMIT 10;
-```
+**Use For**: Quick behavioral check on filtered data
 
-### 2. analyze_alarm_behavior(sql_query: str)
-Runs advanced analysis (chattering, stale, floods, bad actors) on query results.
+**Example**: `analyze_alarm_behavior("SELECT * FROM alerts WHERE Priority IN ('H', 'HIGH')")`
 
-**Use For**: Behavioral patterns, alarm health, ISA-18.2 compliance
+---
 
-**CRITICAL REQUIREMENTS:**
-- SQL MUST return: "Event Time", "Source", "Action", "Condition"
-- Best practice: Use `SELECT * FROM alerts WHERE ...`
-- Cover meaningful time range (hours/days, not seconds)
-- Example: `SELECT * FROM alerts WHERE Priority IN ('H', 'HIGH') LIMIT 1000`
+### ADVANCED TOOLS (Use for ISO compliance and prescriptive analysis)
+
+**3. get_isa_compliance_report(time_period: str)**
+ISO 18.2 / EEMUA 191 compliance metrics using UNIQUE alarm activations (state machine).
+
+**Use For**: ISO compliance, alarm frequency, overload analysis
+
+**Parameters**:
+- time_period: "all", "last_30_days", "last_7_days", "last_24_hours"
+
+**Returns**:
+- Average alarms per day/hour/10min (unique activations, not raw events)
+- % days exceeding ISO threshold (288 alarms/day)
+- % days critically overloaded (≥720 alarms/day)
+- Compliance status with prescriptions
+
+**Example**: "Check ISO compliance for last 30 days" → `get_isa_compliance_report("last_30_days")`
+
+**4. analyze_bad_actors(top_n: int, min_alarms: int)**
+Identify top offending sources with PRESCRIPTIVE RECOMMENDATIONS.
+
+**Use For**: Finding worst sources, getting actionable recommendations
+
+**Parameters**:
+- top_n: Number of top offenders (default 10)
+- min_alarms: Minimum unique alarms to include (default 50)
+
+**Returns**:
+- Top N sources by unique alarm count
+- Chattering episodes (sliding window analysis)
+- Standing alarms (>60min active)
+- Repeating alarms
+- Specific recommendations per source (deadband, setpoint review, root cause investigation)
+
+**Example**: "What are the worst 15 sources?" → `analyze_bad_actors(top_n=15, min_alarms=50)`
+
+**5. get_alarm_health_summary(source_filter: str)**
+Comprehensive health assessment for alarm sources.
+
+**Use For**: Health scoring, finding unhealthy sources, filtering by pattern
+
+**Parameters**:
+- source_filter: Optional SQL LIKE pattern (e.g., "TI-%", "REACTOR%", None for all)
+
+**Returns**:
+- Per-source health status (HEALTHY/MARGINAL/UNHEALTHY)
+- Health score (0-100)
+- Standing and stale alarm counts
+- Summary statistics
+- Prescriptive recommendations
+
+**Example**: "Health status of temperature instruments" → `get_alarm_health_summary("TI-%")`
+
+**6. analyze_flood_events(min_sources: int, time_period: str)**
+Detect alarm floods (multiple sources simultaneously unhealthy) with root cause analysis.
+
+**Use For**: Flood detection, plant-wide disturbances, cascade effects
+
+**Parameters**:
+- min_sources: Minimum sources for flood (default 2)
+- time_period: "all", "last_30_days", "last_7_days", "last_24_hours"
+
+**Returns**:
+- Flood periods with start/end times
+- Sources involved in each flood
+- Root cause analysis (localized vs plant-wide)
+- Top locations affected
+- Specific recommendations
+
+**Example**: "Find floods in last 7 days" → `analyze_flood_events(min_sources=3, time_period="last_7_days")`
+
+---
+
+### WHEN TO USE WHICH TOOL
+
+**Use Basic Tools (1-2) when:**
+- User wants raw event counts
+- Simple filtering by priority/location
+- Quick behavioral check
+- No prescriptions needed
+
+**Use Advanced Tools (3-6) when:**
+- User asks about ISO/EEMUA compliance
+- User wants recommendations or prescriptions
+- User asks about "bad actors", "worst sources"
+- User needs health assessment
+- User asks about floods or plant-wide issues
+- User wants actionable insights
+
+**Key Differences**:
+- Basic tools work on RAW EVENTS
+- Advanced tools use STATE MACHINE for UNIQUE ALARM counting (Blank→ACK→OK)
+- Advanced tools provide PRESCRIPTIVE recommendations
+- Advanced tools are ISO/EEMUA 191 compliant
 
 ---
 

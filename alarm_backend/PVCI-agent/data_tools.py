@@ -305,9 +305,485 @@ def analyze_alarm_behavior(sql_query: str) -> str:
         })
 
 
+# ==================== ADVANCED ANALYSIS TOOLS ====================
+
+def get_isa_compliance_report(time_period: str = "all") -> str:
+    """
+    Get ISO 18.2 / EEMUA 191 compliance metrics based on unique alarm activations.
+    Returns alarm frequency analysis with:
+    - Average alarms per day/hour/10min
+    - % days exceeding ISO threshold (288 alarms/day)
+    - % days critically overloaded (≥720 alarms/day)
+    - Detailed daily breakdown
+    
+    Args:
+        time_period: "all", "last_30_days", "last_7_days", or "last_24_hours"
+    
+    Example: get_isa_compliance_report("last_30_days")
+    """
+    try:
+        # Build time filter
+        time_filter = ""
+        if time_period == "last_30_days":
+            time_filter = "WHERE datetime(\"Event Time\") >= datetime('now', '-30 days')"
+        elif time_period == "last_7_days":
+            time_filter = "WHERE datetime(\"Event Time\") >= datetime('now', '-7 days')"
+        elif time_period == "last_24_hours":
+            time_filter = "WHERE datetime(\"Event Time\") >= datetime('now', '-1 day')"
+        
+        sql = f"SELECT * FROM alerts {time_filter}"
+        conn = sqlite3.connect(DB_FILE)
+        df = pd.read_sql_query(sql, conn)
+        conn.close()
+        
+        if df.empty:
+            return json.dumps({"message": "No data available for the selected period."})
+        
+        # Calculate unique alarm activations using state machine
+        df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+        df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+        
+        activations = []
+        for src, group in df.groupby("Source"):
+            state = "IDLE"
+            for _, row in group.sort_values("Event Time").iterrows():
+                action = row["Action"]
+                t = row["Event Time"]
+                if action == "" and state in ["IDLE", "ACKED"]:
+                    activations.append({"Source": src, "Time": t})
+                    state = "ACTIVE"
+                elif action == "ACK" and state == "ACTIVE":
+                    state = "ACKED"
+                elif action == "OK":
+                    state = "IDLE"
+        
+        if not activations:
+            return json.dumps({"message": "No alarm activations found in the period."})
+        
+        act_df = pd.DataFrame(activations)
+        act_df["Date"] = act_df["Time"].dt.date
+        daily_counts = act_df.groupby("Date").size().reset_index(name="Alarms")
+        
+        total_alarms = len(act_df)
+        total_days = (act_df["Time"].max() - act_df["Time"].min()).days + 1
+        total_hours = (act_df["Time"].max() - act_df["Time"].min()).total_seconds() / 3600
+        
+        avg_per_day = total_alarms / total_days if total_days > 0 else 0
+        avg_per_hour = total_alarms / total_hours if total_hours > 0 else 0
+        avg_per_10min = avg_per_hour / 6
+        
+        # ISO thresholds
+        days_over_288 = daily_counts[daily_counts["Alarms"] > 288]
+        days_over_720 = daily_counts[daily_counts["Alarms"] >= 720]
+        
+        pct_over_288 = (len(days_over_288) / len(daily_counts)) * 100 if len(daily_counts) > 0 else 0
+        pct_over_720 = (len(days_over_720) / len(daily_counts)) * 100 if len(daily_counts) > 0 else 0
+        
+        # Compliance assessment
+        if pct_over_288 > 10:
+            compliance = "NON-COMPLIANT - Urgent Action Required"
+            prescription = "Plant significantly exceeds ISO 18.2 threshold. Immediate rationalization needed."
+        elif pct_over_288 > 0:
+            compliance = "MARGINAL - Improvement Needed"
+            prescription = "Some days exceed ISO threshold. Review and optimize alarm configuration."
+        else:
+            compliance = "COMPLIANT"
+            prescription = "Plant meets ISO 18.2 standards. Maintain current alarm management practices."
+        
+        return json.dumps({
+            "status": "success",
+            "period": time_period,
+            "compliance_status": compliance,
+            "prescription": prescription,
+            "metrics": {
+                "total_unique_alarms": total_alarms,
+                "avg_alarms_per_day": round(avg_per_day, 2),
+                "avg_alarms_per_hour": round(avg_per_hour, 2),
+                "avg_alarms_per_10min": round(avg_per_10min, 2),
+                "total_days_analyzed": total_days,
+                "days_over_iso_threshold": len(days_over_288),
+                "pct_days_over_iso": round(pct_over_288, 1),
+                "days_critically_overloaded": len(days_over_720),
+                "pct_days_critical": round(pct_over_720, 1)
+            },
+            "worst_days": daily_counts.nlargest(5, "Alarms").to_dict(orient="records"),
+            "iso_thresholds": {
+                "acceptable": "≤288 alarms/day",
+                "overloaded": ">288 alarms/day",
+                "unacceptable": "≥720 alarms/day"
+            }
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"ISA compliance analysis failed: {str(e)}"})
+
+
+def analyze_bad_actors(top_n: int = 10, min_alarms: int = 50) -> str:
+    """
+    Identify top 'Bad Actor' alarm sources with prescriptive recommendations.
+    Analyzes unique alarm activations, chattering episodes, and standing alarms.
+    
+    Args:
+        top_n: Number of top offenders to return (default 10)
+        min_alarms: Minimum unique alarms to be considered (default 50)
+    
+    Returns detailed source-level analysis with:
+    - Unique alarm count
+    - Chattering episodes
+    - Standing alarms
+    - Repeating alarm count
+    - Specific recommendations per source
+    
+    Example: analyze_bad_actors(top_n=15, min_alarms=100)
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        df = pd.read_sql_query("SELECT * FROM alerts", conn)
+        conn.close()
+        
+        if df.empty:
+            return json.dumps({"message": "No data available."})
+        
+        df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+        df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+        df["Condition"] = df["Condition"].fillna("").astype(str).str.upper().str.strip() if "Condition" in df.columns else ""
+        
+        # Calculate per-source metrics using state machine
+        bad_actors = []
+        for src, group in df.groupby("Source"):
+            group = group.sort_values("Event Time")
+            
+            # Count unique alarms
+            state = "IDLE"
+            unique_alarms = 0
+            alarm_times = []
+            standing_count = 0
+            active_start = None
+            
+            for _, row in group.iterrows():
+                action = row["Action"]
+                t = row["Event Time"]
+                
+                if action == "" and state in ["IDLE", "ACKED"]:
+                    unique_alarms += 1
+                    alarm_times.append(t)
+                    state = "ACTIVE"
+                    active_start = t
+                elif action == "ACK" and state == "ACTIVE":
+                    # Check if standing (>60 min before ACK)
+                    if active_start and (t - active_start).total_seconds() / 60 > 60:
+                        standing_count += 1
+                    state = "ACKED"
+                elif action == "OK":
+                    state = "IDLE"
+                    active_start = None
+            
+            if unique_alarms < min_alarms:
+                continue
+            
+            # Chattering detection (sliding 10-min window)
+            chattering_episodes = 0
+            in_chatter = False
+            window = []
+            for t in alarm_times:
+                # Remove old
+                window = [wt for wt in window if (t - wt).total_seconds() / 60 <= 10]
+                window.append(t)
+                if not in_chatter and len(window) >= 3:
+                    chattering_episodes += 1
+                    in_chatter = True
+                if len(window) < 3:
+                    in_chatter = False
+            
+            repeating = max(0, unique_alarms - 1)
+            
+            # Prescription based on pattern
+            issues = []
+            recommendations = []
+            
+            if chattering_episodes > 5:
+                issues.append(f"{chattering_episodes} chattering episodes")
+                recommendations.append("Add deadband or delay to reduce oscillation")
+            if standing_count > unique_alarms * 0.3:
+                issues.append(f"{standing_count} standing alarms")
+                recommendations.append("Review setpoints - may be too sensitive")
+            if repeating > unique_alarms * 0.8:
+                issues.append(f"{repeating} repeating alarms")
+                recommendations.append("Investigate root cause - recurring process issue")
+            
+            if not issues:
+                issues = ["High activation count"]
+                recommendations = ["Review alarm necessity and priority"]
+            
+            bad_actors.append({
+                "Source": src,
+                "Unique_Alarms": unique_alarms,
+                "Chattering_Episodes": chattering_episodes,
+                "Standing_Alarms": standing_count,
+                "Repeating_Alarms": repeating,
+                "Primary_Issues": ", ".join(issues),
+                "Recommendations": " | ".join(recommendations)
+            })
+        
+        # Sort by unique alarms
+        bad_actors = sorted(bad_actors, key=lambda x: x["Unique_Alarms"], reverse=True)[:top_n]
+        
+        return json.dumps({
+            "status": "success",
+            "top_offenders": bad_actors,
+            "total_sources_analyzed": len(bad_actors),
+            "summary": f"Top {len(bad_actors)} bad actors identified with prescriptive recommendations."
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Bad actor analysis failed: {str(e)}"})
+
+
+def get_alarm_health_summary(source_filter: str = None) -> str:
+    """
+    Get comprehensive health summary for alarm sources.
+    Includes chattering, standing, stale, repeating classifications.
+    
+    Args:
+        source_filter: Optional SQL LIKE pattern (e.g., "TI-%", "REACTOR%")
+    
+    Returns per-source breakdown with health status and action items.
+    
+    Example: get_alarm_health_summary("TI-%")
+    """
+    try:
+        source_condition = ""
+        if source_filter:
+            source_condition = f"WHERE Source LIKE '{source_filter}'"
+        
+        conn = sqlite3.connect(DB_FILE)
+        df = pd.read_sql_query(f"SELECT * FROM alerts {source_condition}", conn)
+        conn.close()
+        
+        if df.empty:
+            return json.dumps({"message": "No sources match the filter."})
+        
+        df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+        df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+        
+        health_data = []
+        for src, group in df.groupby("Source"):
+            group = group.sort_values("Event Time")
+            
+            # State machine analysis
+            state = "IDLE"
+            unique_alarms = 0
+            standing = 0
+            stale = 0
+            active_start = None
+            last_alarm_time = None
+            
+            for _, row in group.iterrows():
+                action = row["Action"]
+                t = row["Event Time"]
+                
+                if action == "" and state in ["IDLE", "ACKED"]:
+                    unique_alarms += 1
+                    state = "ACTIVE"
+                    active_start = t
+                    # Check if stale (>60min since last alarm)
+                    if last_alarm_time and (t - last_alarm_time).total_seconds() / 60 > 60:
+                        stale += 1
+                    last_alarm_time = t
+                elif action == "ACK" and state == "ACTIVE":
+                    if active_start and (t - active_start).total_seconds() / 60 > 60:
+                        standing += 1
+                    state = "ACKED"
+                elif action == "OK":
+                    state = "IDLE"
+                    active_start = None
+            
+            # Health classification
+            health_score = 100
+            health_issues = []
+            
+            if standing > unique_alarms * 0.2:
+                health_score -= 30
+                health_issues.append("High standing alarms")
+            if stale > unique_alarms * 0.3:
+                health_score -= 25
+                health_issues.append("Many stale alarms")
+            if unique_alarms > 200:
+                health_score -= 20
+                health_issues.append("Excessive activations")
+            
+            if health_score >= 80:
+                status = "HEALTHY"
+            elif health_score >= 60:
+                status = "MARGINAL"
+            else:
+                status = "UNHEALTHY"
+            
+            health_data.append({
+                "Source": src,
+                "Health_Status": status,
+                "Health_Score": max(0, health_score),
+                "Unique_Alarms": unique_alarms,
+                "Standing_Alarms": standing,
+                "Stale_Alarms": stale,
+                "Issues": ", ".join(health_issues) if health_issues else "None"
+            })
+        
+        # Summary statistics
+        total_sources = len(health_data)
+        healthy = sum(1 for h in health_data if h["Health_Status"] == "HEALTHY")
+        marginal = sum(1 for h in health_data if h["Health_Status"] == "MARGINAL")
+        unhealthy = sum(1 for h in health_data if h["Health_Status"] == "UNHEALTHY")
+        
+        return json.dumps({
+            "status": "success",
+            "summary": {
+                "total_sources": total_sources,
+                "healthy": healthy,
+                "marginal": marginal,
+                "unhealthy": unhealthy,
+                "health_rate_pct": round((healthy / total_sources) * 100, 1) if total_sources > 0 else 0
+            },
+            "sources": sorted(health_data, key=lambda x: x["Health_Score"])[:20],  # Worst 20
+            "prescription": f"Focus on {unhealthy} unhealthy sources first. Review standing and stale alarm configurations."
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Health summary failed: {str(e)}"})
+
+
+def analyze_flood_events(min_sources: int = 2, time_period: str = "all") -> str:
+    """
+    Detect and analyze alarm flood events (multiple sources simultaneously unhealthy).
+    Identifies root causes and contributing sources.
+    
+    Args:
+        min_sources: Minimum sources involved to qualify as flood (default 2)
+        time_period: "all", "last_30_days", "last_7_days", "last_24_hours"
+    
+    Returns flood periods with:
+    - Flood start/end times
+    - Sources involved and their contribution
+    - Root cause analysis
+    - Recommendations
+    
+    Example: analyze_flood_events(min_sources=3, time_period="last_7_days")
+    """
+    try:
+        time_filter = ""
+        if time_period == "last_30_days":
+            time_filter = "WHERE datetime(\"Event Time\") >= datetime('now', '-30 days')"
+        elif time_period == "last_7_days":
+            time_filter = "WHERE datetime(\"Event Time\") >= datetime('now', '-7 days')"
+        elif time_period == "last_24_hours":
+            time_filter = "WHERE datetime(\"Event Time\") >= datetime('now', '-1 day')"
+        
+        conn = sqlite3.connect(DB_FILE)
+        df = pd.read_sql_query(f"SELECT * FROM alerts {time_filter}", conn)
+        conn.close()
+        
+        if df.empty:
+            return json.dumps({"message": "No data for the selected period."})
+        
+        df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+        df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+        
+        # Get unique activations
+        activations = []
+        for src, group in df.groupby("Source"):
+            state = "IDLE"
+            for _, row in group.sort_values("Event Time").iterrows():
+                action = row["Action"]
+                t = row["Event Time"]
+                if action == "" and state in ["IDLE", "ACKED"]:
+                    activations.append({"Source": src, "Time": t})
+                    state = "ACTIVE"
+                elif action == "ACK":
+                    state = "ACKED"
+                elif action == "OK":
+                    state = "IDLE"
+        
+        if not activations:
+            return json.dumps({"message": "No alarm activations found."})
+        
+        act_df = pd.DataFrame(activations)
+        
+        # Detect 10-min windows with >= 10 alarms per source (unhealthy)
+        window_minutes = 10
+        unhealthy_periods = []
+        for src, group in act_df.groupby("Source"):
+            times = group["Time"].sort_values().tolist()
+            for i in range(len(times)):
+                window_end = times[i]
+                window_start = window_end - pd.Timedelta(minutes=window_minutes)
+                count = sum(1 for t in times if window_start <= t <= window_end)
+                if count >= 10:
+                    unhealthy_periods.append({
+                        "Source": src,
+                        "Start": window_start,
+                        "End": window_end
+                    })
+        
+        if not unhealthy_periods:
+            return json.dumps({
+                "status": "success",
+                "flood_count": 0,
+                "message": "No flood events detected in the period."
+            })
+        
+        unh_df = pd.DataFrame(unhealthy_periods)
+        
+        # Find overlapping unhealthy periods (floods)
+        floods = []
+        for _, row in unh_df.iterrows():
+            s1, e1 = row["Start"], row["End"]
+            overlapping = unh_df[(unh_df["Start"] <= e1) & (unh_df["End"] >= s1)]
+            sources = set(overlapping["Source"])
+            if len(sources) >= min_sources:
+                floods.append({
+                    "Flood_Start": str(s1),
+                    "Flood_End": str(e1),
+                    "Sources_Involved": list(sources),
+                    "Source_Count": len(sources)
+                })
+        
+        # Deduplicate floods
+        unique_floods = []
+        seen = set()
+        for f in floods:
+            key = (f["Flood_Start"], f["Flood_End"])
+            if key not in seen:
+                seen.add(key)
+                unique_floods.append(f)
+        
+        # Root cause analysis
+        for flood in unique_floods[:10]:  # Top 10 floods
+            sources = flood["Sources_Involved"]
+            # Identify common location tags
+            locations = df[df["Source"].isin(sources)]["Location Tag"].value_counts().head(3).to_dict() if "Location Tag" in df.columns else {}
+            flood["Top_Locations"] = locations
+            
+            if len(set(locations.keys())) == 1:
+                flood["Root_Cause"] = f"Localized issue in {list(locations.keys())[0]}"
+                flood["Recommendation"] = "Investigate process upset or equipment failure in this location."
+            else:
+                flood["Root_Cause"] = "Plant-wide disturbance"
+                flood["Recommendation"] = "Review process conditions, utility failures, or cascade effects."
+        
+        return json.dumps({
+            "status": "success",
+            "flood_count": len(unique_floods),
+            "floods": unique_floods[:10],
+            "summary": f"Detected {len(unique_floods)} flood events involving {min_sources}+ sources simultaneously."
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Flood analysis failed: {str(e)}"})
+
+
 # ==================== TOOL REGISTRY ====================
 
 AVAILABLE_TOOLS = [
     execute_sql_query,
-    analyze_alarm_behavior
+    analyze_alarm_behavior,
+    get_isa_compliance_report,
+    analyze_bad_actors,
+    get_alarm_health_summary,
+    analyze_flood_events
 ]
