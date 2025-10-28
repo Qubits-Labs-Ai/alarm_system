@@ -18,7 +18,8 @@ import {
   fetchPlantActualCalcOverall,
   fetchPlantActualCalcUnhealthy,
   fetchPlantActualCalcFloods,
-  fetchPlantActualCalcBadActors
+  fetchPlantActualCalcBadActors,
+  fetchPlantActualCalcCacheStatus
 } from '@/api/actualCalc';
 import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
@@ -305,6 +306,20 @@ export default function DashboardPage() {
       }
       try {
         setActualCalcLoading(true);
+        
+        // Check if cache exists first (fast check)
+        let cacheExists = false;
+        try {
+          const cacheStatus = await fetchPlantActualCalcCacheStatus(actualCalcPlantId, { stale_min: 60, chatter_min: 10 });
+          cacheExists = cacheStatus.cache_exists;
+        } catch (e) {
+          console.warn('Could not check cache status, proceeding with load:', e);
+        }
+        
+        // Extended timeout for first load: 5 minutes (300s)
+        // Reduced timeout for cached loads: 2 minutes (120s)
+        const timeout = cacheExists ? 120000 : 300000;
+        
         // Use dynamic plant-aware API calls with actualCalcPlantId from context
         let [overall, unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
           fetchPlantActualCalcOverall(actualCalcPlantId, {
@@ -312,11 +327,11 @@ export default function DashboardPage() {
             chatter_min: 10,
             include_per_source: false,
             include_cycles: false,
-            timeout_ms: 120000, // Increased to 120s for activation window calculations
+            timeout_ms: timeout,
           }),
-          fetchPlantActualCalcUnhealthy(actualCalcPlantId, { offset: 0, limit: 500, timeout_ms: 120000 }),
-          fetchPlantActualCalcFloods(actualCalcPlantId, { limit: 200, timeout_ms: 120000 }),
-          fetchPlantActualCalcBadActors(actualCalcPlantId, { limit: 9999, timeout_ms: 120000 }),
+          fetchPlantActualCalcUnhealthy(actualCalcPlantId, { offset: 0, limit: 500, timeout_ms: timeout }),
+          fetchPlantActualCalcFloods(actualCalcPlantId, { limit: 200, timeout_ms: timeout }),
+          fetchPlantActualCalcBadActors(actualCalcPlantId, { limit: 9999, timeout_ms: timeout }),
         ]);
 
         // Recompute fallback: server cache may not have activation-based fields yet after deploy
@@ -971,7 +986,7 @@ export default function DashboardPage() {
         )}
 
         {/* Actual Calc Mode - Dynamic Multi-Plant */}
-        {mode === 'actualCalc' && actualCalcData && (
+        {mode === 'actualCalc' && (
           <ActualCalcTabs
             actualCalcData={actualCalcData}
             actualCalcUnhealthy={actualCalcUnhealthy}

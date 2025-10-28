@@ -8,8 +8,10 @@
 
 import { useEffect, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Card } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Loader2, Database, TrendingUp, Activity, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
 import ActivationOverloadSummary from './ActivationOverloadSummary';
 import { ActualCalcKPICards } from './ActualCalcKPICards';
 import { ActualCalcTree } from './ActualCalcTree';
@@ -262,6 +264,70 @@ export default function ActualCalcTabs({
       totalFloodCountRange,
     };
   })();
+
+  // Full-page loading state
+  if (actualCalcLoading && !actualCalcData) {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-8">
+          {/* Header */}
+          <div className="text-center space-y-4">
+            <div className="flex items-center justify-center gap-3">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <h2 className="text-2xl font-bold">Loading Actual Calculation Data</h2>
+            </div>
+            <p className="text-muted-foreground max-w-2xl">
+              Fetching alarm lifecycle KPIs and analytics...
+            </p>
+          </div>
+
+          {/* Animated Progress */}
+          <div className="w-full max-w-md space-y-4">
+            <Progress value={undefined} className="h-2" />
+            <p className="text-sm text-muted-foreground text-center">Processing data...</p>
+          </div>
+
+          {/* Loading Steps */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-3xl mt-8">
+            <Card className="border-2">
+              <CardContent className="flex flex-col items-center justify-center p-6 space-y-2">
+                <Database className="h-8 w-8 text-primary animate-pulse" />
+                <p className="font-medium text-sm">Loading Data</p>
+              </CardContent>
+            </Card>
+            <Card className="border-2">
+              <CardContent className="flex flex-col items-center justify-center p-6 space-y-2">
+                <TrendingUp className="h-8 w-8 text-muted-foreground" />
+                <p className="font-medium text-sm">Calculating KPIs</p>
+              </CardContent>
+            </Card>
+            <Card className="border-2">
+              <CardContent className="flex flex-col items-center justify-center p-6 space-y-2">
+                <Activity className="h-8 w-8 text-muted-foreground" />
+                <p className="font-medium text-sm">Finalizing</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Info Card */}
+          <Card className="max-w-2xl mt-6 bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800">
+            <CardContent className="p-6">
+              <div className="flex gap-3">
+                <AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+                <div className="space-y-2">
+                  <p className="font-medium text-blue-900 dark:text-blue-100">First-Time Load</p>
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    If this is your first time accessing this data, the system may need 2-5 minutes to generate the cache. 
+                    Subsequent loads will be instant.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
