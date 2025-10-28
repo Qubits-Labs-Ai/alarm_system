@@ -62,6 +62,42 @@ export async function fetchPlantActualCalcConditionDistribution(
 }
 
 /**
+ * Check if cache exists for a plant (fast check before loading)
+ */
+export async function fetchPlantActualCalcCacheStatus(
+  plantId: string,
+  params?: {
+    stale_min?: number;
+    chatter_min?: number;
+    timeout_ms?: number;
+  }
+): Promise<{
+  cache_exists: boolean;
+  cache_path: string | null;
+  generated_at: string | null;
+  cache_size_mb: number | null;
+  data_range: { start: string; end: string } | null;
+  total_alarms: number | null;
+  total_sources: number | null;
+}> {
+  const { stale_min = 60, chatter_min = 10, timeout_ms = 5000 } = params || {};
+  const url = new URL(`${API_BASE_URL}/actual-calc/${plantId}/cache-status`);
+  url.searchParams.set('stale_min', String(stale_min));
+  url.searchParams.set('chatter_min', String(chatter_min));
+
+  // Don't cache this - we want fresh status
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout_ms);
+  try {
+    const res = await fetch(url.toString(), { signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
  * Fetch activation peak details (per-source unique activations in a given window)
  */
 export async function fetchPvciActualCalcPeakDetails(params?: {

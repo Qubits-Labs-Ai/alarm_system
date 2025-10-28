@@ -2782,6 +2782,89 @@ def get_available_plants():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/actual-calc/{plant_id}/cache-status", response_class=ORJSONResponse)
+def get_plant_actual_calc_cache_status(
+    plant_id: str,
+    stale_min: int = 60,
+    chatter_min: int = 10
+):
+    """Check if cached data exists for a plant and return cache metadata.
+    
+    This endpoint is fast (<100ms) and allows frontends to make smart loading decisions.
+    
+    Path Parameters:
+        plant_id: Plant identifier (e.g., "PVCI", "VCMA")
+    
+    Query Parameters:
+        stale_min: Stale alarm threshold in minutes (default 60)
+        chatter_min: Chattering threshold in minutes (default 10)
+    
+    Returns:
+        {
+            "cache_exists": bool,
+            "cache_path": str | null,
+            "generated_at": str | null,
+            "cache_size_mb": float | null,
+            "data_range": {"start": str, "end": str} | null,
+            "total_alarms": int | null
+        }
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service not available")
+    
+    if not validate_plant_id(plant_id):
+        raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
+    
+    try:
+        params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "iso_threshold": 288,
+            "unacceptable_threshold": 720,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
+        
+        # Try to read cache (without CSV validation to avoid loading it)
+        cached = read_cache(BASE_DIR, params, plant_id=plant_id, csv_path=None)
+        
+        if cached:
+            # Cache exists - extract metadata
+            cache_path_obj = get_cache_path(BASE_DIR, params, plant_id=plant_id)
+            cache_size_mb = None
+            if os.path.exists(cache_path_obj):
+                cache_size_mb = os.path.getsize(cache_path_obj) / (1024 * 1024)
+            
+            return {
+                "cache_exists": True,
+                "cache_path": str(cache_path_obj),
+                "generated_at": cached.get("generated_at"),
+                "cache_size_mb": round(cache_size_mb, 2) if cache_size_mb else None,
+                "data_range": cached.get("sample_range"),
+                "total_alarms": cached.get("counts", {}).get("total_alarms"),
+                "total_sources": cached.get("counts", {}).get("total_sources"),
+            }
+        else:
+            # No cache exists
+            return {
+                "cache_exists": False,
+                "cache_path": None,
+                "generated_at": None,
+                "cache_size_mb": None,
+                "data_range": None,
+                "total_alarms": None,
+                "total_sources": None,
+            }
+    except Exception as e:
+        logger.error(f"Error checking cache status for {plant_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/actual-calc/{plant_id}/overall", response_class=ORJSONResponse)
 def get_plant_actual_calc_overall(
     plant_id: str,
