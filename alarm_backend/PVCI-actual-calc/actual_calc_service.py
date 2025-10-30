@@ -975,16 +975,20 @@ def detect_metadata_rows(csv_path: str, max_check_rows: int = 10) -> tuple[int, 
     
     Metadata rows typically lack proper timestamps or have descriptive text.
     This function checks the first few rows to find where actual data starts.
-    Also extracts report datetime if found in metadata (used for truncated time reconstruction).
+    Also extracts seed datetime from metadata for truncated time reconstruction.
+    
+    PRIORITY ORDER for seed timestamp:
+    1. Filter datetime from "Filter Applied: Event Time: Before X" (best for descending data)
+    2. Report datetime from "Date/Time of Report: X" (fallback)
     
     Args:
         csv_path: Path to the CSV file
         max_check_rows: Maximum number of rows to check for metadata
         
     Returns:
-        Tuple of (skiprows, report_datetime):
+        Tuple of (skiprows, seed_datetime):
             - skiprows: Number of rows to skip (0 if no metadata detected)
-            - report_datetime: Timestamp from "Date/Time of Report" if found, else None
+            - seed_datetime: Timestamp from filter or report metadata (filter takes priority), else None
     """
     import re
     
@@ -993,6 +997,7 @@ def detect_metadata_rows(csv_path: str, max_check_rows: int = 10) -> tuple[int, 
         sample = pd.read_csv(csv_path, nrows=max_check_rows, header=None)
         
         report_datetime = None
+        filter_datetime = None
         skip_rows = 0
         
         # Try to find the header row (contains "Event Time" or "Source")
@@ -1011,11 +1016,38 @@ def detect_metadata_rows(csv_path: str, max_check_rows: int = 10) -> tuple[int, 
                     except Exception:
                         pass
             
+            # Check for filter date in metadata (PRIORITY over report datetime for data seeding)
+            # Format: "Filter Applied: Event Time: Before 2/28/2025 11:59:59 PM"
+            if 'filter applied' in row_str and 'event time' in row_str and 'before' in row_str:
+                # Try different datetime formats
+                # Format 1: "Before 2/28/2025 11:59:59 PM"
+                match = re.search(r'before\s+(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}:\d{2}\s+(?:AM|PM))', row_str, re.IGNORECASE)
+                if match:
+                    try:
+                        filter_datetime = pd.to_datetime(match.group(1), format="%m/%d/%Y %I:%M:%S %p")
+                        logger.info(f"Found filter 'before' datetime in metadata: {filter_datetime}")
+                    except Exception:
+                        pass
+                
+                # Format 2: "Before 2/28/2025" (date only, assume end of day)
+                if not filter_datetime:
+                    match = re.search(r'before\s+(\d{1,2}/\d{1,2}/\d{4})', row_str, re.IGNORECASE)
+                    if match:
+                        try:
+                            filter_datetime = pd.to_datetime(match.group(1), format="%m/%d/%Y")
+                            # Assume end of day for "before" filter
+                            filter_datetime = filter_datetime.replace(hour=23, minute=59, second=59)
+                            logger.info(f"Found filter 'before' date in metadata (assuming 23:59:59): {filter_datetime}")
+                        except Exception:
+                            pass
+            
             if 'event time' in row_str and 'source' in row_str:
                 skip_rows = int(idx)
                 break
         
-        return skip_rows, report_datetime
+        # Return filter_datetime as primary seed, fallback to report_datetime
+        seed_datetime = filter_datetime if filter_datetime else report_datetime
+        return skip_rows, seed_datetime
     except Exception as e:
         logger.warning(f"Metadata detection failed: {e}. Assuming no metadata rows.")
         return 0, None
@@ -1115,8 +1147,9 @@ def load_pvci_merged_csv(
     logger.info(f"Loading CSV from: {csv_path}")
     
     try:
-        # Step 1: Detect and skip metadata rows, extract report datetime if present
-        skiprows, report_datetime = detect_metadata_rows(csv_path)
+        # Step 1: Detect and skip metadata rows, extract seed datetime if present
+        # (Uses filter date with priority, fallback to report date)
+        skiprows, seed_datetime = detect_metadata_rows(csv_path)
         if skiprows > 0:
             logger.info(f"Detected {skiprows} metadata row(s) at top of file. Skipping...")
         
@@ -1211,10 +1244,11 @@ def load_pvci_merged_csv(
             date_series.loc[is_full_iso] = iso_timestamps.dt.date
         
         # Forward-fill dates for time-only rows AND full timestamps for truncated rows
-        # If CSV has a report datetime in metadata and no full timestamps in data, seed with it
-        if report_datetime is not None and full_timestamp_series.isna().all():
-            logger.info(f"No full timestamps in data; using report datetime as seed: {report_datetime}")
-            full_timestamp_series.iloc[0] = report_datetime
+        # If CSV has a seed datetime in metadata and no full timestamps in data, seed with it
+        # Priority: Filter date ("Before X") > Report date ("Date/Time of Report: X")
+        if seed_datetime is not None and full_timestamp_series.isna().all():
+            logger.info(f"No full timestamps in data; using seed datetime from metadata: {seed_datetime}")
+            full_timestamp_series.iloc[0] = seed_datetime
         
         # This carries the most recent valid date/timestamp forward to rows missing them
         date_series_filled = date_series.ffill()

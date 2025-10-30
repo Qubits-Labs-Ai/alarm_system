@@ -9,7 +9,10 @@ from dotenv import load_dotenv
 # --- Load API key securely from .env file ---
 # Note: When imported by FastAPI, the backend's env is already loaded.
 # We support both OPENROUTER_API_KEY (preferred) and OPENAI_API_KEY (fallback)
-load_dotenv(override=True)  # Ensure latest .env overrides any existing env vars
+# CRITICAL: Use absolute path to .env to ensure it loads regardless of service CWD
+from pathlib import Path
+_env_path = Path(__file__).parent.parent / ".env"  # Points to alarm_backend/.env
+load_dotenv(dotenv_path=_env_path, override=True)  # Ensure latest .env overrides any existing env vars
 CLIENT_API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -23,11 +26,13 @@ if not CLIENT_API_KEY:
 
 # --- Initialize client ---
 # Masked log to verify which key is loaded (without exposing the secret)
+print(f"[PVCI Agent] .env path: {_env_path} (exists: {_env_path.exists()})")
 try:
     _key_preview = f"{CLIENT_API_KEY[:6]}...{CLIENT_API_KEY[-4:]}"
-    print(f"[PVCI Agent] Using OPENROUTER_API_KEY: {_key_preview} | Base URL: https://openrouter.ai/api/v1")
-except Exception:
-    pass
+    _key_source = "OPENROUTER_API_KEY" if os.getenv("OPENROUTER_API_KEY") else "OPENAI_API_KEY (fallback)"
+    print(f"[PVCI Agent] Using {_key_source}: {_key_preview} | Base URL: https://openrouter.ai/api/v1")
+except Exception as e:
+    print(f"[PVCI Agent] ⚠️ Key loading failed: {e}")
 
 client = AsyncOpenAI(
     api_key=CLIENT_API_KEY,

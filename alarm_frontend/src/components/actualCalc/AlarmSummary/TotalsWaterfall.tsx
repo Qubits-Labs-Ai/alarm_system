@@ -129,6 +129,7 @@ const TotalsWaterfall: React.FC<Props> = ({
   ];
 
   const maxValue = totals.total;
+  const LABEL_INSIDE_THRESHOLD = 15; // % width to keep labels inside the bar
 
   return (
     <Card className={className}>
@@ -157,6 +158,8 @@ const TotalsWaterfall: React.FC<Props> = ({
             const barHeight = Math.abs(item.value);
             const barHeightPct = (barHeight / maxValue) * 100;
             const leftPct = isFirst ? 0 : isLast ? 0 : (item.cumulative / maxValue) * 100;
+            const labelInside = barHeightPct >= LABEL_INSIDE_THRESHOLD;
+            const edgePct = leftPct + barHeightPct; // bar's right edge for outside labels
 
             return (
               <div key={item.label} className="flex items-center gap-3">
@@ -180,11 +183,26 @@ const TotalsWaterfall: React.FC<Props> = ({
                       backgroundColor: item.color,
                       width: `${barHeightPct}%`,
                       left: `${leftPct}%`,
+                      minWidth: '6px',
                     }}
                   >
-                    <span>{item.type === 'decrease' ? `−${barHeight.toLocaleString()}` : barHeight.toLocaleString()}</span>
-                    {(isFirst || isLast) && <span>{((barHeight / totals.total) * 100).toFixed(1)}%</span>}
+                    {labelInside && (
+                      <>
+                        <span>{item.type === 'decrease' ? `−${barHeight.toLocaleString()}` : barHeight.toLocaleString()}</span>
+                        {(isFirst || isLast) && <span>{((barHeight / totals.total) * 100).toFixed(1)}%</span>}
+                      </>
+                    )}
                   </div>
+
+                  {/* Outside label if the bar is too narrow */}
+                  {!labelInside && (
+                    <div
+                      className="absolute top-1/2 -translate-y-1/2 text-xs font-medium"
+                      style={{ left: `${edgePct}%`, marginLeft: 6, color: item.color }}
+                    >
+                      {item.type === 'decrease' ? `−${barHeight.toLocaleString()}` : `${barHeight.toLocaleString()}${(isFirst || isLast) ? ` · ${((barHeight / totals.total) * 100).toFixed(1)}%` : ''}`}
+                    </div>
+                  )}
 
                   {/* Cumulative Label */}
                   {!isFirst && !isLast && (

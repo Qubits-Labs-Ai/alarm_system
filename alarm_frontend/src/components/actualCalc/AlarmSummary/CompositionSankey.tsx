@@ -180,6 +180,14 @@ const CompositionSankey: React.FC<Props> = ({
   const nuisanceChatterPct = totals.nuisance > 0 ? (totals.nuisance_chattering / totals.nuisance) * 100 : 0;
   const nuisanceIfChatterPct = totals.nuisance > 0 ? (totals.nuisance_if_chattering / totals.nuisance) * 100 : 0;
 
+  // Sub-category absolute widths as % of total row
+  const standingStaleWidth = (standingStalePct * standingPct) / 100;
+  const standingIfWidth = (standingIfPct * standingPct) / 100;
+  const nuisanceChatterWidth = (nuisanceChatterPct * nuisancePct) / 100;
+  const nuisanceIfChatterWidth = (nuisanceIfChatterPct * nuisancePct) / 100;
+
+  const LABEL_INSIDE_THRESHOLD = 15; // % width needed to fit text inside bar
+
   return (
     <Card className={className}>
       <CardHeader>
@@ -240,21 +248,27 @@ const CompositionSankey: React.FC<Props> = ({
                     {totals.standing_stale > 0 && (
                       <div className="flex items-center gap-2 text-xs">
                         <div
-                          className="h-6 rounded px-2 flex items-center overflow-hidden whitespace-nowrap text-ellipsis"
-                          style={{ backgroundColor: CATEGORY_COLORS.standing_stale, width: `${standingStalePct * standingPct / 100}%`, minWidth: 0, color: 'white' }}
+                          className="h-6 rounded px-2 flex items-center"
+                          style={{ backgroundColor: CATEGORY_COLORS.standing_stale, width: `${standingStaleWidth}%`, minWidth: 6, color: 'white' }}
                         >
-                          Stale: {totals.standing_stale.toLocaleString()}
+                          {standingStaleWidth >= LABEL_INSIDE_THRESHOLD ? `Stale: ${totals.standing_stale.toLocaleString()}` : null}
                         </div>
+                        {standingStaleWidth < LABEL_INSIDE_THRESHOLD && (
+                          <span className="text-foreground">Stale: {totals.standing_stale.toLocaleString()}</span>
+                        )}
                       </div>
                     )}
                     {totals.standing_if > 0 && (
                       <div className="flex items-center gap-2 text-xs">
                         <div
-                          className="h-6 rounded px-2 flex items-center overflow-hidden whitespace-nowrap text-ellipsis"
-                          style={{ backgroundColor: CATEGORY_COLORS.standing_if, width: `${standingIfPct * standingPct / 100}%`, minWidth: 0, color: 'white' }}
+                          className="h-6 rounded px-2 flex items-center"
+                          style={{ backgroundColor: CATEGORY_COLORS.standing_if, width: `${standingIfWidth}%`, minWidth: 6, color: 'white' }}
                         >
-                          IF: {totals.standing_if.toLocaleString()}
+                          {standingIfWidth >= LABEL_INSIDE_THRESHOLD ? `IF: ${totals.standing_if.toLocaleString()}` : null}
                         </div>
+                        {standingIfWidth < LABEL_INSIDE_THRESHOLD && (
+                          <span className="text-foreground">IF: {totals.standing_if.toLocaleString()}</span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -283,21 +297,27 @@ const CompositionSankey: React.FC<Props> = ({
                     {totals.nuisance_chattering > 0 && (
                       <div className="flex items-center gap-2 text-xs">
                         <div
-                          className="h-6 rounded px-2 flex items-center overflow-hidden whitespace-nowrap text-ellipsis"
-                          style={{ backgroundColor: CATEGORY_COLORS.nuisance_chattering, width: `${nuisanceChatterPct * nuisancePct / 100}%`, minWidth: 0, color: 'white' }}
+                          className="h-6 rounded px-2 flex items-center"
+                          style={{ backgroundColor: CATEGORY_COLORS.nuisance_chattering, width: `${nuisanceChatterWidth}%`, minWidth: 6, color: 'white' }}
                         >
-                          Chattering: {totals.nuisance_chattering.toLocaleString()}
+                          {nuisanceChatterWidth >= LABEL_INSIDE_THRESHOLD ? `Chattering: ${totals.nuisance_chattering.toLocaleString()}` : null}
                         </div>
+                        {nuisanceChatterWidth < LABEL_INSIDE_THRESHOLD && (
+                          <span className="text-foreground">Chattering: {totals.nuisance_chattering.toLocaleString()}</span>
+                        )}
                       </div>
                     )}
                     {totals.nuisance_if_chattering > 0 && (
                       <div className="flex items-center gap-2 text-xs">
                         <div
-                          className="h-6 rounded px-2 flex items-center overflow-hidden whitespace-nowrap text-ellipsis"
-                          style={{ backgroundColor: CATEGORY_COLORS.nuisance_if_chattering, width: `${nuisanceIfChatterPct * nuisancePct / 100}%`, minWidth: 0, color: 'white' }}
+                          className="h-6 rounded px-2 flex items-center"
+                          style={{ backgroundColor: CATEGORY_COLORS.nuisance_if_chattering, width: `${nuisanceIfChatterWidth}%`, minWidth: 6, color: 'white' }}
                         >
-                          IF-Chatter: {totals.nuisance_if_chattering.toLocaleString()}
+                          {nuisanceIfChatterWidth >= LABEL_INSIDE_THRESHOLD ? `IF-Chatter: ${totals.nuisance_if_chattering.toLocaleString()}` : null}
                         </div>
+                        {nuisanceIfChatterWidth < LABEL_INSIDE_THRESHOLD && (
+                          <span className="text-foreground">IF-Chatter: {totals.nuisance_if_chattering.toLocaleString()}</span>
+                        )}
                       </div>
                     )}
                   </div>
