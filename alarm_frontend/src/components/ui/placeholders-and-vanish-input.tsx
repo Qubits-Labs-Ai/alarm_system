@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type PlaceholdersAndVanishInputProps = {
@@ -13,6 +13,8 @@ export type PlaceholdersAndVanishInputProps = {
   minRows?: number; // only for multiline
   maxRows?: number; // only for multiline
   sendOnEnter?: boolean; // Enter to send, Shift+Enter for newline
+  isStreaming?: boolean; // when true, show Stop instead of Send
+  onStop?: () => void;   // called when Stop is pressed or Esc
 };
 
 export function PlaceholdersAndVanishInput({
@@ -26,6 +28,8 @@ export function PlaceholdersAndVanishInput({
   minRows = 1,
   maxRows = 8,
   sendOnEnter = true,
+  isStreaming = false,
+  onStop,
 }: PlaceholdersAndVanishInputProps) {
   const [index, setIndex] = useState(0);
   const [isActive, setIsActive] = useState(true);
@@ -70,7 +74,7 @@ export function PlaceholdersAndVanishInput({
       onSubmit={(e) => {
         onSubmit?.(e);
       }}
-      className={cn("relative w-full", className)}
+      className={cn("relative z-10 w-full", className)}
     >
       {multiline ? (
         <textarea
@@ -96,14 +100,19 @@ export function PlaceholdersAndVanishInput({
               formRef.current?.requestSubmit();
               return;
             }
+            // Esc stops streaming
+            if (e.key === "Escape" && isStreaming) {
+              e.preventDefault();
+              onStop?.();
+              return;
+            }
           }}
           placeholder={activePlaceholder}
           disabled={disabled}
           className={cn(
-            "w-full rounded-2xl bg-card border border-border shadow-sm",
-            "px-6 pr-14 py-3 text-base outline-none leading-6",
-            "placeholder:text-muted-foreground/70 focus:ring-2 focus:ring-primary/30",
-            // Let content decide height; cap with max-h for internal scroll when exceeding maxRows
+            "w-full rounded-full bg-card backdrop-blur supports-[backdrop-filter]:backdrop-blur border border-border/70 shadow-sm",
+            "px-6 pr-14 py-3 text-base outline-none leading-6 transition-all duration-200",
+            "placeholder:text-muted-foreground/70 focus:ring-2 focus:ring-primary/25",
             "max-h-48 overflow-y-auto resize-none",
             disabled && "opacity-60 cursor-not-allowed"
           )}
@@ -120,29 +129,39 @@ export function PlaceholdersAndVanishInput({
               e.preventDefault();
               formRef.current?.requestSubmit();
             }
+            if (e.key === "Escape" && isStreaming) {
+              e.preventDefault();
+              onStop?.();
+            }
           }}
           placeholder={activePlaceholder}
           disabled={disabled}
           className={cn(
-            "h-14 w-full rounded-full bg-card border border-border shadow-sm",
-            "px-6 pr-14 text-base outline-none",
-            "placeholder:text-muted-foreground/70 focus:ring-2 focus:ring-primary/30",
+            "h-14 w-full rounded-full bg-card backdrop-blur supports-[backdrop-filter]:backdrop-blur border border-border/70 shadow-sm",
+            "px-6 pr-14 text-base outline-none transition-all duration-200",
+            "placeholder:text-muted-foreground/70 focus:ring-2 focus:ring-primary/25",
             disabled && "opacity-60 cursor-not-allowed"
           )}
         />
       )}
       <button
-        type="submit"
-        disabled={disabled}
+        type={isStreaming ? "button" : "submit"}
+        onClick={() => {
+          if (isStreaming) onStop?.();
+        }}
+        disabled={!isStreaming && disabled}
         className={cn(
           "absolute right-1.5 top-1/2 -translate-y-1/2",
           "h-10 w-10 rounded-full grid place-items-center",
-          "bg-primary text-primary-foreground shadow-sm",
-          "hover:opacity-90 disabled:opacity-50"
+          isStreaming
+            ? "bg-muted/90 text-foreground ring-1 ring-border/70 shadow-sm hover:bg-muted/80"
+            : "bg-primary text-primary-foreground shadow-sm hover:opacity-90",
+          "transition-transform duration-150 active:scale-95",
+          !isStreaming && disabled && "opacity-50"
         )}
-        aria-label="Send"
+        aria-label={isStreaming ? "Stop" : "Send"}
       >
-        <ArrowRight className="h-4 w-4" />
+        {isStreaming ? <Square className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
       </button>
     </form>
   );

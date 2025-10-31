@@ -285,31 +285,79 @@ html {
   }
   .agent-prose table {
     width: 100%;
-    border-collapse: separate;
+    border-collapse: collapse; /* Sticky header works more reliably */
     border-spacing: 0;
-    border: 1px solid hsl(var(--border));
-    border-radius: 12px;
-    overflow: hidden;
-    background: hsl(var(--card));
+    margin: 4px;
+    border-radius: 0; /* wrapper provides radius */
+    overflow: visible; /* avoid clipping sticky header */
+    border: none; /* wrapper provides border */
   }
   .agent-prose thead th {
     background: hsl(var(--muted));
     color: hsl(var(--muted-foreground));
     text-align: left;
     font-weight: 600;
-    font-size: 12px;
-    padding: 10px 12px;
+    font-size: 12px; /* Keep readable header */
+    padding: 12px 16px; /* Reduce vertical padding */
+    position: sticky;
+    top: 0; /* Stick flush to the top of the scroll container */
+    z-index: 1;
+    border-bottom: 1px solid hsl(var(--border) / 0.7);
+    vertical-align: middle;
+    line-height: 1.35; /* center header text better */
+    background-clip: padding-box; /* prevent border bleed */
   }
+  .agent-prose thead { position: sticky; top: 0; z-index: 2; }
+  .agent-prose thead th:first-child { border-top-left-radius: 12px; }
+  .agent-prose thead th:last-child { border-top-right-radius: 12px; }
   .agent-prose tbody td {
-    padding: 12px;
-    border-top: 1px solid hsl(var(--border));
-    font-size: 13px;
-  }
-  .agent-prose tbody tr:nth-child(odd) td {
-    background: hsl(var(--card)/0.5);
+    padding: 10px 16px; /* Reduce vertical padding */
+    border-top: 1px solid hsl(var(--border) / 0.7);
+    font-size: 11px; /* Compact body font */
+    text-align: left !important; /* Ensure left alignment */
+    vertical-align: middle;
   }
   .agent-prose tbody tr:hover td {
-    background: hsl(var(--primary)/0.05);
+    background: hsl(var(--muted) / 0.6);
+  }
+  /* Numeric readability should be handled by the component now, but we'll ensure alignment here */
+  .agent-prose td,
+  .agent-prose th { 
+    font-variant-numeric: tabular-nums; 
+    text-align: left !important;
+  }
+  /* Prevent accidental headings inside tables like "#1 contributor" */
+  .agent-prose table h1,
+  .agent-prose table h2,
+  .agent-prose table h3,
+  .agent-prose table h4,
+  .agent-prose table h5,
+  .agent-prose table h6 {
+    all: unset;
+    display: inline;
+    font-size: 13px;
+    font-weight: 400;
+  }
+  /* Compact tables on narrow screens */
+  @media (max-width: 640px) {
+    .agent-prose thead th { padding: 8px 10px; font-size: 11px; }
+    .agent-prose tbody td { padding: 10px; font-size: 12.5px; }
+  }
+  /* Section numbering for headings within agent answers */
+  .agent-prose { counter-reset: agent-h2; }
+  .agent-prose h2 { counter-increment: agent-h2; counter-reset: agent-h3; }
+  .agent-prose h2::before {
+    content: counter(agent-h2) ". ";
+    color: hsl(var(--muted-foreground));
+    font-weight: 600;
+    margin-right: 0.25rem;
+  }
+  .agent-prose h3 { counter-increment: agent-h3; }
+  .agent-prose h3::before {
+    content: counter(agent-h2) "." counter(agent-h3) " ";
+    color: hsl(var(--muted-foreground));
+    font-weight: 600;
+    margin-right: 0.25rem;
   }
   .agent-prose code:not(pre code) {
     background: hsl(var(--muted));

@@ -15,7 +15,7 @@ _env_path = Path(__file__).parent.parent / ".env"  # Points to alarm_backend/.en
 load_dotenv(dotenv_path=_env_path, override=True)  # Ensure latest .env overrides any existing env vars
 CLIENT_API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
 try:
     GEMINI_THINKING_BUDGET = int(os.getenv("GEMINI_THINKING_BUDGET", "-1"))
 except Exception:
@@ -38,6 +38,102 @@ client = AsyncOpenAI(
     api_key=CLIENT_API_KEY,
     base_url="https://openrouter.ai/api/v1"
 )
+
+# --- Error Pattern Matching & Auto-Fix System ---
+ERROR_PATTERNS = {
+    "no_such_column": {
+        "patterns": ["no such column", "unknown column"],
+        "category": "sql_syntax",
+        "severity": "medium",
+        "auto_fix": True,
+        "fix_strategy": "quote_columns",
+        "max_retries": 2,
+        "description": "Column name contains spaces or special characters that need quoting"
+    },
+    "no_such_table": {
+        "patterns": ["no such table"],
+        "category": "data_missing",
+        "severity": "critical",
+        "auto_fix": False,
+        "fix_strategy": "fail_fast",
+        "max_retries": 0,
+        "description": "Database table not found - data not loaded"
+    },
+    "syntax_error": {
+        "patterns": ["syntax error", "near"],
+        "category": "sql_syntax",
+        "severity": "high",
+        "auto_fix": True,
+        "fix_strategy": "simplify_query",
+        "max_retries": 3,
+        "description": "SQL syntax error - missing FROM, WHERE placement, or unmatched quotes"
+    },
+    "empty_result": {
+        "patterns": ["zero results", "no data", "returned zero rows"],
+        "category": "query_too_restrictive",
+        "severity": "low",
+        "auto_fix": True,
+        "fix_strategy": "expand_filters",
+        "max_retries": 2,
+        "description": "Query returned no results - filters may be too restrictive"
+    },
+    "permission_denied": {
+        "patterns": ["permission denied", "access denied"],
+        "category": "security",
+        "severity": "critical",
+        "auto_fix": False,
+        "fix_strategy": "fail_fast",
+        "max_retries": 0,
+        "description": "Insufficient permissions to access resource"
+    }
+}
+
+def match_error_pattern(error_text: str) -> Dict[str, Any]:
+    """Match error text to known patterns and return fix strategy."""
+    error_lower = error_text.lower()
+    for pattern_name, pattern_info in ERROR_PATTERNS.items():
+        for pattern in pattern_info["patterns"]:
+            if pattern in error_lower:
+                return {
+                    "pattern_name": pattern_name,
+                    "matched_text": pattern,
+                    **pattern_info
+                }
+    return None
+
+def auto_fix_sql_query(sql_query: str, fix_strategy: str, iteration: int = 0) -> str:
+    """Attempt automatic SQL query fixes based on error pattern."""
+    import re
+    
+    if fix_strategy == "quote_columns":
+        # Add quotes to known column names with spaces
+        column_names = ["Event Time", "Location Tag"]
+        for col in column_names:
+            # Match column name as whole word (not inside quotes already)
+            pattern = rf'(?<!["\'])(\b{re.escape(col)}\b)(?!["\'])'
+            sql_query = re.sub(pattern, f'"{col}"', sql_query, flags=re.IGNORECASE)
+        return sql_query
+    
+    elif fix_strategy == "simplify_query":
+        # Progressive simplification based on iteration
+        if iteration == 1:
+            # Remove ORDER BY clause
+            sql_query = re.sub(r'\s+ORDER\s+BY\s+[^;]+', '', sql_query, flags=re.IGNORECASE)
+        elif iteration == 2:
+            # Remove GROUP BY clause
+            sql_query = re.sub(r'\s+GROUP\s+BY\s+[^;]+', '', sql_query, flags=re.IGNORECASE)
+        elif iteration >= 3:
+            # Fallback to basic SELECT
+            return "SELECT * FROM alerts LIMIT 100"
+        return sql_query
+    
+    elif fix_strategy == "expand_filters":
+        # Expand date filters
+        sql_query = sql_query.replace("'-1 day'", "'-7 days'")
+        sql_query = sql_query.replace("'-24 hours'", "'-7 days'")
+        return sql_query
+    
+    return sql_query
 
 # --- System prompt ---
 SYSTEM_PROMPT = """
@@ -115,6 +211,27 @@ Call tools for queries requiring database analysis:
 - Quote column names with spaces: "Event Time", "Location Tag"
 - Use UPPER() or uppercase literals in WHERE clauses
 
+## NOMENCLATURES (Priority, Condition, Action, DCS)
+- Priority and Condition are DIFFERENT domains. Do NOT cross-map or convert between them.
+  - Examples: Do NOT convert Condition 'HIHI' to Priority and do NOT convert Priority 'H' to a Condition.
+- Priority mappings are handled conservatively:
+  - CRITICAL → Priority IN ('CRITICAL','E','U')
+  - HIGH → Priority IN ('HIGH','H')
+  - LOW → Priority IN ('LOW','L')
+  - J-CODED/Journal → Priority IN ('J','J-CODED','JCODED','JOURNAL')
+  - Routing codes like 'H 00', 'H 15', 'L 00', 'J 00', 'J 15', 'U 00', 'U 15' map to their respective Priority groups.
+- Condition should use explicit codes: HI, HIHI, LO, LOLO (and synonyms PVHI, PVHIHI, PVLO, PVLOLO). Do NOT invent cross-domain mappings.
+- Action synonyms: ACK includes 'ACK' and 'ACK PNT'; SHELVE includes 'SHELVE' and 'RESHELVE'.
+- DCS Tags: Use tag prefixes (e.g., TI, PIC, FIC, BV, XV, etc.) for Source filtering.
+- Examples (use SQL LIKE patterns):
+  - Temperature: TI → `WHERE Source LIKE 'TI-%'`, TT → `WHERE Source LIKE 'TT-%'`, TIC → `WHERE Source LIKE 'TIC-%'`
+  - Pressure: PI → `WHERE Source LIKE 'PI-%'`, PT → `WHERE Source LIKE 'PT-%'`, PIC → `WHERE Source LIKE 'PIC-%'`
+  - Flow: FI → `WHERE Source LIKE 'FI-%'`, FIT → `WHERE Source LIKE 'FIT-%'`, FIC → `WHERE Source LIKE 'FIC-%'`
+  - Level: LI → `WHERE Source LIKE 'LI-%'`, LT → `WHERE Source LIKE 'LT-%'`, LIC → `WHERE Source LIKE 'LIC-%'`
+  - Valves: BV/XV/FCV → `WHERE Source LIKE 'BV-%'` / `WHERE Source LIKE 'XV-%'` / `WHERE Source LIKE 'FCV-%'`
+  - Others: RTD → `WHERE Source LIKE 'RTD-%'`, SV → `WHERE Source LIKE 'SV-%'`
+- If unsure about a term, FIRST call the helper tool `lookup_nomenclature(term)` to retrieve canonical meanings and synonyms, then build SQL.
+
 ---
 
 ## AVAILABLE TOOLS (6 Total)
@@ -155,7 +272,7 @@ ISO 18.2 / EEMUA 191 compliance metrics using UNIQUE alarm activations (state ma
 
 **Example**: "Check ISO compliance for last 30 days" → `get_isa_compliance_report("last_30_days")`
 
-**4. analyze_bad_actors(top_n: int, min_alarms: int)**
+**4. analyze_bad_actors(top_n: int, min_alarms: int, time_period?: str, start_date?: str, end_date?: str)**
 Identify top offending sources with PRESCRIPTIVE RECOMMENDATIONS.
 
 **Use For**: Finding worst sources, getting actionable recommendations
@@ -163,6 +280,8 @@ Identify top offending sources with PRESCRIPTIVE RECOMMENDATIONS.
 **Parameters**:
 - top_n: Number of top offenders (default 10)
 - min_alarms: Minimum unique alarms to include (default 50)
+- time_period: "all", "last_30_days", "last_7_days", "last_24_hours"
+- start_date/end_date: explicit ISO date strings (e.g., "2025-01-01" to "2025-01-31"). If both provided, overrides time_period
 
 **Returns**:
 - Top N sources by unique alarm count
@@ -171,7 +290,9 @@ Identify top offending sources with PRESCRIPTIVE RECOMMENDATIONS.
 - Repeating alarms
 - Specific recommendations per source (deadband, setpoint review, root cause investigation)
 
-**Example**: "What are the worst 15 sources?" → `analyze_bad_actors(top_n=15, min_alarms=50)`
+**Examples**:
+- "What are the worst 15 sources?" → `analyze_bad_actors(top_n=15, min_alarms=50)`
+- "Bad actors in January 2025" → `analyze_bad_actors(top_n=10, min_alarms=50, start_date="2025-01-01", end_date="2025-01-31")`
 
 **5. get_alarm_health_summary(source_filter: str)**
 Comprehensive health assessment for alarm sources.
@@ -190,7 +311,7 @@ Comprehensive health assessment for alarm sources.
 
 **Example**: "Health status of temperature instruments" → `get_alarm_health_summary("TI-%")`
 
-**6. analyze_flood_events(min_sources: int, time_period: str)**
+**6. analyze_flood_events(min_sources: int, time_period?: str, start_date?: str, end_date?: str, summary_by_month?: bool)**
 Detect alarm floods (multiple sources simultaneously unhealthy) with root cause analysis.
 
 **Use For**: Flood detection, plant-wide disturbances, cascade effects
@@ -198,15 +319,20 @@ Detect alarm floods (multiple sources simultaneously unhealthy) with root cause 
 **Parameters**:
 - min_sources: Minimum sources for flood (default 2)
 - time_period: "all", "last_30_days", "last_7_days", "last_24_hours"
+- start_date/end_date: explicit ISO date strings (overrides time_period when both provided)
+- summary_by_month: If true, also return monthly flood counts and top contributing sources per month
 
 **Returns**:
 - Flood periods with start/end times
 - Sources involved in each flood
 - Root cause analysis (localized vs plant-wide)
 - Top locations affected
+- Optional monthly summary when requested
 - Specific recommendations
 
-**Example**: "Find floods in last 7 days" → `analyze_flood_events(min_sources=3, time_period="last_7_days")`
+**Examples**:
+- "Find floods in last 7 days" → `analyze_flood_events(min_sources=3, time_period="last_7_days")`
+- "Which month had more floods and who contributed?" → `analyze_flood_events(min_sources=2, start_date="2025-01-01", end_date="2025-03-31", summary_by_month=True)`
 
 ---
 
@@ -308,15 +434,14 @@ async def run_glm_agent(
         query: str,
         tools: List[Callable],
         model: str = "z-ai/glm-4.5-air:free",  # Default to GLM per user preference
-        max_iterations: int = 8  # Increased to allow multiple retries on errors
+        max_iterations: int = 12  # Increased to 12 with intelligent retry budget
 ) -> AsyncGenerator[Dict[str, Any], None]:
     """
     Runs the LLM agent, handling function calling and streaming reasoning/output.
     
     Model Options:
     - "z-ai/glm-4.5-air:free" (default)
-    - "google/gemini-2.0-flash-exp:free"
-    - "anthropic/claude-3.5-sonnet" (requires credits)
+    - "google/gemini-2.5-pro"
     """
 
     # Build proper JSON Schema for tools
@@ -327,20 +452,27 @@ async def run_glm_agent(
         required = []
         
         for param_name, param in params.items():
-            # Build JSON Schema for each parameter
-            param_type = "string"  # Default to string (covers sql_query)
-            
-            # Provide clear descriptions for known parameters
+            ann = param.annotation
+            if ann == int:
+                json_type = "integer"
+            elif ann == float:
+                json_type = "number"
+            elif ann == bool:
+                json_type = "boolean"
+            else:
+                json_type = "string"
+
             if param_name == "sql_query":
                 param_desc = "A valid SQLite SELECT query to execute against the 'alerts' table. Must start with SELECT."
             else:
                 param_desc = f"The {param_name} parameter"
-            
+
             properties[param_name] = {
-                "type": param_type,
+                "type": json_type,
                 "description": param_desc
             }
-            required.append(param_name)
+            if param.default is inspect._empty:
+                required.append(param_name)
         
         tools_schema.append({
             "type": "function",
@@ -369,6 +501,21 @@ async def run_glm_agent(
     # Track whether we've executed at least one tool in this session. If false, route
     # any model content to the reasoning channel to avoid showing planning text in the Answer panel.
     any_tool_used = False
+    
+    # Iteration budget tracking to prevent infinite loops on specific error types
+    iteration_budget = {
+        "sql_errors": 4,      # Max 4 SQL syntax retries
+        "empty_results": 3,   # Max 3 empty result retries
+        "tool_errors": 3,     # Max 3 tool execution errors
+        "total_errors": 0     # Total error count
+    }
+    
+    # Track error patterns for intelligent retry
+    error_history = {
+        "patterns_seen": [],
+        "auto_fixes_attempted": {},
+        "last_sql_query": None
+    }
     
     # Track query classification for analytics
     import time
@@ -626,17 +773,145 @@ async def run_glm_agent(
                 
                 # Offload potentially blocking tool execution to a thread to keep SSE responsive
                 try:
+                    # Coerce arguments to annotated types when possible
+                    sig = inspect.signature(tool_func)
+                    coerced = {}
+                    for pname, p in sig.parameters.items():
+                        if pname in tool_args:
+                            v = tool_args[pname]
+                            if p.annotation == int:
+                                try:
+                                    v = int(v)
+                                except Exception:
+                                    pass
+                            elif p.annotation == float:
+                                try:
+                                    v = float(v)
+                                except Exception:
+                                    pass
+                            elif p.annotation == bool:
+                                if isinstance(v, str):
+                                    lv = v.strip().lower()
+                                    if lv in ("1","true","yes","y"): v = True
+                                    elif lv in ("0","false","no","n"): v = False
+                            coerced[pname] = v
+                    tool_args.update(coerced)
                     tool_result = await asyncio.to_thread(tool_func, **tool_args)
                 except Exception as tool_error:
-                    print(f"❌ Tool '{tool_name}' execution failed: {tool_error}")
-                    # Provide error context to LLM for potential retry
-                    import traceback
-                    tool_result = json.dumps({
-                        "error": f"Tool execution failed: {str(tool_error)}",
-                        "tool": tool_name,
-                        "type": type(tool_error).__name__,
-                        "suggestion": "Try simplifying the query. Common issues: unquoted column names with spaces, incorrect date formats, or case-sensitive filters (use UPPER())."
-                    })
+                    error_msg = str(tool_error)
+                    print(f"❌ Tool '{tool_name}' execution failed: {error_msg}")
+                    
+                    # Track total errors
+                    iteration_budget["total_errors"] += 1
+                    
+                    # Match error against known patterns
+                    error_pattern = match_error_pattern(error_msg)
+                    
+                    if error_pattern:
+                        print(f"🔍 Matched error pattern: {error_pattern['pattern_name']} (severity: {error_pattern['severity']})")
+                        error_history["patterns_seen"].append(error_pattern['pattern_name'])
+                        
+                        # Check if we should auto-fix
+                        if error_pattern['auto_fix'] and tool_name == "execute_sql_query":
+                            sql_query = tool_args.get("sql_query", "")
+                            fix_strategy = error_pattern['fix_strategy']
+                            pattern_name = error_pattern['pattern_name']
+                            
+                            # Track auto-fix attempts
+                            if pattern_name not in error_history["auto_fixes_attempted"]:
+                                error_history["auto_fixes_attempted"][pattern_name] = 0
+                            
+                            # Check if we've exceeded retry budget for this error type
+                            if error_history["auto_fixes_attempted"][pattern_name] < error_pattern['max_retries']:
+                                error_history["auto_fixes_attempted"][pattern_name] += 1
+                                
+                                # Attempt auto-fix
+                                fixed_query = auto_fix_sql_query(
+                                    sql_query, 
+                                    fix_strategy, 
+                                    error_history["auto_fixes_attempted"][pattern_name]
+                                )
+                                
+                                if fixed_query != sql_query:
+                                    print(f"🔧 Auto-fixing query (attempt {error_history['auto_fixes_attempted'][pattern_name]}/{error_pattern['max_retries']})")
+                                    
+                                    # Yield reasoning event about auto-fix
+                                    yield {
+                                        "type": "reasoning",
+                                        "content": f"🔧 Auto-fixing {error_pattern['description']}: {error_pattern['matched_text']}\nAttempt {error_history['auto_fixes_attempted'][pattern_name]}/{error_pattern['max_retries']}"
+                                    }
+                                    
+                                    # Try executing fixed query
+                                    try:
+                                        tool_result = await asyncio.to_thread(tool_func, sql_query=fixed_query)
+                                        print(f"✅ Auto-fix successful!")
+                                        
+                                        # Success - proceed with result
+                                    except Exception as retry_error:
+                                        print(f"❌ Auto-fix failed: {retry_error}")
+                                        # Fall through to error response below
+                                        tool_result = json.dumps({
+                                            "error": f"Auto-fix attempt failed: {str(retry_error)}",
+                                            "original_error": error_msg,
+                                            "pattern": error_pattern['pattern_name'],
+                                            "fix_attempted": fix_strategy,
+                                            "suggestion": f"After {error_history['auto_fixes_attempted'][pattern_name]} attempts, unable to auto-fix. {error_pattern['description']}"
+                                        })
+                                else:
+                                    # No fix possible
+                                    tool_result = json.dumps({
+                                        "error": error_msg,
+                                        "pattern": error_pattern['pattern_name'],
+                                        "description": error_pattern['description'],
+                                        "suggestion": "Manual intervention required"
+                                    })
+                            else:
+                                # Exceeded retry budget
+                                print(f"⚠️ Exceeded retry budget for {pattern_name}")
+                                tool_result = json.dumps({
+                                    "error": error_msg,
+                                    "pattern": pattern_name,
+                                    "retry_budget_exceeded": True,
+                                    "attempts": error_history['auto_fixes_attempted'][pattern_name],
+                                    "suggestion": f"Exceeded maximum {error_pattern['max_retries']} retries. Try a different approach."
+                                })
+                        
+                        elif not error_pattern['auto_fix']:
+                            # Fail fast for non-fixable errors
+                            print(f"🛑 Non-fixable error: {pattern_name}")
+                            tool_result = json.dumps({
+                                "error": error_msg,
+                                "pattern": pattern_name,
+                                "severity": error_pattern['severity'],
+                                "description": error_pattern['description'],
+                                "auto_fix_available": False,
+                                "suggestion": "This error cannot be automatically fixed. " + 
+                                            ("Database not loaded. Please reload data." if pattern_name == "no_such_table" else "Manual intervention required.")
+                            })
+                            # For critical errors, break the loop
+                            if error_pattern['severity'] == "critical":
+                                yield {
+                                    "type": "error",
+                                    "message": f"Critical error: {error_pattern['description']}",
+                                    "details": tool_result
+                                }
+                                break
+                        else:
+                            # Auto-fix not applicable for this tool
+                            tool_result = json.dumps({
+                                "error": error_msg,
+                                "pattern": pattern_name,
+                                "tool": tool_name,
+                                "suggestion": error_pattern['description']
+                            })
+                    else:
+                        # Unknown error pattern - generic handling
+                        tool_result = json.dumps({
+                            "error": f"Tool execution failed: {error_msg}",
+                            "tool": tool_name,
+                            "type": type(tool_error).__name__,
+                            "suggestion": "Try simplifying the query. Common issues: unquoted column names with spaces, incorrect date formats, or case-sensitive filters (use UPPER())."
+                        })
 
                 print("\n\n[DEBUG] TOOL RESULT RAW OUTPUT:\n", tool_result[:500], "\n")
 

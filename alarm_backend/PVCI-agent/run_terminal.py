@@ -60,7 +60,9 @@ async def main():
                 try:
                     tool_func = {t.__name__: t for t in AVAILABLE_TOOLS}.get(tool_name)
                     if tool_func:
-                        tool_args = json.loads(data.get("arguments", "{}"))
+                        # Handle empty/None arguments safely
+                        raw_args = data.get("arguments") or "{}"
+                        tool_args = json.loads(raw_args) if raw_args else {}
                         tool_result = tool_func(**tool_args)
 
                         # Parse JSON (SQL SELECT results)
@@ -90,7 +92,8 @@ async def main():
             # === TOOL RESULT HANDLER (ALARM ANALYSIS JSON) ===
             elif chunk_type == "tool_result":
                 try:
-                    parsed = json.loads(content)
+                    # Handle empty/None content safely
+                    parsed = json.loads(content) if content else {}
                     if isinstance(parsed, dict) and ("per_source" in parsed or "bad_actor" in parsed):
                         print("\n=== 🧩 Alarm Analysis Summary ===")
                         print("Total rows processed:", parsed.get("total_rows", "N/A"))

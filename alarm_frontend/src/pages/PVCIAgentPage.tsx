@@ -2,12 +2,12 @@
  * PVCI Agent Page - Streaming SQL analysis agent
  * Full-page experience matching the existing Agent design
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, Children, isValidElement, useCallback, type CSSProperties } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageShell } from "@/components/dashboard/PageShell";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Sparkles, ArrowLeft, Copy, ThumbsUp, ThumbsDown, Share2, RotateCcw, MoreHorizontal, Loader2, ChevronDown } from "lucide-react";
+import { Sparkles, ArrowLeft, Copy, ThumbsUp, ThumbsDown, Loader2, ChevronDown } from "lucide-react";
 import { PlaceholdersAndVanishInput } from "@/components/ui/placeholders-and-vanish-input";
 import { streamAgentQuery, generateRequestId, generateSessionId, AgentEvent } from "@/api/agentSSE";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { ScrollArea } from "@/components/ui/scroll-area";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { toast } from "@/components/ui/use-toast";
 
 type ReasoningPhase = {
   label: string;  // "Planning", "Iteration 1 Analysis", "Final Review"
@@ -36,6 +37,7 @@ type Message = {
   _lastReasoningPhase?: string;  // Last phase label to avoid duplicates
   // Track which section should be open (format: 'reasoning-0', 'tool-0', etc)
   _openSection?: string;
+  feedback?: "like" | "dislike";
 };
 
 // Remove any inline tool-call markup the model might echo into the answer text
@@ -75,6 +77,7 @@ const PVCIAgentPage = () => {
   // Track the active request's controller and message id to update messages in-place
   const activeControllerRef = useRef<AbortController | null>(null);
   const [activeAnswerId, setActiveAnswerId] = useState<string | null>(null);
+  const abortedRef = useRef(false);
 
   // auto-scroll to bottom
   useEffect(() => {
@@ -84,6 +87,32 @@ const PVCIAgentPage = () => {
       window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
     });
   }, [messages.length]);
+
+  const stopStreaming = useCallback(() => {
+    if (!activeControllerRef.current || !activeAnswerId) return;
+    try {
+      abortedRef.current = true;
+      activeControllerRef.current.abort();
+    } catch (e) {
+      // noop
+    }
+    setLoading(false);
+    setMessages((m) => m.map((mm) => mm.id === activeAnswerId ? { ...mm, isStreaming: false, pending: false } : mm));
+    setActiveAnswerId(null);
+    toast({ description: "Stopped generating." });
+  }, [activeAnswerId]);
+
+  useEffect(() => {
+    if (!loading) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        stopStreaming();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [loading, stopStreaming]);
 
   const send = async () => {
     const text = input.trim();
@@ -109,6 +138,7 @@ const PVCIAgentPage = () => {
     setInput("");
     setLoading(true);
     setActiveAnswerId(answerId);
+    abortedRef.current = false;
 
     const requestId = generateRequestId();
 
@@ -232,7 +262,12 @@ const PVCIAgentPage = () => {
           },
           onError: (error) => {
             setLoading(false);
-            setMessages((m) => m.map((mm) => mm.id === answerId ? { ...mm, content: `Error: ${error.message}`, isStreaming: false, pending: false } : mm));
+            if (abortedRef.current) {
+              // Treat as user-cancelled: do not overwrite content with error
+              setMessages((m) => m.map((mm) => mm.id === answerId ? { ...mm, isStreaming: false, pending: false } : mm));
+            } else {
+              setMessages((m) => m.map((mm) => mm.id === answerId ? { ...mm, content: `Error: ${error.message}`, isStreaming: false, pending: false } : mm));
+            }
             setActiveAnswerId(null);
           },
         }
@@ -284,12 +319,12 @@ const PVCIAgentPage = () => {
             className={cn(
               "break-words",
               isUser
-                ? "rounded-3xl px-4 py-3 shadow-sm w-fit max-w-[90%] md:max-w-[85%] ml-6 sm:ml-10 bg-[#7eb653] dark:bg-[#496930] text-white border-transparent"
+                ? "rounded-3xl px-4 py-3 shadow-sm w-fit max-w-[90%] md:max-w-[85%] ml-6 sm:ml-10 bg-card/85 backdrop-blur supports-[backdrop-filter]:backdrop-blur border border-border/70 text-foreground"
                 : "w-full"
             )}
           >
             {isUser ? (
-              <div className="text-white max-w-none whitespace-pre-wrap leading-6">{m.content}</div>
+              <div className="text-foreground max-w-none whitespace-pre-wrap leading-6">{m.content}</div>
             ) : m.pending ? (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -314,7 +349,7 @@ const PVCIAgentPage = () => {
                             onOpenChange={() => toggleSection(sectionId, open)}
                             className="group/collapsible"
                           >
-                            <CollapsibleTrigger className="flex w-full items-center justify-between text-left text-[13px]">
+                            <CollapsibleTrigger className="flex w-full items-center justify-between text-left text-[13px] rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-muted/60">
                               <span className="font-medium text-primary flex items-center gap-2">
                                 <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-xs">{idx + 1}</span>
                                 {phase.label}
@@ -358,7 +393,7 @@ const PVCIAgentPage = () => {
                             onOpenChange={() => toggleSection(sectionId, open)}
                             className="group/collapsible"
                           >
-                            <CollapsibleTrigger className="flex w-full items-center justify-between text-left text-[13px] text-primary">
+                            <CollapsibleTrigger className="flex w-full items-center justify-between text-left text-[13px] text-primary rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-muted/60">
                               <span className="underline-offset-2 hover:underline">{tool.name}</span>
                               <ChevronDown className="h-4 w-4 opacity-60 transition-all duration-200 group-data-[state=open]/collapsible:rotate-180" />
                             </CollapsibleTrigger>
@@ -366,14 +401,14 @@ const PVCIAgentPage = () => {
                               <div className="grid gap-2 mt-2">
                                 <div>
                                   <div className="text-[11px] font-medium text-muted-foreground mb-1">Arguments</div>
-                                  <ScrollArea className="h-28 rounded-md border border-border/60 p-2">
+                                  <ScrollArea className="h-28 rounded-lg border border-border/60 p-2 bg-card/60">
                                     <pre className="text-[13px] whitespace-pre-wrap font-mono text-muted-foreground">{prettyArgs}</pre>
                                   </ScrollArea>
                                 </div>
                                 {toolResult && (
                                   <div>
                                     <div className="text-[11px] font-medium text-muted-foreground mb-1">Result</div>
-                                    <ScrollArea className="h-28 rounded-md border border-border/60 p-2">
+                                    <ScrollArea className="h-28 rounded-lg border border-border/60 p-2 bg-card/60">
                                       <pre className="text-[13px] whitespace-pre-wrap font-mono text-muted-foreground">{toolResult}</pre>
                                     </ScrollArea>
                                   </div>
@@ -393,8 +428,13 @@ const PVCIAgentPage = () => {
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={{
-                        a: ({node, ...props}) => (
+                        a: ({ node, ...props }) => (
                           <a {...props} target="_blank" rel="noreferrer" />
+                        ),
+                        table: ({ node, ...props }) => (
+                          <div className="overflow-auto max-h-96 rounded-xl border border-border/70 shadow-sm bg-card relative">
+                            <table {...props} />
+                          </div>
                         ),
                       }}
                     >
@@ -411,14 +451,17 @@ const PVCIAgentPage = () => {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
-                        className="hover:text-foreground"
+                        aria-label="Copy answer"
+                        className="hover:text-foreground transition-transform active:scale-95"
                         onClick={async () => {
                           try {
                             await navigator.clipboard.writeText(m.content);
                             setCopiedId(m.id);
-                            window.setTimeout(() => setCopiedId(null), 1500);
+                            toast({ description: "Copied" });
+                            window.setTimeout(() => setCopiedId(null), 1200);
                           } catch (e) {
                             console.error(e);
+                            toast({ description: "Copy failed" });
                           }
                         }}
                       >
@@ -428,20 +471,35 @@ const PVCIAgentPage = () => {
                     <TooltipContent>{copiedId === m.id ? "Copied" : "Copy"}</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-                <button className="hover:text-foreground">
+                <button
+                  aria-label="Like answer"
+                  aria-pressed={m.feedback === "like"}
+                  className={cn(
+                    "transition-transform active:scale-95",
+                    m.feedback === "like" ? "text-primary" : "hover:text-foreground"
+                  )}
+                  onClick={() => {
+                    const newFeedback = m.feedback === "like" ? undefined : ("like" as const);
+                    setMessages((prev) => prev.map((mm) => mm.id === m.id ? { ...mm, feedback: newFeedback } : mm));
+                    toast({ description: newFeedback === "like" ? "Marked helpful" : "Feedback cleared" });
+                  }}
+                >
                   <ThumbsUp className="h-4 w-4" />
                 </button>
-                <button className="hover:text-foreground">
+                <button
+                  aria-label="Dislike answer"
+                  aria-pressed={m.feedback === "dislike"}
+                  className={cn(
+                    "transition-transform active:scale-95",
+                    m.feedback === "dislike" ? "text-primary" : "hover:text-foreground"
+                  )}
+                  onClick={() => {
+                    const newFeedback = m.feedback === "dislike" ? undefined : ("dislike" as const);
+                    setMessages((prev) => prev.map((mm) => mm.id === m.id ? { ...mm, feedback: newFeedback } : mm));
+                    toast({ description: newFeedback === "dislike" ? "Marked not helpful" : "Feedback cleared" });
+                  }}
+                >
                   <ThumbsDown className="h-4 w-4" />
-                </button>
-                <button className="hover:text-foreground">
-                  <Share2 className="h-4 w-4" />
-                </button>
-                <button className="hover:text-foreground">
-                  <RotateCcw className="h-4 w-4" />
-                </button>
-                <button className="hover:text-foreground">
-                  <MoreHorizontal className="h-4 w-4" />
                 </button>
               </div>
             )}
@@ -457,36 +515,38 @@ const PVCIAgentPage = () => {
     <PageShell>
       <div className="flex flex-col gap-3">
         {/* Header (sticky below global navbar) */}
-        <div className="flex items-center justify-between sticky z-40 bg-background backdrop-blur supports-[backdrop-filter]:backdrop-blur py-2 border-b border-border/60">
-          <div className="flex items-center gap-3 ">
-            <Sparkles className="h-5 w-5 text-primary" />
-            <div>
-              <h2 className="text-xl font-semibold">PVCI Agent</h2>
-              <p className="text-xs text-muted-foreground">Streaming SQL analysis</p>
+        <div className="sticky top-0 z-40 bg-background/70 backdrop-blur supports-[backdrop-filter]:backdrop-blur border-b border-border/60">
+          <div className="mx-auto max-w-[736px] w-full flex items-center justify-between px-2 sm:px-0 py-2.5">
+            <div className="flex items-center gap-3">
+              <Sparkles className="h-5 w-5 text-primary" />
+              <div>
+                <h2 className="text-lg sm:text-xl font-semibold leading-tight">PVCI Agent</h2>
+                <p className="text-xs text-muted-foreground">Streaming SQL analysis</p>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setMessages([{ id: "m-welcome", role: "agent", content: WelcomeMarkdown }])}
-            >
-              Clear
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => navigate("/dashboard")}>
-              <ArrowLeft className="mr-2 h-4 w-4" /> Dashboard
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setMessages([{ id: "m-welcome", role: "agent", content: WelcomeMarkdown }])}
+              >
+                Clear
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate("/dashboard")}> 
+                <ArrowLeft className="mr-2 h-4 w-4" /> Dashboard
+              </Button>
+            </div>
           </div>
         </div>
         {/* Chat body ensures composer sits at bottom on short pages */}
         <div className="flex flex-col min-h-[calc(100vh-220px)]">
           {/* Messages (page scroll) */}
-          <div ref={listRef} className="flex-1 space-y-5 sm:space-y-6 py-4">
+          <div ref={listRef} className="flex-1 space-y-4 sm:space-y-5 py-3">
             {allMessages.map(renderMessage)}
           </div>
 
           {/* Composer pinned to bottom of viewport */}
-          <div className="sticky bottom-0 border-t border-border p-4 bg-background backdrop-blur supports-[backdrop-filter]:backdrop-blur pb-[env(safe-area-inset-bottom)]">
+          <div className="sticky bottom-0 z-50 border-t border-border p-4 bg-background/80 backdrop-blur supports-[backdrop-filter]:backdrop-blur pb-[env(safe-area-inset-bottom)]">
             <div className="mx-auto max-w-[736px] w-full">
               <PlaceholdersAndVanishInput
                 placeholders={[
@@ -507,10 +567,12 @@ const PVCIAgentPage = () => {
                 maxRows={8}
                 sendOnEnter
                 disabled={loading}
+                isStreaming={loading}
+                onStop={stopStreaming}
               />
               <div className="text-center text-[11px] text-muted-foreground mt-2">
                 {loading
-                  ? "Generating response… sending disabled until completion."
+                  ? "Generating response… Press Esc to stop."
                   : `Session: ${sessionId.substring(8, 20)}... | Press Enter to send. Shift+Enter adds a new line. PVCI Agent can make mistakes—verify important information.`}
               </div>
             </div>

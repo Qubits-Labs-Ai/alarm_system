@@ -22,6 +22,311 @@ COLUMN_NAMES = [
 # Columns we will actually use, excluding 'Extra'
 USED_COLUMNS = COLUMN_NAMES[:-1]
 
+_PVCI_LOG_TOOL_PARAMS = os.getenv('PVCI_LOG_TOOL_PARAMS', '').strip().lower() in ('1','true','yes','y')
+
+def _log_tool_params(func_name: str, params: dict):
+    if not _PVCI_LOG_TOOL_PARAMS:
+        return
+    try:
+        preview = {}
+        for k, v in params.items():
+            t = type(v).__name__
+            try:
+                s = str(v)
+            except Exception:
+                s = '<unprintable>'
+            preview[k] = {"type": t, "preview": s[:160]}
+        print(f"[PVCI][param-log] {func_name}: {json.dumps(preview)}")
+    except Exception:
+        try:
+            print(f"[PVCI][param-log] {func_name}: <logging_failed>")
+        except Exception:
+            pass
+
+
+# ==================== DOMAIN NOMENCLATURES ====================
+
+# Descriptions for priority-like routing codes provided by user inputs
+PRIORITY_DESCRIPTIONS: Dict[str, str] = {
+    "H 00": "High priority, critical alarm",
+    "H 15": "High priority (alternate route or group)",
+    "J 00": "Journal entry or informational event",
+    "J 15": "Journal with different routing",
+    "L 00": "Low priority alarm",
+    "U 00": "Utility or system-level alarm",
+    "U 15": "Utility/system alarm (different routing)",
+    "Journal": "Alarm without sound / buzzer",
+    "None": "Unspecified/blank"
+}
+
+# Safe synonym lists we can reliably expand to dataset values for Priority
+# Note: We keep expansions conservative to avoid misclassification.
+PRIORITY_SYNONYMS: Dict[str, List[str]] = {
+    # Canonical groups used in the dataset
+    "CRITICAL": ["E", "U", "CRITICAL"],
+    "HIGH": ["HIGH", "H"],
+    "LOW": ["LOW", "L"],
+    "JOURNAL": ["J", "J-CODED", "JCODED", "JOURNAL"],
+    "UTILITY": ["U", "UTILITY", "SYSTEM"],
+    # Mapped routing codes (best-effort suggestions)
+    "H 00": ["H", "HIGH"],
+    "H 15": ["H", "HIGH"],
+    "J 00": ["J", "JOURNAL"],
+    "J 15": ["J", "JOURNAL"],
+    "L 00": ["L", "LOW"],
+    "U 00": ["U", "UTILITY"],
+    "U 15": ["U", "UTILITY"],
+}
+
+# Condition descriptions and selected synonym expansions to dataset-friendly values
+CONDITION_DESCRIPTIONS: Dict[str, str] = {
+    "ACTIVE": "The event/alarm condition is active (true) in the system.",
+    "ALARM": "Alarm",
+    "BAD PV": "Bad Process Variable",
+    "BAD_COMPTERM": "Communication termination fault",
+    "BADCTL": "Bad Control",
+    "CHANGE": "Operator Action",
+    "CHECKPOINT": "Redundancy sync or system backup event.",
+    "CMDDIS": "Command disabled — manual or system lockout.",
+    "CMFAIL": "Control module failure (hardware or execution failure).",
+    "COLD START": "Controller powered up with full initialization.",
+    "COMMS": "Communication error or loss detected.",
+    "CONFIRMABLE MESSAGE": "Message requiring confirmation by user.",
+    "DEVHI": "Deviation High",
+    "DEVLOW": "Deviation Low",
+    "DIAG": "Diagnostic alert.",
+    "DISABL": "Block or function enabled/disabled by user or logic.",
+    "DUPLICATE_INDEX": "Duplicate tag/index detected.",
+    "ENABLE": "Block or function enabled/disabled by user or logic.",
+    "EVENT": "General event logged by the system.",
+    "FILREP": "File replication event between redundant servers.",
+    "IDLE": "Device or block not active.",
+    "INACTV": "The event/alarm condition has cleared or become inactive.",
+    "IOPSWITCHOVER": "I/O redundancy switch occurred.",
+    "LEVEL": "Level-related alarm or deviation.",
+    "LOAD": "Controller module task state.",
+    "MANCOMPERROR": "Manual control block error.",
+    "MESSAGE": "Operator/system message logged.",
+    "NETREDERROR": "Redundant network failure.",
+    "OFFNET": "Node or device offline.",
+    "OFFNRM": "Node back to normal network communication.",
+    "OK": "Acknowledge/Returned to normal",
+    "OPHIGH": "Controller output at upper limit.",
+    "OPLOW": "Controller output at lower limit.",
+    "POWRON": "Controller or node powered on.",
+    "PVHI": "Process Variable High",
+    "PVHIGH": "Process Variable High",
+    "PVHIHI": "Process Variable High-High",
+    "PVLL": "Process Variable Low Limit",
+    "PVLO": "Process Variable Low",
+    "PVLOW": "Process Variable Low",
+    "PVLOLO": "Process Variable Low-Low",
+    "RSHI": "Rate-of-change high",
+    "RSLO": "Rate-of-change low",
+    "RUN": "Controller state",
+    "STATE": "State-based event",
+    "SVCHG": "Service change — configuration change detected.",
+    "SYNCH": "Synchronization of redundant controllers.",
+    "UNCMD": "Uncommanded output change detected.",
+    "WARM START": "Restart retaining previous state."
+}
+
+CONDITION_SYNONYMS: Dict[str, List[str]] = {
+    # High side
+    "PVHI": ["HI", "PVHI", "PVHIGH"],
+    "PVHIGH": ["HI", "PVHI", "PVHIGH"],
+    "PVHIHI": ["HIHI", "PVHIHI", "PVHIGHHIGH"],
+    # Low side
+    "PVLO": ["LO", "PVLO", "PVLOW"],
+    "PVLOW": ["LO", "PVLO", "PVLOW"],
+    "PVLOLO": ["LOLO", "PVLOLO", "PVLOWLOW"],
+    # OK/clear
+    "OK": ["OK"],
+}
+
+ACTION_DESCRIPTIONS: Dict[str, str] = {
+    "ACK": "Acknowledged",
+    "ACK PNT": "Acknowledged",
+    "OK": "Returned to normal",
+    "RESHELVE": "Shelve",
+    "SHELVE": "Shelve",
+    "UNSHELVE": "Removed from Shelve"
+}
+
+ACTION_SYNONYMS: Dict[str, List[str]] = {
+    "ACK": ["ACK", "ACK PNT"],
+    "OK": ["OK"],
+    "SHELVE": ["SHELVE", "RESHELVE"],
+    "UNSHELVE": ["UNSHELVE"]
+}
+
+# DCS tag prefix → meaning (subset; extendable)
+DCS_TAGS: Dict[str, str] = {
+    # Analyzer / Temperature / Flow / Pressure / Level families
+    "AI": "Analyzer",
+    "AIA": "Analyzer",
+    "AIC": "Analyzer Controller",
+    "AICA": "Analyzer Controller with Alarm",
+    "AT": "Analyzer Transmitter",
+    "AV": "Analog Valve / Air Valve",
+    "AY": "Actuator",
+    "CFA": "Control Flow Alarm",
+    "CFB": "Control Flow Bypass",
+    "CFC": "Control Flow Controller",
+    "Chldet": "Chlorine Detector",
+    "Chlorinedet": "Chlorine Gas Detector",
+    "cm": "Centimeter",
+    "FI": "Flow Indicator",
+    "FIC": "Flow Indicating Controller",
+    "FICA": "Flow Indicating Controller with Alarm",
+    "FIR": "Flow Indicating Recorder",
+    "FIT": "Flow Indicating Transmitter",
+    "FT": "Flow Transmitter",
+    "FQI": "Flow Quantity Indicator",
+    "FIPP": "Flow Input Processing Point",
+    "FIQ": "Flow Integrator",
+    "FV": "Flow Valve / Flow Control Valve",
+    "FCV": "Flow Control Valve",
+    "FXV": "Fail-safe Control Valve",
+    "FFIC": "Feed Flow Indicating Controller",
+    "PI": "Pressure Indicator",
+    "PIC": "Pressure Indicating Controller",
+    "PICA": "Pressure Indicating Controller with Alarm",
+    "PT": "Pressure Transmitter",
+    "PTA": "Pressure Transmitter Alarm",
+    "PAH": "Pressure Alarm High",
+    "PALA": "Pressure Alarm Low Alarm",
+    "PC": "Pressure Controller",
+    "PDI": "Pressure Differential Indicator",
+    "PDIA": "Pressure Differential Indicator Alarm",
+    "PV": "Process Variable / Pressure Controller",
+    "PIA": "Pressure Indicator Alarm",
+    "LI": "Level Indicator",
+    "LIA": "Level Indicator Alarm",
+    "LIAS": "Level Indicator Alarm Switch",
+    "LIC": "Level Indicating Controller",
+    "LICA": "Level Indicating Controller with Alarm",
+    "LT": "Level Transmitter",
+    "LTC": "Low Temperature Chlorination reactor",
+    "LV": "Level Valve",
+    "LXV": "Level Control Valve (Manual/On-Off)",
+    "Main": "Main Module / Primary System",
+    "TI": "Temperature Indicator",
+    "TIA": "Temperature Indicator Alarm",
+    "TIC": "Temperature Indicating Controller",
+    "TICA": "Temperature Indicating Controller with Alarm",
+    "TT": "Temperature Transmitter",
+    "TV": "Temperature Control Valve",
+    "TDI": "Temperature Differential Indicator",
+
+    # Valves / Discrete / Instruments
+    "BV": "Block Valve",
+    "XV": "On-Off Valve",
+    "SV": "Solenoid Valve",
+    "VI": "Visual Indicator",
+    "XI": "Solenoid / On-Off Control",
+    "ZI": "Vibration Indicator",
+    "HS": "Hand Switch",
+    "HV": "Hand Valve",
+
+    # Digital/Analog IO
+    "DI": "Digital Input",
+    "DO": "Digital Output",
+    "DP": "Differential Pressure",
+    "DPI": "Differential Pressure Indicator",
+    "DSQ": "Desuperheated Quench",
+    "DUMMY": "Dummy",
+    "AO": "Analog Output",
+    "I": "Current Signal / Input",
+    "II": "Interlock Input / Input Isolator",
+    "IIAPC": "Input Interface for APC",
+    "INC": "Increment / Incremental Control",
+    "INTLOCK": "Interlock",
+    "RTD": "Resistance Temperature Detector",
+
+    # Control & Systems
+    "APC": "Advanced Process Control",
+    "BMS": "Burner Management System",
+    "SCM": "System Control Module",
+    "SYSMGT": "System Management",
+    "OPC": "OPC Interface",
+    "OVR": "OVR reactor",
+    "OXY": "OXY reactor",
+    "PRIMARY": "Primary Controller / Module",
+    "Standard": "Standard Control Template",
+    "GROUP": "Group Logic",
+    "GRSCR": "Group Script / Sequence Control",
+    "QSCA": "Quick Scan A",
+    "QSCB": "Quick Scan B",
+    "QSCC": "Quick Scan C",
+
+    # Mechanical / Equipment
+    "B": "Blower",
+    "BL": "Blower",
+    "FD": "Flame Detector",
+    "FDA": "Flame Detector Assembly",
+    "FDS": "Fire Detection System",
+    "HF": "High Flow",
+    "HIC": "Hand Indicating Controller",
+    "FLAME": "Flame Detector",
+    "FLAMEB": "Flame Backup Detector",
+    "GR": "Chiller",
+    "Heads": "Motor / Compressor Heads",
+    "MCC": "Motor Control Center",
+    "PP": "Pump",
+
+    # Facilities / Networks / Modules
+    "CA": "Control Air / Compressor Air",
+    "CDA": "Clean Dry Air",
+    "NDM": "Network Device Module",
+    "NP": "Network Port",
+    "IOLINK": "Input/Output Link",
+    "Redundant": "Redundant Controller / Pair Module",
+    "Server": "DCS Server Node",
+    "STATION": "Operator Station",
+    "STS": "Status Signal",
+    "CONSOLE": "Operator Console",
+
+    # Process Units / Special
+    "FURNACE": "Furnace",
+    "HCLC": "High Concentration Level Controller",
+    "HTDC": "High Temperature Direct Chlorination reactor",
+    "HTDCSHELTER": "Heat Detector Control Shelter",
+    "OVR": "OVR reactor",
+    "OXY": "OXY reactor",
+    "SOP": "Seal Oil Pot",
+    "SP": "Set Point",
+    "VCLC": "Valve Control Logic Controller",
+
+    # Misc / System
+    "ALARMS": "Alarm",
+    "Aux": "Auxiliary",
+    "File": "System File Reference",
+    "Filerep": "File Report",
+    "Inventory": "Inventory (Mass/Volume) Module",
+    "Module": "Module",
+    "Printer": "System Printer",
+    "PSH": "Pressure Switch High",
+    "System": "DCS System Module",
+    "TREND": "Trend Display",
+    "DBN": "Debottlenecking",
+    "Fast": "Fast Scan / Fast Response Loop",
+    "OPC": "OLE for Process Control Interface",
+    "test": "Test Tag"
+}
+
+
+def get_data_max_date():
+    """Get the maximum date from the alerts database (for relative date calculations)."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        result = pd.read_sql_query("SELECT MAX(\"Event Time\") as max_date FROM alerts", conn)
+        conn.close()
+        max_date = result['max_date'].iloc[0]
+        return max_date if max_date else "datetime('now')"
+    except:
+        return "datetime('now')"  # Fallback to 'now' if query fails
+
 
 def load_data(file_path: str, sheet_name: str = 'alert_data'):
     """
@@ -120,9 +425,140 @@ def _normalize_priority_literals(sql: str) -> str:
         # J-CODED
         rep(r"\bPRIORITY\b\s*=\s*'J-CODED'", "UPPER(\"Priority\") IN ('J','J-CODED','JCODED')")
         rep(r"\bPRIORITY\b\s*=\s*'JCODED'", "UPPER(\"Priority\") IN ('J','J-CODED','JCODED')")
+        # Routing codes and journal keyword
+        rep(r"\bPRIORITY\b\s*=\s*'H\s*00'", "UPPER(\"Priority\") IN ('HIGH','H')")
+        rep(r"\bPRIORITY\b\s*=\s*'H\s*15'", "UPPER(\"Priority\") IN ('HIGH','H')")
+        rep(r"\bPRIORITY\b\s*=\s*'L\s*00'", "UPPER(\"Priority\") IN ('LOW','L')")
+        rep(r"\bPRIORITY\b\s*=\s*'J\s*00'", "UPPER(\"Priority\") IN ('J','J-CODED','JCODED')")
+        rep(r"\bPRIORITY\b\s*=\s*'J\s*15'", "UPPER(\"Priority\") IN ('J','J-CODED','JCODED')")
+        rep(r"\bPRIORITY\b\s*=\s*'U\s*00'", "UPPER(\"Priority\") IN ('U','UTILITY','SYSTEM')")
+        rep(r"\bPRIORITY\b\s*=\s*'U\s*15'", "UPPER(\"Priority\") IN ('U','UTILITY','SYSTEM')")
+        rep(r"\bPRIORITY\b\s*=\s*'JOURNAL'", "UPPER(\"Priority\") IN ('J','J-CODED','JCODED','JOURNAL')")
         return s
     except Exception:
         return sql
+
+def _normalize_condition_literals(sql: str) -> str:
+    """
+    Normalize common Condition literals to canonical IN(...) lists for robustness.
+    Examples:
+      UPPER("Condition") = 'HI'   -> IN ('HI','PVHI','PVHIGH')
+      Condition = 'HIHI'           -> IN ('HIHI','PVHIHI','PVHIGHHIGH')
+      UPPER(Condition) LIKE 'LO'   -> IN ('LO','PVLO','PVLOW')
+    """
+    try:
+        s = sql
+        def rep(pattern: str, replacement: str) -> None:
+            nonlocal s
+            s = re.sub(pattern, replacement, s, flags=re.IGNORECASE)
+
+        # HI family
+        rep(r"UPPER\(\s*\"?CONDITION\"?\s*\)\s*=\s*'HI'", "UPPER(\"Condition\") IN ('HI','PVHI','PVHIGH')")
+        rep(r"\bCONDITION\b\s*=\s*'HI'", "UPPER(\"Condition\") IN ('HI','PVHI','PVHIGH')")
+        rep(r"\bCONDITION\b\s+LIKE\s+'HI'", "UPPER(\"Condition\") IN ('HI','PVHI','PVHIGH')")
+
+        # HIHI family
+        rep(r"UPPER\(\s*\"?CONDITION\"?\s*\)\s*=\s*'HIHI'", "UPPER(\"Condition\") IN ('HIHI','PVHIHI','PVHIGHHIGH')")
+        rep(r"\bCONDITION\b\s*=\s*'HIHI'", "UPPER(\"Condition\") IN ('HIHI','PVHIHI','PVHIGHHIGH')")
+
+        # LO family
+        rep(r"UPPER\(\s*\"?CONDITION\"?\s*\)\s*=\s*'LO'", "UPPER(\"Condition\") IN ('LO','PVLO','PVLOW')")
+        rep(r"\bCONDITION\b\s*=\s*'LO'", "UPPER(\"Condition\") IN ('LO','PVLO','PVLOW')")
+        rep(r"\bCONDITION\b\s+LIKE\s+'LO'", "UPPER(\"Condition\") IN ('LO','PVLO','PVLOW')")
+
+        # LOLO family
+        rep(r"UPPER\(\s*\"?CONDITION\"?\s*\)\s*=\s*'LOLO'", "UPPER(\"Condition\") IN ('LOLO','PVLOLO','PVLOWLOW')")
+        rep(r"\bCONDITION\b\s*=\s*'LOLO'", "UPPER(\"Condition\") IN ('LOLO','PVLOLO','PVLOWLOW')")
+
+        # OK
+        rep(r"UPPER\(\s*\"?CONDITION\"?\s*\)\s*=\s*'OK'", "UPPER(\"Condition\") IN ('OK')")
+        rep(r"\bCONDITION\b\s*=\s*'OK'", "UPPER(\"Condition\") IN ('OK')")
+
+        return s
+    except Exception:
+        return sql
+
+def _normalize_action_literals(sql: str) -> str:
+    """
+    Normalize Action synonyms (e.g., ACK PNT -> ACK; RESHELVE -> SHELVE).
+    """
+    try:
+        s = sql
+        def rep(pattern: str, replacement: str) -> None:
+            nonlocal s
+            s = re.sub(pattern, replacement, s, flags=re.IGNORECASE)
+
+        rep(r"UPPER\(\s*\"?ACTION\"?\s*\)\s*=\s*'ACK PNT'", "UPPER(\"Action\") IN ('ACK','ACK PNT')")
+        rep(r"\bACTION\b\s*=\s*'ACK PNT'", "UPPER(\"Action\") IN ('ACK','ACK PNT')")
+        rep(r"UPPER\(\s*\"?ACTION\"?\s*\)\s*=\s*'RESHELVE'", "UPPER(\"Action\") IN ('SHELVE','RESHELVE')")
+        rep(r"\bACTION\b\s*=\s*'RESHELVE'", "UPPER(\"Action\") IN ('SHELVE','RESHELVE')")
+        return s
+    except Exception:
+        return sql
+
+def normalize_query_literals(sql: str) -> str:
+    """Apply all safe literal normalizations (priority, condition, action)."""
+    sql = _normalize_priority_literals(sql)
+    sql = _normalize_condition_literals(sql)
+    sql = _normalize_action_literals(sql)
+    return sql
+
+def lookup_nomenclature(term: str) -> str:
+    """
+    Look up a domain term across Priority/Condition/Action/DCS dictionaries.
+    Returns JSON with matches and suggested canonical forms.
+    """
+    try:
+        t = (term or "").strip().upper()
+        results = {"term": term, "matches": {}}
+
+        # Priority
+        p_matches = []
+        for key, desc in PRIORITY_DESCRIPTIONS.items():
+            if t == key.upper():
+                p_matches.append({"code": key, "description": desc, "maps_to": PRIORITY_SYNONYMS.get(key, [])})
+        for canon, syns in PRIORITY_SYNONYMS.items():
+            if t == canon.upper() or t in [s.upper() for s in syns]:
+                p_matches.append({"group": canon, "synonyms": syns})
+        if p_matches:
+            results["matches"]["priority"] = p_matches
+
+        # Condition
+        c_matches = []
+        for key, desc in CONDITION_DESCRIPTIONS.items():
+            if t == key.upper():
+                c_matches.append({"code": key, "description": desc, "synonyms": CONDITION_SYNONYMS.get(key, [])})
+        for canon, syns in CONDITION_SYNONYMS.items():
+            if t == canon.upper() or t in [s.upper() for s in syns]:
+                c_matches.append({"group": canon, "synonyms": syns})
+        if c_matches:
+            results["matches"]["condition"] = c_matches
+
+        # Action
+        a_matches = []
+        for key, desc in ACTION_DESCRIPTIONS.items():
+            if t == key.upper():
+                a_matches.append({"code": key, "description": desc, "synonyms": ACTION_SYNONYMS.get(key, [])})
+        for canon, syns in ACTION_SYNONYMS.items():
+            if t == canon.upper() or t in [s.upper() for s in syns]:
+                a_matches.append({"group": canon, "synonyms": syns})
+        if a_matches:
+            results["matches"]["action"] = a_matches
+
+        # DCS tag by prefix (e.g., TI-101)
+        dcs = []
+        for prefix, meaning in DCS_TAGS.items():
+            if t == prefix or t.startswith(prefix + "-"):
+                dcs.append({"prefix": prefix, "meaning": meaning})
+        if dcs:
+            results["matches"]["dcs_tag"] = dcs
+
+        if not results["matches"]:
+            results["message"] = "No nomenclature matches found."
+
+        return json.dumps(results, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Lookup failed: {str(e)}"})
 
 def execute_sql_query(sql_query: str) -> str:
     """
@@ -130,8 +566,8 @@ def execute_sql_query(sql_query: str) -> str:
     Returns JSON with data, metadata, and helpful error messages.
     """
     try:
-        # Normalize priority literals (HIGH->H, CRITICAL->E/U)
-        sql_query = _normalize_priority_literals(sql_query)
+        # Normalize literals (Priority/Condition/Action) to improve matching
+        sql_query = normalize_query_literals(sql_query)
         
         # Validate query
         sql_upper = sql_query.strip().upper()
@@ -218,7 +654,7 @@ def analyze_alarm_behavior(sql_query: str) -> str:
     Expectation: SQL should return rows with at least 'Event Time' and 'Source' columns.
     """
     try:
-        sql_query = _normalize_priority_literals(sql_query)
+        sql_query = normalize_query_literals(sql_query)
         if not sql_query.strip().upper().startswith("SELECT"):
             return json.dumps({
                 "error": "Only SELECT queries allowed.",
@@ -322,17 +758,19 @@ def get_isa_compliance_report(time_period: str = "all") -> str:
     Example: get_isa_compliance_report("last_30_days")
     """
     try:
-        # Build time filter
+        # Build time filter using actual data's max date
+        conn = sqlite3.connect(DB_FILE)
+        max_date = get_data_max_date()
+        
         time_filter = ""
         if time_period == "last_30_days":
-            time_filter = "WHERE datetime(\"Event Time\") >= datetime('now', '-30 days')"
+            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-30 days')"
         elif time_period == "last_7_days":
-            time_filter = "WHERE datetime(\"Event Time\") >= datetime('now', '-7 days')"
+            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-7 days')"
         elif time_period == "last_24_hours":
-            time_filter = "WHERE datetime(\"Event Time\") >= datetime('now', '-1 day')"
+            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-1 day')"
         
         sql = f"SELECT * FROM alerts {time_filter}"
-        conn = sqlite3.connect(DB_FILE)
         df = pd.read_sql_query(sql, conn)
         conn.close()
         
@@ -341,7 +779,10 @@ def get_isa_compliance_report(time_period: str = "all") -> str:
         
         # Calculate unique alarm activations using state machine
         df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
-        df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+        df["Action"] = (
+            df["Action"].fillna("").astype(str).str.upper().str.strip()
+            .replace({"NAN": "", "NULL": "", "NONE": "", "ACK PNT": "ACK"})
+        )
         
         activations = []
         for src, group in df.groupby("Source"):
@@ -417,7 +858,7 @@ def get_isa_compliance_report(time_period: str = "all") -> str:
         return json.dumps({"error": f"ISA compliance analysis failed: {str(e)}"})
 
 
-def analyze_bad_actors(top_n: int = 10, min_alarms: int = 50) -> str:
+def analyze_bad_actors(top_n: int = 10, min_alarms: int = 50, time_period: str = "all", start_date: str = None, end_date: str = None) -> str:
     """
     Identify top 'Bad Actor' alarm sources with prescriptive recommendations.
     Analyzes unique alarm activations, chattering episodes, and standing alarms.
@@ -434,18 +875,47 @@ def analyze_bad_actors(top_n: int = 10, min_alarms: int = 50) -> str:
     - Specific recommendations per source
     
     Example: analyze_bad_actors(top_n=15, min_alarms=100)
+    Time Filters (use either):
+      - time_period: one of "all", "last_30_days", "last_7_days", "last_24_hours"
+      - start_date/end_date: explicit ISO strings (e.g., "2025-01-01", "2025-01-31")
     """
     try:
+        if not isinstance(top_n, int):
+            try:
+                top_n = int(top_n)
+            except Exception:
+                top_n = 10
+        if not isinstance(min_alarms, int):
+            try:
+                min_alarms = int(min_alarms)
+            except Exception:
+                min_alarms = 50
         conn = sqlite3.connect(DB_FILE)
-        df = pd.read_sql_query("SELECT * FROM alerts", conn)
+        max_date = get_data_max_date()
+        # Build time filter
+        time_filter = ""
+        if start_date and end_date:
+            time_filter = f'WHERE datetime("Event Time") BETWEEN datetime(\'{start_date}\') AND datetime(\'{end_date}\')'
+        else:
+            if time_period == "last_30_days":
+                time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-30 days')"
+            elif time_period == "last_7_days":
+                time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-7 days')"
+            elif time_period == "last_24_hours":
+                time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-1 day')"
+        
+        sql = f"SELECT * FROM alerts {time_filter}"
+        df = pd.read_sql_query(sql, conn)
         conn.close()
         
         if df.empty:
             return json.dumps({"message": "No data available."})
         
         df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
-        df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
-        df["Condition"] = df["Condition"].fillna("").astype(str).str.upper().str.strip() if "Condition" in df.columns else ""
+        df["Action"] = (
+            df["Action"].fillna("").astype(str).str.upper().str.strip()
+            .replace({"NAN": "", "NULL": "", "NONE": "", "ACK PNT": "ACK"})
+        )
         
         # Calculate per-source metrics using state machine
         bad_actors = []
@@ -531,7 +1001,12 @@ def analyze_bad_actors(top_n: int = 10, min_alarms: int = 50) -> str:
             "status": "success",
             "top_offenders": bad_actors,
             "total_sources_analyzed": len(bad_actors),
-            "summary": f"Top {len(bad_actors)} bad actors identified with prescriptive recommendations."
+            "summary": f"Top {len(bad_actors)} bad actors identified with prescriptive recommendations.",
+            "filters": {
+                "time_period": time_period,
+                "start_date": start_date,
+                "end_date": end_date
+            }
         }, indent=2)
     except Exception as e:
         return json.dumps({"error": f"Bad actor analysis failed: {str(e)}"})
@@ -562,7 +1037,10 @@ def get_alarm_health_summary(source_filter: str = None) -> str:
             return json.dumps({"message": "No sources match the filter."})
         
         df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
-        df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+        df["Action"] = (
+            df["Action"].fillna("").astype(str).str.upper().str.strip()
+            .replace({"NAN": "", "NULL": "", "NONE": "", "ACK PNT": "ACK"})
+        )
         
         health_data = []
         for src, group in df.groupby("Source"):
@@ -649,7 +1127,7 @@ def get_alarm_health_summary(source_filter: str = None) -> str:
         return json.dumps({"error": f"Health summary failed: {str(e)}"})
 
 
-def analyze_flood_events(min_sources: int = 2, time_period: str = "all") -> str:
+def analyze_flood_events(min_sources: int = 2, time_period: str = "all", start_date: str = None, end_date: str = None, summary_by_month: bool = False) -> str:
     """
     Detect and analyze alarm flood events (multiple sources simultaneously unhealthy).
     Identifies root causes and contributing sources.
@@ -657,6 +1135,8 @@ def analyze_flood_events(min_sources: int = 2, time_period: str = "all") -> str:
     Args:
         min_sources: Minimum sources involved to qualify as flood (default 2)
         time_period: "all", "last_30_days", "last_7_days", "last_24_hours"
+        start_date, end_date: Optional explicit ISO date strings to filter events (overrides time_period if both provided)
+        summary_by_month: If True, include monthly flood counts and top contributing sources per month
     
     Returns flood periods with:
     - Flood start/end times
@@ -666,16 +1146,35 @@ def analyze_flood_events(min_sources: int = 2, time_period: str = "all") -> str:
     
     Example: analyze_flood_events(min_sources=3, time_period="last_7_days")
     """
+    _log_tool_params("analyze_flood_events", {
+        "min_sources": min_sources,
+        "time_period": time_period,
+        "start_date": start_date,
+        "end_date": end_date,
+        "summary_by_month": summary_by_month,
+    })
     try:
-        time_filter = ""
-        if time_period == "last_30_days":
-            time_filter = "WHERE datetime(\"Event Time\") >= datetime('now', '-30 days')"
-        elif time_period == "last_7_days":
-            time_filter = "WHERE datetime(\"Event Time\") >= datetime('now', '-7 days')"
-        elif time_period == "last_24_hours":
-            time_filter = "WHERE datetime(\"Event Time\") >= datetime('now', '-1 day')"
-        
+        if not isinstance(min_sources, int):
+            try:
+                min_sources = int(min_sources)
+            except Exception:
+                min_sources = 2
+        if isinstance(summary_by_month, str):
+            summary_by_month = summary_by_month.strip().lower() in ('1','true','yes','y')
         conn = sqlite3.connect(DB_FILE)
+        max_date = get_data_max_date()
+        
+        time_filter = ""
+        if start_date and end_date:
+            time_filter = f'WHERE datetime("Event Time") BETWEEN datetime(\'{start_date}\') AND datetime(\'{end_date}\')'
+        else:
+            if time_period == "last_30_days":
+                time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-30 days')"
+            elif time_period == "last_7_days":
+                time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-7 days')"
+            elif time_period == "last_24_hours":
+                time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-1 day')"
+        
         df = pd.read_sql_query(f"SELECT * FROM alerts {time_filter}", conn)
         conn.close()
         
@@ -683,7 +1182,10 @@ def analyze_flood_events(min_sources: int = 2, time_period: str = "all") -> str:
             return json.dumps({"message": "No data for the selected period."})
         
         df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
-        df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+        df["Action"] = (
+            df["Action"].fillna("").astype(str).str.upper().str.strip()
+            .replace({"NAN": "", "NULL": "", "NONE": "", "ACK PNT": "ACK"})
+        )
         
         # Get unique activations
         activations = []
@@ -767,23 +1269,248 @@ def analyze_flood_events(min_sources: int = 2, time_period: str = "all") -> str:
                 flood["Root_Cause"] = "Plant-wide disturbance"
                 flood["Recommendation"] = "Review process conditions, utility failures, or cascade effects."
         
-        return json.dumps({
+        response = {
             "status": "success",
             "flood_count": len(unique_floods),
             "floods": unique_floods[:10],
-            "summary": f"Detected {len(unique_floods)} flood events involving {min_sources}+ sources simultaneously."
+            "summary": f"Detected {len(unique_floods)} flood events involving {min_sources}+ sources simultaneously.",
+            "filters": {
+                "time_period": time_period,
+                "start_date": start_date,
+                "end_date": end_date
+            }
+        }
+
+        if summary_by_month and unique_floods:
+            # Monthly counts and top contributing sources per month
+            month_counts: Dict[str, int] = {}
+            month_sources: Dict[str, Dict[str, int]] = {}
+            act_df = pd.DataFrame(activations)
+            act_df["Time"] = pd.to_datetime(act_df["Time"], errors="coerce")
+            for f in unique_floods:
+                s = pd.to_datetime(f["Flood_Start"]) 
+                e = pd.to_datetime(f["Flood_End"]) 
+                month_key = s.strftime("%Y-%m")
+                month_counts[month_key] = month_counts.get(month_key, 0) + 1
+                # Contributions in this flood window
+                acts = act_df[(act_df["Time"] >= s) & (act_df["Time"] <= e)]
+                counts = acts["Source"].value_counts().to_dict()
+                if month_key not in month_sources:
+                    month_sources[month_key] = {}
+                for src, cnt in counts.items():
+                    month_sources[month_key][src] = month_sources[month_key].get(src, 0) + cnt
+
+            monthly_summary = []
+            for m in sorted(month_counts.keys()):
+                top = sorted(month_sources.get(m, {}).items(), key=lambda x: x[1], reverse=True)[:10]
+                monthly_summary.append({
+                    "month": m,
+                    "flood_count": month_counts[m],
+                    "top_sources": [{"Source": s, "Alarm_Activations": c} for s, c in top]
+                })
+            response["monthly_summary"] = monthly_summary
+
+        return json.dumps(response, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Flood analysis failed: {str(e)}"})
+
+
+def analyze_flood_events_raw(min_sources: int = 2, time_window_minutes: int = 10, time_period: str = "all") -> str:
+    """
+    Analyze flood events using RAW EVENT COUNTING (no state machine required).
+    
+    Works with ANY data pattern - counts all events per source per time window.
+    Flood = Multiple sources alarming simultaneously within a time window.
+    
+    Args:
+        min_sources: Minimum sources to qualify as flood (default 2)
+        time_window_minutes: Window size in minutes (default 10)
+        time_period: "all", "last_30_days", "last_7_days", "last_24_hours"
+    
+    Example: analyze_flood_events_raw(min_sources=3, time_period="last_7_days")
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        max_date = get_data_max_date()
+        
+        time_filter = ""
+        if time_period == "last_30_days":
+            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-30 days')"
+        elif time_period == "last_7_days":
+            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-7 days')"
+        elif time_period == "last_24_hours":
+            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-1 day')"
+        
+        df = pd.read_sql_query(f"SELECT \"Event Time\", Source FROM alerts {time_filter}", conn)
+        conn.close()
+        
+        if df.empty:
+            return json.dumps({"status": "no_data", "message": f"No events found for {time_period}"})
+        
+        df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+        df = df.dropna(subset=["Event Time"])
+        df["time_window"] = df["Event Time"].dt.floor(f'{time_window_minutes}min')
+        
+        window_source_counts = df.groupby(["time_window", "Source"]).size().reset_index(name='event_count')
+        window_stats = window_source_counts.groupby("time_window").agg({
+            'Source': 'count',
+            'event_count': 'sum'
+        }).reset_index()
+        window_stats.columns = ['time_window', 'source_count', 'total_events']
+        
+        flood_windows = window_stats[window_stats['source_count'] >= min_sources].sort_values('source_count', ascending=False)
+        
+        if flood_windows.empty:
+            return json.dumps({
+                "status": "no_floods",
+                "message": f"No floods with {min_sources}+ sources in {time_window_minutes}-min windows"
+            })
+        
+        floods_detailed = []
+        for _, flood in flood_windows.head(20).iterrows():
+            window_time = flood['time_window']
+            window_sources = window_source_counts[window_source_counts['time_window'] == window_time]
+            top_sources = window_sources.nlargest(10, 'event_count')[['Source', 'event_count']].to_dict(orient='records')
+            
+            floods_detailed.append({
+                "window_start": str(window_time),
+                "window_end": str(window_time + pd.Timedelta(minutes=time_window_minutes)),
+                "sources_involved": int(flood['source_count']),
+                "total_events": int(flood['total_events']),
+                "top_sources": top_sources,
+                "severity": "critical" if flood['source_count'] >= min_sources * 2 else "high"
+            })
+        
+        return json.dumps({
+            "status": "success",
+            "flood_count": len(flood_windows),
+            "floods": floods_detailed,
+            "summary": f"Detected {len(flood_windows)} flood windows"
         }, indent=2)
     except Exception as e:
         return json.dumps({"error": f"Flood analysis failed: {str(e)}"})
 
 
+def get_isa_compliance_raw(time_period: str = "all") -> str:
+    """
+    Calculate ISA-18.2 compliance using RAW EVENT COUNTING (no state machine).
+    
+    ISA-18.2: Maximum 288 alarms per day per operator (12 per hour).
+    
+    Args:
+        time_period: "all", "last_30_days", "last_7_days", "last_24_hours"
+    
+    Example: get_isa_compliance_raw("last_30_days")
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        max_date = get_data_max_date()
+        
+        time_filter = ""
+        if time_period == "last_30_days":
+            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-30 days')"
+        elif time_period == "last_7_days":
+            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-7 days')"
+        elif time_period == "last_24_hours":
+            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-1 day')"
+        
+        df = pd.read_sql_query(f'SELECT "Event Time" FROM alerts {time_filter}', conn)
+        conn.close()
+        
+        if df.empty:
+            return json.dumps({"status": "no_data"})
+        
+        df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+        df["date"] = df["Event Time"].dt.date.astype(str)  # Convert to string for JSON
+        daily_counts = df.groupby("date").size().reset_index(name='alarm_count')
+        
+        iso_threshold = 288
+        days_over_288 = daily_counts[daily_counts['alarm_count'] > iso_threshold]
+        days_over_720 = daily_counts[daily_counts['alarm_count'] >= 720]
+        
+        avg_per_day = daily_counts['alarm_count'].mean()
+        compliance_pct = round((1 - len(days_over_288) / len(daily_counts)) * 100, 2) if len(daily_counts) > 0 else 100
+        
+        return json.dumps({
+            "status": "success",
+            "time_period": time_period,
+            "total_days": len(daily_counts),
+            "avg_alarms_per_day": round(avg_per_day, 2),
+            "days_over_288": len(days_over_288),
+            "days_over_720": len(days_over_720),
+            "compliance_percentage": compliance_pct,
+            "compliance_status": "compliant" if compliance_pct >= 80 else "non_compliant",
+            "top_10_worst_days": daily_counts.nlargest(10, 'alarm_count').to_dict(orient='records')
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"ISA compliance failed: {str(e)}"})
+
+
+def get_bad_actors_raw(top_n: int = 20, time_period: str = "all", min_events: int = 100) -> str:
+    """
+    Identify bad actor sources using RAW EVENT COUNTING.
+    
+    Bad actors = sources with excessive alarm events.
+    
+    Args:
+        top_n: Number of top bad actors (default 20)
+        time_period: "all", "last_30_days", "last_7_days"
+        min_events: Minimum events to qualify (default 100)
+    
+    Example: get_bad_actors_raw(top_n=10, time_period="last_30_days")
+    """
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        max_date = get_data_max_date()
+        
+        time_filter = ""
+        if time_period == "last_30_days":
+            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-30 days')"
+        elif time_period == "last_7_days":
+            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-7 days')"
+        
+        df = pd.read_sql_query(f"""
+            SELECT Source, COUNT(*) as event_count,
+                   COUNT(DISTINCT date("Event Time")) as days_active
+            FROM alerts {time_filter}
+            GROUP BY Source
+            HAVING event_count >= {min_events}
+            ORDER BY event_count DESC
+            LIMIT {top_n}
+        """, conn)
+        conn.close()
+        
+        if df.empty:
+            return json.dumps({"status": "no_bad_actors"})
+        
+        total_events = df['event_count'].sum()
+        df['percentage'] = round(df['event_count'] / total_events * 100, 2)
+        df['events_per_day'] = round(df['event_count'] / df['days_active'], 2)
+        
+        return json.dumps({
+            "status": "success",
+            "bad_actor_count": len(df),
+            "bad_actors": df.to_dict(orient='records'),
+            "summary": f"Found {len(df)} bad actors with {total_events:,} events"
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Bad actor analysis failed: {str(e)}"})
+
+
 # ==================== TOOL REGISTRY ====================
 
 AVAILABLE_TOOLS = [
+    # Original 6 tools
     execute_sql_query,
     analyze_alarm_behavior,
     get_isa_compliance_report,
     analyze_bad_actors,
     get_alarm_health_summary,
-    analyze_flood_events
+    analyze_flood_events,
+    # Phase 1: New analysis tools
+    # Nomenclature helper
+    # Phase 1 Fix: Event-based tools (work with ANY data pattern)
+    analyze_flood_events_raw,
+    get_isa_compliance_raw,
+    get_bad_actors_raw
 ]
