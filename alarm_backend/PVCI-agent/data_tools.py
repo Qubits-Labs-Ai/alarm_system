@@ -1,3 +1,104 @@
+def _db_compute_activations(df):
+    """Mirror actual-calc activation extraction (Blank when IDLE/ACKED starts, ACK -> ACKED, OK -> IDLE)."""
+    try:
+        rows = []
+        for src, group in df.groupby("Source"):
+            state = "IDLE"
+            for _, row in group.sort_values("Event Time").iterrows():
+                action = str(row.get("Action", "")).upper().strip()
+                t = row.get("Event Time")
+                if action == "" and state in ("IDLE", "ACKED"):
+                    rows.append({"Source": src, "StartTime": t})
+                    state = "ACTIVE"
+                elif action == "ACK" and state == "ACTIVE":
+                    state = "ACKED"
+                elif action == "OK":
+                    state = "IDLE"
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame(columns=["Source", "StartTime"])
+
+
+def _db_unhealthy_and_flood_from_activations(
+    activations_df,
+    unhealthy_threshold,
+    window_minutes,
+    flood_source_threshold,
+):
+    """Replicate actual-calc detect_unhealthy_and_flood behavior for unhealthy merged spans and floods."""
+    from datetime import timedelta
+    if activations_df is None or activations_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    window = timedelta(minutes=window_minutes)
+    # Step 1: collect per-source sliding windows reaching threshold
+    unhealthy_periods = []
+    for src, g in activations_df.groupby("Source"):
+        times = g["StartTime"].sort_values().tolist()
+        start = 0
+        for end, t_end in enumerate(times):
+            while times[start] < t_end - window:
+                start += 1
+            count = end - start + 1
+            if count >= unhealthy_threshold:
+                unhealthy_periods.append({
+                    "Source": src,
+                    "Window_Start": times[start],
+                    "Window_End": t_end,
+                    "Count": count,
+                })
+    unhealthy_df = pd.DataFrame(unhealthy_periods)
+    if unhealthy_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    # Step 2: merge same-source overlapping unhealthy windows into continuous spans
+    merged = []
+    for src, g in unhealthy_df.groupby("Source"):
+        g = g.sort_values("Window_Start")
+        s = e = None
+        for _, row in g.iterrows():
+            if s is None:
+                s, e = row["Window_Start"], row["Window_End"]
+            elif row["Window_Start"] <= e:
+                e = max(e, row["Window_End"])
+            else:
+                merged.append({"Source": src, "Start": s, "End": e})
+                s, e = row["Window_Start"], row["Window_End"]
+        if s is not None:
+            merged.append({"Source": src, "Start": s, "End": e})
+    merged_unhealthy_df = pd.DataFrame(merged)
+    # Step 3: flood windows where >= N sources overlap
+    flood_windows = []
+    for _, row in merged_unhealthy_df.iterrows():
+        s1, e1 = row["Start"], row["End"]
+        overlapping = merged_unhealthy_df[(merged_unhealthy_df["Start"] <= e1) & (merged_unhealthy_df["End"] >= s1)]
+        sources = set(overlapping["Source"])
+        if len(sources) >= flood_source_threshold:
+            flood_windows.append({
+                "Flood_Start": s1,
+                "Flood_End": e1,
+                "Sources_Involved": list(sources),
+                "Source_Count": len(sources),
+            })
+    flood_df = pd.DataFrame(flood_windows)
+    if not flood_df.empty:
+        flood_df = flood_df.drop_duplicates(subset=["Flood_Start", "Flood_End"]) 
+    # Step 4: contributions (filter per actual-calc)
+    flood_summary = []
+    for _, row in (flood_df if not flood_df.empty else []).iterrows():
+        s, e = row["Flood_Start"], row["Flood_End"]
+        involved = row["Sources_Involved"]
+        acts = activations_df[(activations_df["StartTime"] >= s) & (activations_df["StartTime"] <= e) & (activations_df["Source"].isin(involved))]
+        counts = acts["Source"].value_counts().to_dict()
+        filtered_counts = {src: cnt for src, cnt in counts.items() if cnt >= unhealthy_threshold}
+        if len(filtered_counts) >= flood_source_threshold:
+            flood_summary.append({
+                "Flood_Start": s,
+                "Flood_End": e,
+                "Sources_Involved": filtered_counts,
+                "Source_Count": len(filtered_counts),
+            })
+    flood_summary_df = pd.DataFrame(flood_summary)
+    return merged_unhealthy_df, flood_summary_df
+
 # data_tools.py (FINAL VERSION with Alarm Logic Integration + SQLite + Data Cleaning)
 
 import pandas as pd
@@ -5,14 +106,79 @@ import json
 import sqlite3
 import io
 import os
+import sys
+import importlib.util
 from typing import Dict, List, Any, Optional
 import inspect
 import re
+from datetime import datetime
 from alarm_logic import analyze as alarm_analyze   #  import alarm logic analyzer
+
+BACKEND_DIR = os.path.dirname(os.path.dirname(__file__))
+_ACTUAL_CALC_SERVICE_PATH = os.path.join(BACKEND_DIR, 'PVCI-actual-calc', 'actual_calc_service.py')
+try:
+    _spec = importlib.util.spec_from_file_location('actual_calc_service', _ACTUAL_CALC_SERVICE_PATH)
+    actual_calc_service = importlib.util.module_from_spec(_spec)
+    sys.modules['actual_calc_service'] = actual_calc_service
+    _spec.loader.exec_module(actual_calc_service)
+except Exception:
+    actual_calc_service = None
+
+_PLANT_REGISTRY_PATH = os.path.join(BACKEND_DIR, 'plant_registry.py')
+try:
+    _pspec = importlib.util.spec_from_file_location('plant_registry', _PLANT_REGISTRY_PATH)
+    plant_registry = importlib.util.module_from_spec(_pspec)
+    sys.modules['plant_registry'] = plant_registry
+    _pspec.loader.exec_module(plant_registry)
+except Exception:
+    plant_registry = None
 
 # --- Global Database Configuration ---
 DB_FILE = os.path.join(os.path.dirname(__file__), 'alerts.db')
 TABLE_NAME = 'alerts'
+REQUIRED_COLUMNS = ["Event Time", "Source", "Action", "Condition"]
+
+# ==================== VALIDATION & POLICY HELPERS ====================
+
+_TIME_PERIOD_ENUM = {"all", "last_30_days", "last_7_days", "last_24_hours"}
+
+def _validation_error(message: str) -> str:
+    return json.dumps({"error": "validation_error", "message": message})
+
+def _validate_time_period(tp: str) -> Optional[str]:
+    try:
+        v = (tp or "all").strip()
+        if v not in _TIME_PERIOD_ENUM:
+            return None
+        return v
+    except Exception:
+        return None
+
+def _validate_int(name: str, value: Any, minimum: Optional[int] = None, maximum: Optional[int] = None, default: Optional[int] = None) -> Optional[int]:
+    try:
+        if isinstance(value, bool):
+            # prevent bool being treated as int
+            v = 1 if value else 0
+        else:
+            v = int(value)
+    except Exception:
+        if default is not None:
+            v = default
+        else:
+            return None
+    if minimum is not None and v < minimum:
+        return None
+    if maximum is not None and v > maximum:
+        return maximum
+    return v
+
+# ISA/EEMUA default fallbacks (used only when actual_calc_service is missing these)
+# Standing: 24h = 1440 minutes; Chattering window approximated to 1 minute (30s granularity not supported yet)
+_ISA_DEFAULT_STALE_MIN = 1440
+_ISA_DEFAULT_CHATTER_MIN = 0.5
+_ISA_DEFAULT_CHATTER_MIN_COUNT = 3
+_LIMIT_DEFAULT = 1000
+_LIMIT_MAX = 10000
 
 # Sahi column names (used for both CSV loading and database table creation)
 COLUMN_NAMES = [
@@ -320,12 +486,15 @@ def get_data_max_date():
     """Get the maximum date from the alerts database (for relative date calculations)."""
     try:
         conn = sqlite3.connect(DB_FILE)
-        result = pd.read_sql_query("SELECT MAX(\"Event Time\") as max_date FROM alerts", conn)
+        result = pd.read_sql_query('SELECT MAX("Event Time") as max_date FROM alerts', conn)
         conn.close()
-        max_date = result['max_date'].iloc[0]
-        return max_date if max_date else "datetime('now')"
-    except:
-        return "datetime('now')"  # Fallback to 'now' if query fails
+        max_date = result['max_date'].iloc[0] if not result.empty else None
+        if max_date is None or str(max_date).strip() == "":
+            # Return current UTC timestamp in ISO format compatible with SQLite datetime()
+            return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        return str(max_date)
+    except Exception:
+        return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")  # Fallback to 'now' if query fails
 
 
 def load_data(file_path: str, sheet_name: str = 'alert_data'):
@@ -334,50 +503,43 @@ def load_data(file_path: str, sheet_name: str = 'alert_data'):
     This replaces the global SHEETS dictionary with a permanent database file.
     """
     try:
-        # 1. Robust CSV Reading & Cleaning
-        with open(file_path, 'rb') as f:
-            binary_data = f.read().replace(b'\x00', b'')
-        data_string = binary_data.decode('latin1', errors='ignore').replace('\r', '')
-        data_io = io.StringIO(data_string)
+        csv_path = os.path.abspath(file_path)
+        dir_path = os.path.dirname(csv_path)
+        csv_file_name = os.path.basename(csv_path)
 
-        df = pd.read_csv(
-            data_io,
-            sep=',',
-            engine='python',
-            header=None,
-            skiprows=1,
-            names=COLUMN_NAMES,
-            on_bad_lines='skip'
+        # Derive alarm_data_dir and csv_relative_path robustly
+        alarm_data_dir = os.path.dirname(os.path.dirname(csv_path))
+        csv_relative_path = os.path.relpath(dir_path, alarm_data_dir)
+
+        if actual_calc_service is None:
+            raise ImportError('actual_calc_service module not available')
+
+        df = actual_calc_service.load_pvci_merged_csv(
+            alarm_data_dir=alarm_data_dir,
+            csv_relative_path=csv_relative_path,
+            csv_file_name=csv_file_name,
         )
-
-        if 'Extra' in df.columns:
-            df = df.drop(columns=['Extra'])
-
-        df.columns = df.columns.str.strip()
-        df = df.dropna(how='all')  # Drop rows where all values are NaN
-
-        # 2. Type Conversion (Crucial for SQLite)
-        if 'Event Time' in df.columns:
-            df['Event Time'] = pd.to_datetime(df['Event Time'], errors='coerce')
-            df = df.dropna(subset=['Event Time'])  # Drop rows with bad 'Event Time'
-
-        # Ensure 'Value' is numeric, coercing errors to NaN before dropping rows
-        if 'Value' in df.columns:
-            df['Value'] = pd.to_numeric(df['Value'], errors='coerce')
-
-        # ===  CRITICAL FIX: DATA NORMALIZATION ===
-        text_cols_to_clean = ["Location Tag", "Source", "Condition", "Action", "Priority", "Description", "Units"]
-        for col in text_cols_to_clean:
-            if col in df.columns:
-                df[col] = df[col].astype(str).str.strip().str.upper()
-        # ===========================================
 
         if len(df) == 0:
             raise Exception("Data load failed: Zero valid rows found after cleanup.")
 
-        # 3. Write to SQLite Database
         conn = sqlite3.connect(DB_FILE)
+        cur = conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL;")
+            cur.execute("PRAGMA synchronous=NORMAL;")
+        except Exception:
+            pass
+
         df.to_sql(TABLE_NAME, conn, if_exists='replace', index=False)
+
+        try:
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_alerts_time ON alerts("Event Time");')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_alerts_source_time ON alerts(Source, "Event Time");')
+            conn.commit()
+        except Exception:
+            pass
+
         conn.close()
 
         print(f" Data Loaded: {len(df)} rows written to SQLite database '{DB_FILE}' in table '{TABLE_NAME}'.")
@@ -503,63 +665,6 @@ def normalize_query_literals(sql: str) -> str:
     sql = _normalize_action_literals(sql)
     return sql
 
-def lookup_nomenclature(term: str) -> str:
-    """
-    Look up a domain term across Priority/Condition/Action/DCS dictionaries.
-    Returns JSON with matches and suggested canonical forms.
-    """
-    try:
-        t = (term or "").strip().upper()
-        results = {"term": term, "matches": {}}
-
-        # Priority
-        p_matches = []
-        for key, desc in PRIORITY_DESCRIPTIONS.items():
-            if t == key.upper():
-                p_matches.append({"code": key, "description": desc, "maps_to": PRIORITY_SYNONYMS.get(key, [])})
-        for canon, syns in PRIORITY_SYNONYMS.items():
-            if t == canon.upper() or t in [s.upper() for s in syns]:
-                p_matches.append({"group": canon, "synonyms": syns})
-        if p_matches:
-            results["matches"]["priority"] = p_matches
-
-        # Condition
-        c_matches = []
-        for key, desc in CONDITION_DESCRIPTIONS.items():
-            if t == key.upper():
-                c_matches.append({"code": key, "description": desc, "synonyms": CONDITION_SYNONYMS.get(key, [])})
-        for canon, syns in CONDITION_SYNONYMS.items():
-            if t == canon.upper() or t in [s.upper() for s in syns]:
-                c_matches.append({"group": canon, "synonyms": syns})
-        if c_matches:
-            results["matches"]["condition"] = c_matches
-
-        # Action
-        a_matches = []
-        for key, desc in ACTION_DESCRIPTIONS.items():
-            if t == key.upper():
-                a_matches.append({"code": key, "description": desc, "synonyms": ACTION_SYNONYMS.get(key, [])})
-        for canon, syns in ACTION_SYNONYMS.items():
-            if t == canon.upper() or t in [s.upper() for s in syns]:
-                a_matches.append({"group": canon, "synonyms": syns})
-        if a_matches:
-            results["matches"]["action"] = a_matches
-
-        # DCS tag by prefix (e.g., TI-101)
-        dcs = []
-        for prefix, meaning in DCS_TAGS.items():
-            if t == prefix or t.startswith(prefix + "-"):
-                dcs.append({"prefix": prefix, "meaning": meaning})
-        if dcs:
-            results["matches"]["dcs_tag"] = dcs
-
-        if not results["matches"]:
-            results["message"] = "No nomenclature matches found."
-
-        return json.dumps(results, indent=2)
-    except Exception as e:
-        return json.dumps({"error": f"Lookup failed: {str(e)}"})
-
 def execute_sql_query(sql_query: str) -> str:
     """
     Executes a read-only SQL query (SELECT) against the 'alerts' database table.
@@ -586,16 +691,59 @@ def execute_sql_query(sql_query: str) -> str:
                     "hint": "Only read-only SELECT queries are allowed."
                 })
         
+        # LIMIT policy (auto-inject or cap)
+        effective_sql = sql_query.strip().rstrip(';')
+        auto_injected = False
+        capped = False
+        applied_limit = None
+        try:
+            m = re.search(r"\bLIMIT\s+(\d+)\s*,\s*(\d+)", effective_sql, flags=re.IGNORECASE)
+            if m:
+                cnt = int(m.group(2))
+                if cnt > _LIMIT_MAX:
+                    effective_sql = re.sub(r"\bLIMIT\s+(\d+)\s*,\s*(\d+)", lambda s: f"LIMIT {s.group(1)},{_LIMIT_MAX}", effective_sql, flags=re.IGNORECASE)
+                    capped = True
+                    applied_limit = _LIMIT_MAX
+                else:
+                    applied_limit = cnt
+            else:
+                m2 = re.search(r"\bLIMIT\s+(\d+)\s+OFFSET\s+(\d+)", effective_sql, flags=re.IGNORECASE)
+                if m2:
+                    cnt = int(m2.group(1))
+                    if cnt > _LIMIT_MAX:
+                        effective_sql = re.sub(r"\bLIMIT\s+(\d+)\s+OFFSET\s+(\d+)", lambda s: f"LIMIT {_LIMIT_MAX} OFFSET {s.group(2)}", effective_sql, flags=re.IGNORECASE)
+                        capped = True
+                        applied_limit = _LIMIT_MAX
+                    else:
+                        applied_limit = cnt
+                else:
+                    m3 = re.search(r"\bLIMIT\s+(\d+)", effective_sql, flags=re.IGNORECASE)
+                    if m3:
+                        cnt = int(m3.group(1))
+                        if cnt > _LIMIT_MAX:
+                            effective_sql = re.sub(r"\bLIMIT\s+(\d+)", f"LIMIT {_LIMIT_MAX}", effective_sql, flags=re.IGNORECASE)
+                            capped = True
+                            applied_limit = _LIMIT_MAX
+                        else:
+                            applied_limit = cnt
+                    else:
+                        effective_sql = f"{effective_sql} LIMIT {_LIMIT_DEFAULT}"
+                        auto_injected = True
+                        applied_limit = _LIMIT_DEFAULT
+        except Exception:
+            effective_sql = f"{effective_sql} LIMIT {_LIMIT_DEFAULT}"
+            auto_injected = True
+            applied_limit = _LIMIT_DEFAULT
+
         # Execute query
         conn = sqlite3.connect(DB_FILE)
-        result_df = pd.read_sql_query(sql_query, conn)
+        result_df = pd.read_sql_query(effective_sql, conn)
         conn.close()
         
         # Handle empty results with helpful suggestions
         if result_df.empty:
             return json.dumps({
                 "message": "Query returned zero results.",
-                "row_count": 0,
                 "suggestions": [
                     "Try expanding the date range (e.g., last 7 days instead of 24 hours)",
                     "Check Priority mappings: Use 'H' or 'HIGH' for high priority, 'E'/'U' for critical",
@@ -613,7 +761,12 @@ def execute_sql_query(sql_query: str) -> str:
             "row_count": len(result_df),
             "columns": list(result_df.columns),
             "truncated": len(result_df) > 10,
-            "note": "Showing first 10 rows" if len(result_df) > 10 else None
+            "note": "Showing first 10 rows" if len(result_df) > 10 else None,
+            "limit_policy": {
+                "auto_injected": auto_injected,
+                "capped": capped,
+                "applied_limit": applied_limit
+            }
         }, indent=2)
     
     except sqlite3.OperationalError as e:
@@ -743,9 +896,8 @@ def analyze_alarm_behavior(sql_query: str) -> str:
 
 # ==================== ADVANCED ANALYSIS TOOLS ====================
 
-def get_isa_compliance_report(time_period: str = "all") -> str:
+def get_isa_compliance_report(time_period: str = "all", start_date: str = None, end_date: str = None) -> str:
     """
-    Get ISO 18.2 / EEMUA 191 compliance metrics based on unique alarm activations.
     Returns alarm frequency analysis with:
     - Average alarms per day/hour/10min
     - % days exceeding ISO threshold (288 alarms/day)
@@ -756,19 +908,32 @@ def get_isa_compliance_report(time_period: str = "all") -> str:
         time_period: "all", "last_30_days", "last_7_days", or "last_24_hours"
     
     Example: get_isa_compliance_report("last_30_days")
+    Time Filters (use either):
+      - time_period: one of "all", "last_30_days", "last_7_days", "last_24_hours"
+      - start_date/end_date: explicit ISO strings (e.g., "2025-01-01", "2025-01-31")
     """
     try:
+        # Validate inputs (only validate time_period when explicit dates are not provided)
+        if not (start_date and end_date):
+            tp = _validate_time_period(time_period)
+            if tp is None:
+                return _validation_error("time_period must be one of: all, last_30_days, last_7_days, last_24_hours")
+            time_period = tp
+
         # Build time filter using actual data's max date
         conn = sqlite3.connect(DB_FILE)
         max_date = get_data_max_date()
         
         time_filter = ""
-        if time_period == "last_30_days":
-            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-30 days')"
-        elif time_period == "last_7_days":
-            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-7 days')"
-        elif time_period == "last_24_hours":
-            time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-1 day')"
+        if start_date and end_date:
+            time_filter = f"WHERE datetime(\"Event Time\") BETWEEN datetime('{start_date}') AND datetime('{end_date}')"
+        else:
+            if time_period == "last_30_days":
+                time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-30 days')"
+            elif time_period == "last_7_days":
+                time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-7 days')"
+            elif time_period == "last_24_hours":
+                time_filter = f"WHERE datetime(\"Event Time\") >= datetime('{max_date}', '-1 day')"
         
         sql = f"SELECT * FROM alerts {time_filter}"
         df = pd.read_sql_query(sql, conn)
@@ -777,41 +942,35 @@ def get_isa_compliance_report(time_period: str = "all") -> str:
         if df.empty:
             return json.dumps({"message": "No data available for the selected period."})
         
-        # Calculate unique alarm activations using state machine
+        # Calculate unique alarm activations using same state machine as actual-calc
         df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
         df["Action"] = (
             df["Action"].fillna("").astype(str).str.upper().str.strip()
             .replace({"NAN": "", "NULL": "", "NONE": "", "ACK PNT": "ACK"})
         )
-        
-        activations = []
-        for src, group in df.groupby("Source"):
-            state = "IDLE"
-            for _, row in group.sort_values("Event Time").iterrows():
-                action = row["Action"]
-                t = row["Event Time"]
-                if action == "" and state in ["IDLE", "ACKED"]:
-                    activations.append({"Source": src, "Time": t})
-                    state = "ACTIVE"
-                elif action == "ACK" and state == "ACTIVE":
-                    state = "ACKED"
-                elif action == "OK":
-                    state = "IDLE"
-        
-        if not activations:
+        activations_df = _db_compute_activations(df)
+
+        if activations_df is None or activations_df.empty:
             return json.dumps({"message": "No alarm activations found in the period."})
-        
-        act_df = pd.DataFrame(activations)
+
+        act_df = activations_df.rename(columns={"StartTime": "Time"}).copy()
         act_df["Date"] = act_df["Time"].dt.date
         daily_counts = act_df.groupby("Date").size().reset_index(name="Alarms")
+        total_days = int(len(daily_counts))
         
         total_alarms = len(act_df)
-        total_days = (act_df["Time"].max() - act_df["Time"].min()).days + 1
-        total_hours = (act_df["Time"].max() - act_df["Time"].min()).total_seconds() / 3600
+        if not act_df.empty:
+            tmin = act_df["Time"].min()
+            tmax = act_df["Time"].max()
+            span_days = (tmax - tmin).days + 1
+            span_hours = (tmax - tmin).total_seconds() / 3600.0
+        else:
+            span_days = 0
+            span_hours = 0.0
         
-        avg_per_day = total_alarms / total_days if total_days > 0 else 0
-        avg_per_hour = total_alarms / total_hours if total_hours > 0 else 0
-        avg_per_10min = avg_per_hour / 6
+        avg_per_day = (total_alarms / span_days) if span_days > 0 else 0.0
+        avg_per_hour = (total_alarms / span_hours) if span_hours > 0 else 0.0
+        avg_per_10min = (total_alarms / (span_hours * 6.0)) if span_hours > 0 else 0.0
         
         # ISO thresholds
         days_over_288 = daily_counts[daily_counts["Alarms"] > 288]
@@ -853,7 +1012,7 @@ def get_isa_compliance_report(time_period: str = "all") -> str:
                 "overloaded": ">288 alarms/day",
                 "unacceptable": "≥720 alarms/day"
             }
-        }, indent=2)
+        }, default=str, indent=2)
     except Exception as e:
         return json.dumps({"error": f"ISA compliance analysis failed: {str(e)}"})
 
@@ -880,16 +1039,20 @@ def analyze_bad_actors(top_n: int = 10, min_alarms: int = 50, time_period: str =
       - start_date/end_date: explicit ISO strings (e.g., "2025-01-01", "2025-01-31")
     """
     try:
-        if not isinstance(top_n, int):
-            try:
-                top_n = int(top_n)
-            except Exception:
-                top_n = 10
-        if not isinstance(min_alarms, int):
-            try:
-                min_alarms = int(min_alarms)
-            except Exception:
-                min_alarms = 50
+        # Validate params
+        if not (start_date and end_date):
+            tp = _validate_time_period(time_period)
+            if tp is None:
+                return _validation_error("time_period must be one of: all, last_30_days, last_7_days, last_24_hours")
+            time_period = tp
+        v_top = _validate_int("top_n", top_n, minimum=1, maximum=100, default=10)
+        if v_top is None:
+            return _validation_error("top_n must be an integer between 1 and 100")
+        top_n = v_top
+        v_min_alarms = _validate_int("min_alarms", min_alarms, minimum=1, maximum=None, default=50)
+        if v_min_alarms is None:
+            return _validation_error("min_alarms must be a positive integer")
+        min_alarms = v_min_alarms
         conn = sqlite3.connect(DB_FILE)
         max_date = get_data_max_date()
         # Build time filter
@@ -939,8 +1102,8 @@ def analyze_bad_actors(top_n: int = 10, min_alarms: int = 50, time_period: str =
                     state = "ACTIVE"
                     active_start = t
                 elif action == "ACK" and state == "ACTIVE":
-                    # Check if standing (>60 min before ACK)
-                    if active_start and (t - active_start).total_seconds() / 60 > 60:
+                    _stale_min = getattr(actual_calc_service, "STALE_THRESHOLD_MIN", _ISA_DEFAULT_STALE_MIN)
+                    if active_start and (t - active_start).total_seconds() / 60 > _stale_min:
                         standing_count += 1
                     state = "ACKED"
                 elif action == "OK":
@@ -950,18 +1113,20 @@ def analyze_bad_actors(top_n: int = 10, min_alarms: int = 50, time_period: str =
             if unique_alarms < min_alarms:
                 continue
             
-            # Chattering detection (sliding 10-min window)
+            # Chattering detection (sliding window)
             chattering_episodes = 0
             in_chatter = False
             window = []
+            _chat_min = getattr(actual_calc_service, "CHATTER_THRESHOLD_MIN", _ISA_DEFAULT_CHATTER_MIN)
+            _chat_cnt = getattr(actual_calc_service, "CHATTER_MIN_COUNT", _ISA_DEFAULT_CHATTER_MIN_COUNT)
             for t in alarm_times:
                 # Remove old
-                window = [wt for wt in window if (t - wt).total_seconds() / 60 <= 10]
+                window = [wt for wt in window if (t - wt).total_seconds() / 60 <= _chat_min]
                 window.append(t)
-                if not in_chatter and len(window) >= 3:
+                if not in_chatter and len(window) >= _chat_cnt:
                     chattering_episodes += 1
                     in_chatter = True
-                if len(window) < 3:
+                if len(window) < _chat_cnt:
                     in_chatter = False
             
             repeating = max(0, unique_alarms - 1)
@@ -1011,6 +1176,75 @@ def analyze_bad_actors(top_n: int = 10, min_alarms: int = 50, time_period: str =
     except Exception as e:
         return json.dumps({"error": f"Bad actor analysis failed: {str(e)}"})
 
+
+NOMENCLATURE: Dict[str, Dict[str, Any]] = {
+    "HI": {"aliases": ["PVHI", "PVHIGH"], "definition": "High alarm condition."},
+    "HIHI": {"aliases": ["PVHIHI", "PVHIGHHIGH"], "definition": "High-High alarm condition."},
+    "LO": {"aliases": ["PVLO", "PVLOW"], "definition": "Low alarm condition."},
+    "LOLO": {"aliases": ["PVLOLO", "PVLOWLOW"], "definition": "Low-Low alarm condition."},
+    "ACK": {"aliases": ["ACK PNT", "ACKNOWLEDGE"], "definition": "Operator acknowledgement of an active alarm."},
+    "DEADBAND": {"aliases": ["HYSTERESIS"], "definition": "Band around a setpoint to prevent rapid re-triggering due to noise."},
+    "CHATTERING": {"aliases": ["CHATTER", "FLAPPING"], "definition": "Repeated alarm activations within a short time window."},
+    "STANDING": {"aliases": ["STALE"], "definition": "Alarm active for an extended time before acknowledgement."},
+    "UNHEALTHY": {"aliases": ["OVERLOAD_WINDOW"], "definition": "Too many alarm activations in a sliding time window for a source."},
+    "FLOOD": {"aliases": ["ALARM_FLOOD"], "definition": "Simultaneous unhealthy behavior across multiple sources."},
+    "ISA 18.2": {"aliases": ["ISA-18", "EEMUA 191"], "definition": "Standards for alarm system performance and management."},
+    "ACTIVATION": {"aliases": ["UNIQUE ALARM", "STATE TRANSITION"], "definition": "One unique alarm occurrence counted via state machine (blank→ACK→OK)."},
+    "EVENT": {"aliases": ["LOG ENTRY"], "definition": "A single row in the alarm log, may be part of one activation."},
+}
+
+
+def lookup_nomenclature(term: str) -> str:
+    try:
+        q = (term or "").strip()
+        if not q:
+            return json.dumps({"status": "error", "error": "empty_term"})
+        u = q.upper()
+        stale_min = int(getattr(actual_calc_service, "STALE_THRESHOLD_MIN", 60))
+        chatter_min = int(getattr(actual_calc_service, "CHATTER_THRESHOLD_MIN", 10))
+        chatter_cnt = int(getattr(actual_calc_service, "CHATTER_MIN_COUNT", 3))
+        unhealthy_thr = int(getattr(actual_calc_service, "UNHEALTHY_THRESHOLD", 10))
+        window_minutes = int(getattr(actual_calc_service, "WINDOW_MINUTES", 10))
+        flood_sources = int(getattr(actual_calc_service, "FLOOD_SOURCE_THRESHOLD", 2))
+        dyn_defs = {
+            "CHATTERING": f"Repeated activations within {chatter_min} min; count ≥ {chatter_cnt} marks an episode.",
+            "STANDING": f"Active before ACK for > {stale_min} min.",
+            "UNHEALTHY": f">= {unhealthy_thr} activations in {window_minutes} min sliding window (per source).",
+            "FLOOD": f"Concurrent unhealthy across ≥ {flood_sources} sources in same window.",
+        }
+        def build_entry(k: str, meta: Dict[str, Any]) -> Dict[str, Any]:
+            d = str(meta.get("definition", ""))
+            if k in dyn_defs:
+                d = dyn_defs[k]
+            return {
+                "term": k,
+                "definition": d,
+                "aliases": meta.get("aliases", []),
+                "params": {
+                    "stale_min": stale_min,
+                    "chatter_min": chatter_min,
+                    "chatter_min_count": chatter_cnt,
+                    "unhealthy_threshold": unhealthy_thr,
+                    "window_minutes": window_minutes,
+                    "flood_source_threshold": flood_sources,
+                },
+            }
+        if u in NOMENCLATURE:
+            e = build_entry(u, NOMENCLATURE[u])
+            return json.dumps({"status": "success", "match_type": "exact", "query": q, "entry": e}, indent=2)
+        for k, meta in NOMENCLATURE.items():
+            if u in [a.upper() for a in meta.get("aliases", [])]:
+                e = build_entry(k, meta)
+                return json.dumps({"status": "success", "match_type": "alias", "query": q, "entry": e}, indent=2)
+        suggestions = []
+        for k, meta in NOMENCLATURE.items():
+            if u in k or any(u in a.upper() for a in meta.get("aliases", [])):
+                suggestions.append(k)
+        if suggestions:
+            return json.dumps({"status": "suggest", "query": q, "suggestions": sorted(list(set(suggestions)))}, indent=2)
+        return json.dumps({"status": "not_found", "query": q})
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
 
 def get_alarm_health_summary(source_filter: str = None) -> str:
     """
@@ -1062,12 +1296,13 @@ def get_alarm_health_summary(source_filter: str = None) -> str:
                     unique_alarms += 1
                     state = "ACTIVE"
                     active_start = t
-                    # Check if stale (>60min since last alarm)
-                    if last_alarm_time and (t - last_alarm_time).total_seconds() / 60 > 60:
+                    _stale_min = getattr(actual_calc_service, "STALE_THRESHOLD_MIN", _ISA_DEFAULT_STALE_MIN)
+                    if last_alarm_time and (t - last_alarm_time).total_seconds() / 60 > _stale_min:
                         stale += 1
                     last_alarm_time = t
                 elif action == "ACK" and state == "ACTIVE":
-                    if active_start and (t - active_start).total_seconds() / 60 > 60:
+                    _stale_min = getattr(actual_calc_service, "STALE_THRESHOLD_MIN", _ISA_DEFAULT_STALE_MIN)
+                    if active_start and (t - active_start).total_seconds() / 60 > _stale_min:
                         standing += 1
                     state = "ACKED"
                 elif action == "OK":
@@ -1154,6 +1389,16 @@ def analyze_flood_events(min_sources: int = 2, time_period: str = "all", start_d
         "summary_by_month": summary_by_month,
     })
     try:
+        # Validate params
+        if not (start_date and end_date):
+            tp = _validate_time_period(time_period)
+            if tp is None:
+                return _validation_error("time_period must be one of: all, last_30_days, last_7_days, last_24_hours")
+            time_period = tp
+        v_ms = _validate_int("min_sources", min_sources, minimum=2, maximum=100, default=2)
+        if v_ms is None:
+            return _validation_error("min_sources must be an integer >= 2")
+        min_sources = v_ms
         if not isinstance(min_sources, int):
             try:
                 min_sources = int(min_sources)
@@ -1207,8 +1452,9 @@ def analyze_flood_events(min_sources: int = 2, time_period: str = "all", start_d
         
         act_df = pd.DataFrame(activations)
         
-        # Detect 10-min windows with >= 10 alarms per source (unhealthy)
-        window_minutes = 10
+        # Detect unhealthy windows using centralized thresholds
+        window_minutes = int(getattr(actual_calc_service, "WINDOW_MINUTES", 10))
+        _unhealthy_thr = int(getattr(actual_calc_service, "UNHEALTHY_THRESHOLD", 10))
         unhealthy_periods = []
         for src, group in act_df.groupby("Source"):
             times = group["Time"].sort_values().tolist()
@@ -1216,7 +1462,7 @@ def analyze_flood_events(min_sources: int = 2, time_period: str = "all", start_d
                 window_end = times[i]
                 window_start = window_end - pd.Timedelta(minutes=window_minutes)
                 count = sum(1 for t in times if window_start <= t <= window_end)
-                if count >= 10:
+                if count >= _unhealthy_thr:
                     unhealthy_periods.append({
                         "Source": src,
                         "Start": window_start,
@@ -1391,6 +1637,323 @@ def analyze_flood_events_raw(min_sources: int = 2, time_window_minutes: int = 10
         return json.dumps({"error": f"Flood analysis failed: {str(e)}"})
 
 
+def _resolve_csv_path(plant_id: Optional[str]) -> Optional[str]:
+    try:
+        if plant_registry is None:
+            return None
+        info = plant_registry.get_plant_csv_info(plant_id) if plant_id else None
+        if not info:
+            return None
+        alarm_data_dir = os.path.join(BACKEND_DIR, "ALARM_DATA_DIR")
+        return os.path.join(alarm_data_dir, info.get("csv_relative_path", ""), info.get("csv_filename", ""))
+    except Exception:
+        return None
+
+
+def _resolve_actual_calc_json_path(plant_id: Optional[str]) -> Optional[str]:
+    try:
+        if plant_registry is None:
+            return None
+        return plant_registry.get_plant_json_path(plant_id, BACKEND_DIR) if plant_id else None
+    except Exception:
+        return None
+
+
+def _load_json_file(path: str) -> Optional[Dict[str, Any]]:
+    try:
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _db_frequency_kpis(period: str = "all") -> Optional[Dict[str, Any]]:
+    try:
+        s = get_isa_compliance_report(period)
+        d = json.loads(s)
+        if isinstance(d, dict) and d.get("status") == "success":
+            m = d.get("metrics", {})
+            return {
+                "avg_alarms_per_day": float(m.get("avg_alarms_per_day", 0)),
+                "avg_alarms_per_hour": float(m.get("avg_alarms_per_hour", 0)),
+                "avg_alarms_per_10min": float(m.get("avg_alarms_per_10min", 0)),
+                "total_unique_alarms": int(m.get("total_unique_alarms", 0)),
+                "days_over_288_count": int(m.get("days_over_iso_threshold", 0)),
+                "days_unacceptable_count": int(m.get("days_critically_overloaded", 0)),
+                "total_days_analyzed": int(m.get("total_days_analyzed", 0)),
+            }
+        return None
+    except Exception:
+        return None
+
+
+def _db_frequency_kpis_for_dates(date_list: List[str]) -> Optional[Dict[str, Any]]:
+    try:
+        if not date_list:
+            return None
+        conn = sqlite3.connect(DB_FILE)
+        placeholders = ",".join([f"'{d}'" for d in date_list])
+        sql = f"SELECT * FROM alerts WHERE date(\"Event Time\") IN ({placeholders})"
+        df = pd.read_sql_query(sql, conn)
+        conn.close()
+        if df.empty:
+            return None
+        df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+        df = df.dropna(subset=["Event Time", "Source"])
+        df["Action"] = (
+            df["Action"].fillna("").astype(str).str.upper().str.strip()
+            .replace({"NAN": "", "NULL": "", "NONE": "", "ACK PNT": "ACK"})
+        )
+        activations = []
+        for src, group in df.groupby("Source"):
+            state = "IDLE"
+            for _, row in group.sort_values("Event Time").iterrows():
+                a = row["Action"]
+                t = row["Event Time"]
+                if a == "" and state in ("IDLE", "ACKED"):
+                    activations.append({"Source": src, "Time": t})
+                    state = "ACTIVE"
+                elif a == "ACK" and state == "ACTIVE":
+                    state = "ACKED"
+                elif a == "OK":
+                    state = "IDLE"
+        if not activations:
+            return None
+        act_df = pd.DataFrame(activations)
+        act_df["Date"] = act_df["Time"].dt.date
+        daily_counts = act_df.groupby("Date").size().reset_index(name="Alarms")
+        total_alarms = int(daily_counts["Alarms"].sum())
+        total_days = int(len(daily_counts))
+        avg_per_day = (total_alarms / total_days) if total_days > 0 else 0.0
+        avg_per_hour = avg_per_day / 24.0
+        avg_per_10min = avg_per_hour / 6.0
+        days_over_288 = daily_counts[daily_counts["Alarms"] > 288]
+        days_over_720 = daily_counts[daily_counts["Alarms"] >= 720]
+        return {
+            "avg_alarms_per_day": round(avg_per_day, 2),
+            "avg_alarms_per_hour": round(avg_per_hour, 2),
+            "avg_alarms_per_10min": round(avg_per_10min, 2),
+            "total_unique_alarms": total_alarms,
+            "days_over_288_count": int(len(days_over_288)),
+            "days_unacceptable_count": int(len(days_over_720)),
+            "total_days_analyzed": total_days,
+        }
+    except Exception:
+        return None
+
+
+def _extract_cache_frequency_kpis(cache: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    try:
+        freq = cache.get("frequency", {}) if isinstance(cache, dict) else {}
+        summ = freq.get("summary", {}) if isinstance(freq, dict) else {}
+        if not summ and "frequency_summary" in cache:
+            summ = cache.get("frequency_summary", {})
+        if not isinstance(summ, dict) or not summ:
+            return None
+        return {
+            "avg_alarms_per_day": float(summ.get("avg_alarms_per_day", 0)),
+            "avg_alarms_per_hour": float(summ.get("avg_alarms_per_hour", 0)),
+            "avg_alarms_per_10min": float(summ.get("avg_alarms_per_10min", 0)),
+            "total_unique_alarms": int(summ.get("total_unique_alarms", 0)),
+            "days_over_288_count": int(summ.get("days_over_288_count", summ.get("days_over_iso_threshold", 0))),
+            "days_unacceptable_count": int(summ.get("days_unacceptable_count", 0)),
+            "total_days_analyzed": int(summ.get("total_days_analyzed", 0)),
+        }
+    except Exception:
+        return None
+
+
+def _kpis_match(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
+    try:
+        if not a or not b:
+            return False
+        exact = [
+            "total_unique_alarms",
+            "days_over_288_count",
+            "days_unacceptable_count",
+            "total_days_analyzed",
+        ]
+        for k in exact:
+            if int(a.get(k, -1)) != int(b.get(k, -2)):
+                return False
+        def r2(x):
+            return round(float(x), 2)
+        if abs(r2(a.get("avg_alarms_per_day", 0)) - r2(b.get("avg_alarms_per_day", 0))) > 0.01:
+            return False
+        if abs(r2(a.get("avg_alarms_per_hour", 0)) - r2(b.get("avg_alarms_per_hour", 0))) > 0.01:
+            return False
+        if abs(r2(a.get("avg_alarms_per_10min", 0)) - r2(b.get("avg_alarms_per_10min", 0))) > 0.01:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def get_frequency_summary_cached(plant_id: str = "PVCI", period: str = "all", force_db: bool = False, validate: bool = True) -> str:
+    try:
+        if force_db:
+            db_kpis = _db_frequency_kpis(period)
+            params = {
+                "iso_threshold": 288,
+                "unacceptable_threshold": 720,
+                "unhealthy_threshold": int(getattr(actual_calc_service, "UNHEALTHY_THRESHOLD", 10)),
+                "window_minutes": int(getattr(actual_calc_service, "WINDOW_MINUTES", 10)),
+            }
+            return json.dumps({"status": "success", "source": "live_db", "frequency": {"summary": db_kpis, "params": params}}, indent=2)
+        json_path = _resolve_actual_calc_json_path(plant_id)
+        csv_path = _resolve_csv_path(plant_id)
+        cache_valid = False
+        cache = _load_json_file(json_path) if json_path else None
+        cache_kpis = _extract_cache_frequency_kpis(cache) if cache else None
+        if cache_kpis and json_path and csv_path and os.path.exists(json_path) and os.path.exists(csv_path):
+            try:
+                cache_mtime = os.path.getmtime(json_path)
+                csv_mtime = os.path.getmtime(csv_path)
+                if cache_mtime >= csv_mtime:
+                    cache_valid = True
+            except Exception:
+                cache_valid = False
+        cache_params = None
+        if isinstance(cache, dict):
+            freq = cache.get("frequency", {}) if isinstance(cache, dict) else {}
+            cache_params = (freq or {}).get("params") if isinstance(freq, dict) else None
+        if validate and cache_valid:
+            db_kpis = _db_frequency_kpis(period)
+            if db_kpis and _kpis_match(cache_kpis, db_kpis):
+                return json.dumps({"status": "success", "source": "cache-valid", "frequency": {"summary": cache_kpis, "params": cache_params}}, indent=2)
+            params = {
+                "iso_threshold": 288,
+                "unacceptable_threshold": 720,
+                "unhealthy_threshold": int(getattr(actual_calc_service, "UNHEALTHY_THRESHOLD", 10)),
+                "window_minutes": int(getattr(actual_calc_service, "WINDOW_MINUTES", 10)),
+            }
+            return json.dumps({"status": "success", "source": "live_db", "validation": "kpi_mismatch", "frequency": {"summary": db_kpis, "params": params}}, indent=2)
+        if cache_kpis and cache_valid and not validate:
+            return json.dumps({"status": "success", "source": "cache", "frequency": {"summary": cache_kpis, "params": cache_params}}, indent=2)
+        db_kpis = _db_frequency_kpis(period)
+        params = {
+            "iso_threshold": 288,
+            "unacceptable_threshold": 720,
+            "unhealthy_threshold": int(getattr(actual_calc_service, "UNHEALTHY_THRESHOLD", 10)),
+            "window_minutes": int(getattr(actual_calc_service, "WINDOW_MINUTES", 10)),
+        }
+        return json.dumps({"status": "success", "source": "live_db", "reason": "cache_invalid_or_missing", "frequency": {"summary": db_kpis, "params": params}}, indent=2)
+    except Exception as e:
+        db_kpis = _db_frequency_kpis(period)
+        return json.dumps({"status": "success", "source": "live_db", "error_info": str(e), "frequency": {"summary": db_kpis}}, indent=2)
+
+
+def get_unhealthy_summary_cached(plant_id: str = "PVCI", force_db: bool = False, validate: bool = True) -> str:
+    try:
+        def _compute_unhealthy_from_db() -> Dict[str, Any]:
+            conn = sqlite3.connect(DB_FILE)
+            df = pd.read_sql_query('SELECT "Event Time", "Action", Source FROM alerts', conn)
+            conn.close()
+            if df.empty:
+                return {"params": {"threshold": 0, "window_minutes": 0}, "per_source": [], "total_periods": 0}
+            df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+            df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip().replace({"NAN": "", "NULL": "", "NONE": "", "ACK PNT": "ACK"})
+            acts = _db_compute_activations(df)
+            window_minutes = int(getattr(actual_calc_service, "WINDOW_MINUTES", 10))
+            thr = int(getattr(actual_calc_service, "UNHEALTHY_THRESHOLD", 10))
+            merged_unhealthy_df, _ = _db_unhealthy_and_flood_from_activations(acts, thr, window_minutes, int(getattr(actual_calc_service, "FLOOD_SOURCE_THRESHOLD", 2)))
+            if merged_unhealthy_df is None or merged_unhealthy_df.empty:
+                return {"params": {"threshold": thr, "window_minutes": window_minutes}, "per_source": [], "total_periods": 0}
+            per_src = merged_unhealthy_df.groupby("Source").size().reset_index(name="Unhealthy_Periods").sort_values("Unhealthy_Periods", ascending=False)
+            total = int(per_src["Unhealthy_Periods"].sum()) if not per_src.empty else 0
+            return {"params": {"threshold": thr, "window_minutes": window_minutes}, "per_source": per_src.to_dict(orient="records"), "total_periods": total}
+
+        if force_db:
+            data = _compute_unhealthy_from_db()
+            return json.dumps({"status": "success", "source": "live_db", "unhealthy": data}, indent=2)
+        json_path = _resolve_actual_calc_json_path(plant_id)
+        csv_path = _resolve_csv_path(plant_id)
+        cache = _load_json_file(json_path) if json_path else None
+        data = None
+        if cache and isinstance(cache, dict) and "unhealthy" in cache:
+            data = cache.get("unhealthy", {})
+        cache_valid = False
+        if json_path and csv_path and os.path.exists(json_path) and os.path.exists(csv_path):
+            try:
+                cache_valid = os.path.getmtime(json_path) >= os.path.getmtime(csv_path)
+            except Exception:
+                cache_valid = False
+        if data and cache_valid:
+            return json.dumps({"status": "success", "source": "cache-valid", "unhealthy": data}, indent=2)
+        data = _compute_unhealthy_from_db()
+        return json.dumps({"status": "success", "source": "live_db", "reason": "cache_invalid_or_missing", "unhealthy": data}, indent=2)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+
+def get_floods_summary_cached(plant_id: str = "PVCI", force_db: bool = False, validate: bool = True) -> str:
+    try:
+        def _compute_floods_from_db() -> Dict[str, Any]:
+            conn = sqlite3.connect(DB_FILE)
+            df = pd.read_sql_query('SELECT "Event Time", "Action", Source FROM alerts', conn)
+            conn.close()
+            if df.empty:
+                return {"flood_count": 0, "floods": []}
+            df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
+            df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip().replace({"NAN": "", "NULL": "", "NONE": "", "ACK PNT": "ACK"})
+            acts = _db_compute_activations(df)
+            thr = int(getattr(actual_calc_service, "UNHEALTHY_THRESHOLD", 10))
+            win = int(getattr(actual_calc_service, "WINDOW_MINUTES", 10))
+            min_sources = int(getattr(actual_calc_service, "FLOOD_SOURCE_THRESHOLD", 2))
+            merged_unhealthy_df, flood_summary_df = _db_unhealthy_and_flood_from_activations(acts, thr, win, min_sources)
+            return {
+                "flood_count": 0 if flood_summary_df is None or flood_summary_df.empty else int(len(flood_summary_df.index)),
+                "floods": [] if flood_summary_df is None else flood_summary_df.to_dict(orient="records"),
+            }
+        if force_db:
+            data = _compute_floods_from_db()
+            return json.dumps({"status": "success", "source": "live_db", "floods": data}, indent=2)
+        json_path = _resolve_actual_calc_json_path(plant_id)
+        csv_path = _resolve_csv_path(plant_id)
+        cache = _load_json_file(json_path) if json_path else None
+        data = None
+        if cache and isinstance(cache, dict) and "floods" in cache:
+            data = cache.get("floods", {})
+        cache_valid = False
+        if json_path and csv_path and os.path.exists(json_path) and os.path.exists(csv_path):
+            try:
+                cache_valid = os.path.getmtime(json_path) >= os.path.getmtime(csv_path)
+            except Exception:
+                cache_valid = False
+        if data and cache_valid:
+            try:
+                if isinstance(data, list):
+                    fd = {"flood_count": len(data), "windows": data}
+                elif isinstance(data, dict):
+                    if "flood_count" not in data:
+                        wins = data.get("windows")
+                        if isinstance(wins, list):
+                            data["flood_count"] = len(wins)
+                    fd = data
+                else:
+                    fd = {"flood_count": 0}
+            except Exception:
+                fd = data
+            return json.dumps({"status": "success", "source": "cache-valid", "floods": fd}, indent=2)
+        data = _compute_floods_from_db()
+        return json.dumps({"status": "success", "source": "live_db", "reason": "cache_invalid_or_missing", "floods": data}, indent=2)
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+
+def read_overall_health_cache() -> str:
+    try:
+        path = os.path.join(BACKEND_DIR, "PVCI-overall-health", "pvcI-overall-health.json")
+        data = _load_json_file(path)
+        if data is None:
+            return json.dumps({"status": "error", "error": "overall_health_cache_missing"})
+        return json.dumps({"status": "success", "source": "cache", "path": path, "data": data})
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+
 def get_isa_compliance_raw(time_period: str = "all") -> str:
     """
     Calculate ISA-18.2 compliance using RAW EVENT COUNTING (no state machine).
@@ -1448,7 +2011,7 @@ def get_isa_compliance_raw(time_period: str = "all") -> str:
 
 def get_bad_actors_raw(top_n: int = 20, time_period: str = "all", min_events: int = 100) -> str:
     """
-    Identify bad actor sources using RAW EVENT COUNTING.
+        Identify bad actor sources using RAW EVENT COUNTING.
     
     Bad actors = sources with excessive alarm events.
     
@@ -1512,5 +2075,10 @@ AVAILABLE_TOOLS = [
     # Phase 1 Fix: Event-based tools (work with ANY data pattern)
     analyze_flood_events_raw,
     get_isa_compliance_raw,
-    get_bad_actors_raw
+    get_bad_actors_raw,
+    lookup_nomenclature,
+    get_frequency_summary_cached,
+    get_unhealthy_summary_cached,
+    get_floods_summary_cached,
+    read_overall_health_cache
 ]

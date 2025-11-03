@@ -1,20 +1,20 @@
 {
   "cache_key": [
     "PVCI",
-    false,
-    60,
-    10,
+    true,
+    1440,
+    0.5,
     10,
     10,
     2
   ],
-  "cached_at": 1761638891.5000966,
+  "cached_at": 1762151090.704011,
   "data": {
     "plant_id": "PVCI",
     "mode": "actual-calc",
-    "generated_at": "2025-10-28T08:08:11.500096Z",
+    "generated_at": "2025-11-03T06:24:50.704011Z",
     "params": {
-      "include_system": false
+      "include_system": true
     },
     "nodes": [
       "Total",
@@ -31,54 +31,54 @@
       {
         "source": "Total",
         "target": "Standing",
-        "value": 3892
+        "value": 1162
       },
       {
         "source": "Total",
         "target": "Nuisance",
-        "value": 38374
+        "value": 27734
       },
       {
         "source": "Total",
         "target": "Flood",
-        "value": 1
+        "value": 1035
       },
       {
         "source": "Total",
         "target": "Other",
-        "value": 55054
+        "value": 67398
       },
       {
         "source": "Standing",
         "target": "Standing_Stale",
-        "value": 3864
+        "value": 1161
       },
       {
         "source": "Standing",
         "target": "Standing_IF",
-        "value": 28
+        "value": 1
       },
       {
         "source": "Nuisance",
         "target": "Nuisance_Chattering",
-        "value": 14126
+        "value": 6999
       },
       {
         "source": "Nuisance",
         "target": "Nuisance_IF_Chattering",
-        "value": 24248
+        "value": 20735
       }
     ],
     "totals": {
-      "total": 97321,
-      "standing": 3892,
-      "standing_stale": 3864,
-      "standing_if": 28,
-      "nuisance": 38374,
-      "nuisance_chattering": 14126,
-      "nuisance_if_chattering": 24248,
-      "flood": 1,
-      "other": 55054
+      "total": 97329,
+      "standing": 1162,
+      "standing_stale": 1161,
+      "standing_if": 1,
+      "nuisance": 27734,
+      "nuisance_chattering": 6999,
+      "nuisance_if_chattering": 20735,
+      "flood": 1035,
+      "other": 67398
     }
   }
 }

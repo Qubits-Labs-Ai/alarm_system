@@ -213,9 +213,9 @@ DEFAULT_CSV_RELATIVE_PATH = os.getenv("DEFAULT_CSV_RELATIVE_PATH", "VCMA")
 DEFAULT_CSV_FILE_NAME = os.getenv("DEFAULT_CSV_FILE_NAME", "VCMA.csv")
 
 # Default thresholds (can be overridden via parameters)
-STALE_THRESHOLD_MIN = 60  # minutes until an active alarm is considered standing/stale classification point
-CHATTER_THRESHOLD_MIN = 10  # window size in minutes for chattering detection
-CHATTER_MIN_COUNT = 3       # minimum alarms within window to declare chattering
+STALE_THRESHOLD_MIN = 1440  # minutes until an active alarm is considered standing/stale classification point (24h)
+CHATTER_THRESHOLD_MIN = 0.5  # window size in minutes for chattering detection (~30 seconds)
+CHATTER_MIN_COUNT = 3        # minimum alarms within window to declare chattering
 INSTRUMENT_KEYWORDS = ["FAIL", "BAD"]
 
 # New (unhealthy/flood) defaults — aligned with notebook pasted by user

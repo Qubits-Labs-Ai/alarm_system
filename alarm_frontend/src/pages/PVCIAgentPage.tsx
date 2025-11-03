@@ -9,13 +9,14 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Sparkles, ArrowLeft, Copy, ThumbsUp, ThumbsDown, Loader2, ChevronDown } from "lucide-react";
 import { PlaceholdersAndVanishInput } from "@/components/ui/placeholders-and-vanish-input";
-import { streamAgentQuery, generateRequestId, generateSessionId, AgentEvent } from "@/api/agentSSE";
+import { streamAgentQuery, generateRequestId, generateSessionId, AgentEvent, ChartDataPayload } from "@/api/agentSSE";
 import { cn } from "@/lib/utils";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "@/components/ui/use-toast";
+import { AgentInlineChart } from "@/components/agent/AgentInlineChart";
 
 type ReasoningPhase = {
   label: string;  // "Planning", "Iteration 1 Analysis", "Final Review"
@@ -30,12 +31,13 @@ type Message = {
   reasoningPhases?: ReasoningPhase[];  // Multiple reasoning blocks
   toolCalls?: Array<{ name: string; arguments: string }>;
   toolResults?: string[];
+  charts?: ChartDataPayload[];  // Inline charts
   pending?: boolean;
   isStreaming?: boolean;
   // Track state for intelligent phase labeling
   _toolCallCount?: number;  // How many tools have been called
   _lastReasoningPhase?: string;  // Last phase label to avoid duplicates
-  // Track which section should be open (format: 'reasoning-0', 'tool-0', etc)
+  // Track which section should be open (format: 'reasoning-0', 'tool-0', 'chart-0', etc)
   _openSection?: string;
   feedback?: "like" | "dislike";
 };
@@ -129,6 +131,7 @@ const PVCIAgentPage = () => {
       reasoningPhases: [], 
       toolCalls: [], 
       toolResults: [],
+      charts: [],
       _toolCallCount: 0,
       _lastReasoningPhase: "",
       _openSection: undefined
@@ -180,8 +183,10 @@ const PVCIAgentPage = () => {
                         timestamp: Date.now()
                       }
                     ];
-                    // Auto-open this new reasoning phase
-                    updated._openSection = `reasoning-${phases.length}`;
+                    // Auto-open this new reasoning phase unless a chart is currently open
+                    if (!(updated._openSection && updated._openSection.startsWith("chart-"))) {
+                      updated._openSection = `reasoning-${phases.length}`;
+                    }
                   } else {
                     // Same phase - append to existing
                     const updatedPhases = [...phases];
@@ -207,8 +212,10 @@ const PVCIAgentPage = () => {
                     ];
                     // Increment tool count for reasoning phase tracking
                     updated._toolCallCount = (updated._toolCallCount || 0) + 1;
-                    // Auto-open this new tool call
-                    updated._openSection = `tool-${newToolIndex}`;
+                    // Auto-open this new tool call unless a chart is currently open
+                    if (!(updated._openSection && updated._openSection.startsWith("chart-"))) {
+                      updated._openSection = `tool-${newToolIndex}`;
+                    }
                   }
                   return updated;
                 }
@@ -225,12 +232,33 @@ const PVCIAgentPage = () => {
                 case "tool_result":
                   updated.toolResults = [ ...(updated.toolResults || []), event.content || "" ];
                   return updated;
+                case "chart_data": {
+                  const chartPayload = event.data as ChartDataPayload;
+                  updated.charts = [...(updated.charts || []), chartPayload];
+                  // Auto-open the new chart section
+                  const chartIndex = (updated.charts || []).length - 1;
+                  updated._openSection = `chart-${chartIndex}`;
+                  // Nudge Recharts to recalc dimensions after the chart mounts in a collapsible
+                  // Delay slightly so DOM has applied layout
+                  try {
+                    window.setTimeout(() => window.dispatchEvent(new Event("resize")), 80);
+                  } catch { /* noop */ }
+                  return updated;
+                }
                 case "answer_complete":
                   updated.content = sanitizeAnswerChunk(event.content) || updated.content;
                   updated.isStreaming = false;
+                  // After final content arrives, nudge Recharts in case layout changed
+                  try {
+                    window.setTimeout(() => window.dispatchEvent(new Event("resize")), 80);
+                  } catch { /* noop */ }
                   return updated;
                 case "complete":
                   updated.isStreaming = false;
+                  // Finalize with a resize to ensure any open chart renders
+                  try {
+                    window.setTimeout(() => window.dispatchEvent(new Event("resize")), 80);
+                  } catch { /* noop */ }
                   return updated;
                 case "error": {
                   // Show detailed error message with debug info if available
@@ -298,6 +326,13 @@ const PVCIAgentPage = () => {
         ...prev,
         [`${m.id}-${sectionId}`]: !currentState
       }));
+      // When opening a chart section, trigger a window resize to force Recharts to recompute dimensions
+      // Recharts' ResponsiveContainer measures width at mount; inside a collapsing container it may read 0.
+      if (sectionId.startsWith("chart-") && !currentState) {
+        window.setTimeout(() => {
+          try { window.dispatchEvent(new Event("resize")); } catch { /* noop */ }
+        }, 60);
+      }
     };
     return (
       <div key={m.id} className={`group flex w-full ${isUser ? "justify-end" : "justify-start"}`}>
@@ -413,6 +448,40 @@ const PVCIAgentPage = () => {
                                     </ScrollArea>
                                   </div>
                                 )}
+                              </div>
+                            </CollapsibleContent>
+                          </Collapsible>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Chart Sections */}
+                {m.charts && m.charts.length > 0 && (
+                  <div className="pt-3 pb-2">
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground mb-2">
+                      📊 Visualizations ({m.charts.length})
+                    </div>
+                    <div className="space-y-3">
+                      {m.charts.map((chart, idx) => {
+                        const sectionId = `chart-${idx}`;
+                        const open = isOpen(sectionId);
+                        
+                        return (
+                          <Collapsible 
+                            key={idx} 
+                            open={open}
+                            onOpenChange={() => toggleSection(sectionId, open)}
+                            className="group/collapsible"
+                          >
+                            <CollapsibleTrigger className="flex w-full items-center justify-between text-left text-[13px] rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-muted/60">
+                              <span className="font-medium text-foreground">📊 {chart.config.title}</span>
+                              <ChevronDown className="h-4 w-4 opacity-60 transition-all duration-200 group-data-[state=open]/collapsible:rotate-180" />
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="transition-all duration-200 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                              <div className="mt-2">
+                                <AgentInlineChart chartData={chart} />
                               </div>
                             </CollapsibleContent>
                           </Collapsible>

@@ -9,14 +9,36 @@ export type AgentEventType =
   | 'tool_call'
   | 'tool_call_update'
   | 'tool_result'
+  | 'chart_data'
   | 'answer_complete'
   | 'complete'
   | 'error';
 
+export interface ChartDataPayload {
+  type: 'line' | 'bar' | 'pie' | 'scatter' | 'area';
+  data: Array<Record<string, any>>;
+  config: {
+    xKey?: string;
+    yKey?: string;
+    yKeys?: string[];
+    nameKey?: string;
+    valueKey?: string;
+    title: string;
+    xLabel?: string;
+    yLabel?: string;
+    colors?: string[];
+    tooltip?: boolean;
+    legend?: boolean;
+    height?: number;
+    layout?: 'horizontal' | 'vertical';
+    responsive?: boolean;
+  };
+}
+
 export interface AgentEvent {
   type: AgentEventType;
   content?: string;
-  data?: unknown;
+  data?: unknown | ChartDataPayload;
   message?: string;
   sessionId?: string;
   requestId?: string;

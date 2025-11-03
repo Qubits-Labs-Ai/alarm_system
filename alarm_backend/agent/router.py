@@ -14,6 +14,7 @@ from .data_store import store
 from .llm import agent_llm
 from .config import path_status
 from .pvci_agent_bridge import run_glm_agent, AVAILABLE_TOOLS, load_data, DB_FILE
+from . import pvci_agent_bridge as bridge
 
 logger = logging.getLogger(__name__)
 
@@ -151,4 +152,139 @@ def agent_reload_db():
         raise
     except Exception as e:
         logger.error(f"Reload DB error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/validate")
+def agent_validate(plant: str = "PVCI", period: str = "all"):
+    try:
+        dt = bridge.data_tools
+        freq_cache = None
+        cache_params = None
+        fcr = json.loads(dt.get_frequency_summary_cached(plant_id=plant, period=period, validate=False))
+        if isinstance(fcr, dict) and fcr.get("source") in ("cache", "cache-valid"):
+            freq_obj = (fcr.get("frequency") or {})
+            freq_cache = freq_obj.get("summary")
+            cache_params = freq_obj.get("params")
+        # Default DB metrics (period-based)
+        fdb = json.loads(dt.get_frequency_summary_cached(plant_id=plant, period=period, force_db=True))
+        freq_db = (fdb.get("frequency") or {}).get("summary")
+        runtime_params = ((fdb.get("frequency") or {}).get("params") or {})
+
+        # Date-aligned recompute if cache has daily table
+        cache_path = None
+        try:
+            if hasattr(dt, "_resolve_actual_calc_json_path"):
+                cache_path = dt._resolve_actual_calc_json_path(plant)
+        except Exception:
+            cache_path = None
+        date_aligned_db = None
+        try:
+            if cache_path and os.path.exists(cache_path):
+                with open(cache_path, "r", encoding="utf-8", errors="ignore") as f:
+                    raw = json.load(f)
+                freq_block = raw.get("frequency") if isinstance(raw, dict) else None
+                apd = (freq_block or {}).get("alarms_per_day") if isinstance(freq_block, dict) else None
+                dates = []
+                if isinstance(apd, list) and apd:
+                    for rec in apd:
+                        if isinstance(rec, dict):
+                            dv = rec.get("Date") or rec.get("date") or rec.get("day")
+                            if isinstance(dv, str) and len(dv) >= 8:
+                                dates.append(dv[:10])
+                elif isinstance(apd, dict):
+                    dates = list(apd.keys())
+                if dates and hasattr(dt, "_db_frequency_kpis_for_dates"):
+                    date_aligned_db = dt._db_frequency_kpis_for_dates(dates)
+        except Exception:
+            date_aligned_db = None
+        if isinstance(date_aligned_db, dict):
+            freq_db = date_aligned_db
+
+        def r2(x):
+            try:
+                return round(float(x), 2)
+            except Exception:
+                return 0.0
+
+        freq_diff = {}
+        freq_match = None
+        if freq_cache and freq_db:
+            exact = ["total_unique_alarms", "days_over_288_count", "days_unacceptable_count", "total_days_analyzed"]
+            approx = ["avg_alarms_per_day", "avg_alarms_per_hour", "avg_alarms_per_10min"]
+            ok = True
+            for k in exact:
+                ca = int(freq_cache.get(k, -1))
+                db = int(freq_db.get(k, -2))
+                if ca != db:
+                    ok = False
+                freq_diff[k] = {"cache": ca, "db": db, "diff": ca - db}
+            for k in approx:
+                ca = r2(freq_cache.get(k, 0))
+                db = r2(freq_db.get(k, 0))
+                if abs(ca - db) > 0.01:
+                    ok = False
+                freq_diff[k] = {"cache": ca, "db": db, "diff": round(ca - db, 2)}
+            freq_match = ok
+
+        params_match = None
+        try:
+            if cache_params and runtime_params:
+                keys = ["iso_threshold", "unacceptable_threshold", "unhealthy_threshold", "window_minutes"]
+                params_match = all(str(cache_params.get(k)) == str(runtime_params.get(k)) for k in keys)
+        except Exception:
+            params_match = None
+
+        unc_cache = None
+        ucr = json.loads(dt.get_unhealthy_summary_cached(plant_id=plant))
+        if isinstance(ucr, dict) and ucr.get("source", "").startswith("cache"):
+            unc_cache = (ucr.get("unhealthy") or {})
+        udb = json.loads(dt.get_unhealthy_summary_cached(plant_id=plant, force_db=True))
+        unc_db = (udb.get("unhealthy") or {})
+        unhealthy_match = None
+        unhealthy_diff = {}
+        if unc_cache and unc_db:
+            ca = int(unc_cache.get("total_periods", -1))
+            db = int(unc_db.get("total_periods", -2))
+            unhealthy_match = (ca == db)
+            unhealthy_diff = {"total_periods": {"cache": ca, "db": db, "diff": ca - db}}
+
+        fld_cache = None
+        fcr = json.loads(dt.get_floods_summary_cached(plant_id=plant))
+        if isinstance(fcr, dict) and fcr.get("source", "").startswith("cache"):
+            fld_cache = (fcr.get("floods") or {})
+        fdb = json.loads(dt.get_floods_summary_cached(plant_id=plant, force_db=True))
+        fld_db = (fdb.get("floods") or {})
+        floods_match = None
+        floods_diff = {}
+        if fld_cache and fld_db:
+            ca = int(fld_cache.get("flood_count", -1))
+            db = int(fld_db.get("flood_count", -2))
+            floods_match = (ca == db)
+            floods_diff = {"flood_count": {"cache": ca, "db": db, "diff": ca - db}}
+
+        return {
+            "status": "success",
+            "plant": plant,
+            "period": period,
+            "frequency": {
+                "match": freq_match,
+                "cache_present": freq_cache is not None,
+                "params_match": params_match,
+                "diff": freq_diff,
+                "db": freq_db,
+            },
+            "unhealthy": {
+                "match": unhealthy_match,
+                "cache_present": unc_cache is not None,
+                "diff": unhealthy_diff,
+            },
+            "floods": {
+                "match": floods_match,
+                "cache_present": fld_cache is not None,
+                "diff": floods_diff,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Validate error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

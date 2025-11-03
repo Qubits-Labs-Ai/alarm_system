@@ -1,4 +1,4 @@
-"""
+cd"""
 Phase 1 Verification Script
 Tests max iteration fixes and new tool expansion
 """

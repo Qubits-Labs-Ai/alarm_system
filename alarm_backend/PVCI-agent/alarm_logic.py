@@ -1,6 +1,9 @@
 # alarm_logic.py
 import pandas as pd
 from datetime import timedelta
+import os
+import sys
+import importlib.util
 
 # Configurable thresholds
 STALE_MINUTES = 30
@@ -8,6 +11,19 @@ CHATTER_WINDOW_SECONDS = 60       # repeated alarms within 1 minute => chatterin
 UNHEALTHY_COUNT = 10              # >= 10 in 10 minutes => unhealthy
 FLOOD_WINDOW_MINUTES = 10
 FLOOD_THRESHOLD = 50              # total alarms across sources in window => Flood
+try:
+    _backend_dir = os.path.dirname(os.path.dirname(__file__))
+    _acs_path = os.path.join(_backend_dir, "PVCI-actual-calc", "actual_calc_service.py")
+    _spec = importlib.util.spec_from_file_location("actual_calc_service", _acs_path)
+    _mod = importlib.util.module_from_spec(_spec)
+    sys.modules["actual_calc_service"] = _mod
+    _spec.loader.exec_module(_mod)
+    STALE_MINUTES = getattr(_mod, "STALE_THRESHOLD_MIN", STALE_MINUTES)
+    CHATTER_WINDOW_SECONDS = 60 * getattr(_mod, "CHATTER_THRESHOLD_MIN", CHATTER_WINDOW_SECONDS // 60 if CHATTER_WINDOW_SECONDS else 10)
+    UNHEALTHY_COUNT = getattr(_mod, "UNHEALTHY_THRESHOLD", UNHEALTHY_COUNT)
+    FLOOD_WINDOW_MINUTES = getattr(_mod, "WINDOW_MINUTES", FLOOD_WINDOW_MINUTES)
+except Exception:
+    pass
 
 def ensure_datetime(df, time_col="Event Time"):
     if time_col in df.columns:
