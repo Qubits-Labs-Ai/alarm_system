@@ -1,6 +1,0 @@
-# Optional dependencies for timesheet export (choose one PDF path)
-# Pandoc is preferred if installed (external, not a Python package)
-markdown
-weasyprint
-pdfkit
-reportlab

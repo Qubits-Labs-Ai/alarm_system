@@ -2,3 +2,10 @@
 .env
 alarm_backend/.env
 alarm_frontend/.env
+
+# Logs and DBs
+alarm_backend/health_monitor.log
+alarm_backend/PVCI-agent/alerts.db
+*.db
+*.sqlite
+*.sqlite3
