@@ -285,6 +285,10 @@ def detect_repeating_and_chattering(df: pd.DataFrame) -> pd.DataFrame:
             t = row["Event Time"]
             cond = row.get("Condition", "") if "Condition" in group.columns else ""
 
+            # Skip non-alarm transitions (align with notebook)
+            if cond in ["CHANGE", "ONREQ.PV", "NORMAL", "ONREQ"]:
+                continue
+
             if action == "":
                 if state in ("IDLE", "ACKED"):
                     alarm_times.append(t)
@@ -360,6 +364,10 @@ def analyze_basic_alarm_states(df: pd.DataFrame) -> pd.DataFrame:
             action = row["Action"]
             t = row["Event Time"]
             cond = row.get("Condition", "") if hasattr(row, "get") else row["Condition"] if "Condition" in group.columns else ""
+
+            # Skip non-alarm transitions (align with notebook)
+            if cond in ["CHANGE", "ONREQ.PV", "NORMAL", "ONREQ"]:
+                continue
 
             # NEW ALARM
             if action == "" and state in ["IDLE", "ACKED"]:
@@ -519,6 +527,8 @@ def calculate_alarm_frequency_metrics(
     df = df.copy()
     df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
     df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+    if "Condition" in df.columns:
+        df["Condition"] = df["Condition"].fillna("").astype(str).str.upper().str.strip()
     # Sorting removed - data is pre-sorted in load_pvci_merged_csv()
 
     # ---------- Step 2: Identify Unique Alarms (Activations) ----------
@@ -528,6 +538,11 @@ def calculate_alarm_frequency_metrics(
         for _, row in group.iterrows():
             action = row["Action"]
             t = row["Event Time"]
+            cond = row.get("Condition", "") if "Condition" in group.columns else ""
+
+            # Skip non-alarm transitions
+            if cond in ["CHANGE", "ONREQ.PV", "NORMAL", "ONREQ"]:
+                continue
 
             # New alarm trigger
             if action == "" and state in ["IDLE", "ACKED"]:
@@ -611,6 +626,8 @@ def detect_unhealthy_and_flood(
     df = df.copy()
     df["Event Time"] = pd.to_datetime(df["Event Time"], errors="coerce")
     df["Action"] = df["Action"].fillna("").astype(str).str.upper().str.strip()
+    if "Condition" in df.columns:
+        df["Condition"] = df["Condition"].fillna("").astype(str).str.upper().str.strip()
     # Sorting removed - data is pre-sorted in load_pvci_merged_csv()
 
     # 2) Extract unique activations (blank when IDLE/ACKED)
@@ -620,6 +637,12 @@ def detect_unhealthy_and_flood(
         for _, r in g.iterrows():
             action = r["Action"]
             t = r["Event Time"]
+            cond = r.get("Condition", "") if "Condition" in g.columns else ""
+
+            # Skip non-alarm transitions (align with notebook)
+            if cond in ["CHANGE", "ONREQ.PV", "NORMAL", "ONREQ"]:
+                continue
+
             if action == "" and state in ("IDLE", "ACKED"):
                 activations.append({"Source": src, "StartTime": t})
                 state = "ACTIVE"

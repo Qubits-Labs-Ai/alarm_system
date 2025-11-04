@@ -1,12 +1,20 @@
 def _db_compute_activations(df):
-    """Mirror actual-calc activation extraction (Blank when IDLE/ACKED starts, ACK -> ACKED, OK -> IDLE)."""
+    """Mirror actual-calc activation extraction (Blank when IDLE/ACKED starts, ACK -> ACKED, OK -> IDLE)
+    and align with notebook by skipping non-alarm Condition transitions: CHANGE/ONREQ.PV/NORMAL/ONREQ.
+    """
     try:
         rows = []
         for src, group in df.groupby("Source"):
             state = "IDLE"
             for _, row in group.sort_values("Event Time").iterrows():
                 action = str(row.get("Action", "")).upper().strip()
+                cond = str(row.get("Condition", "")).upper().strip()
                 t = row.get("Event Time")
+
+                # Skip non-alarm transitions — not real alarms
+                if cond in ("CHANGE", "ONREQ.PV", "NORMAL", "ONREQ"):
+                    continue
+
                 if action == "" and state in ("IDLE", "ACKED"):
                     rows.append({"Source": src, "StartTime": t})
                     state = "ACTIVE"

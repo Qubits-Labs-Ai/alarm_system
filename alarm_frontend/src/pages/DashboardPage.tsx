@@ -321,14 +321,16 @@ export default function DashboardPage() {
         const timeout = cacheExists ? 120000 : 300000;
         
         // Use dynamic plant-aware API calls with actualCalcPlantId from context
-        let [overall, unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
-          fetchPlantActualCalcOverall(actualCalcPlantId, {
-            stale_min: 60,
-            chatter_min: 10,
-            include_per_source: false,
-            include_cycles: false,
-            timeout_ms: timeout,
-          }),
+        // 1) Always fetch overall first to compute or refresh cache
+        let overall = await fetchPlantActualCalcOverall(actualCalcPlantId, {
+          stale_min: 60,
+          chatter_min: 10,
+          include_per_source: false,
+          include_cycles: false,
+          timeout_ms: timeout,
+        });
+        // 2) Then fetch dependent summaries in parallel from the generated cache
+        const [unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
           fetchPlantActualCalcUnhealthy(actualCalcPlantId, { offset: 0, limit: 500, timeout_ms: timeout }),
           fetchPlantActualCalcFloods(actualCalcPlantId, { limit: 200, timeout_ms: timeout }),
           fetchPlantActualCalcBadActors(actualCalcPlantId, { limit: 9999, timeout_ms: timeout }),

@@ -4,7 +4,7 @@
  */
 
 import { useMemo, useState, useEffect } from 'react';
-import { fetchPvciActualCalcOverall, fetchPvciActualCalcUnhealthy, fetchPvciActualCalcFloods, fetchPvciActualCalcBadActors, fetchPlantActualCalcCacheStatus } from '@/api/actualCalc';
+import { fetchPlantActualCalcOverall, fetchPlantActualCalcUnhealthy, fetchPlantActualCalcFloods, fetchPlantActualCalcBadActors, fetchPlantActualCalcCacheStatus } from '@/api/actualCalc';
 import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
 import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
 import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
@@ -85,11 +85,19 @@ export function ActualCalcPage() {
       
       try {
         setLoadingStage('Fetching calculation results...');
-        let [overall, unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
-          fetchPvciActualCalcOverall({ stale_min: 60, chatter_min: 10, include_per_source: false, include_cycles: false, timeout_ms: timeout }),
-          fetchPvciActualCalcUnhealthy({ stale_min: 60, chatter_min: 10, limit: 500, timeout_ms: timeout }),
-          fetchPvciActualCalcFloods({ stale_min: 60, chatter_min: 10, limit: 200, timeout_ms: timeout }),
-          fetchPvciActualCalcBadActors({ stale_min: 60, chatter_min: 10, limit: 10, timeout_ms: timeout }),
+        // 1) Always fetch overall first to (re)generate the plant-aware cache
+        let overall = await fetchPlantActualCalcOverall('PVCI', {
+          stale_min: 60,
+          chatter_min: 10,
+          include_per_source: false,
+          include_cycles: false,
+          timeout_ms: timeout,
+        });
+        // 2) Then fetch dependent summaries in parallel from the generated cache
+        const [unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
+          fetchPlantActualCalcUnhealthy('PVCI', { limit: 500, timeout_ms: timeout }),
+          fetchPlantActualCalcFloods('PVCI', { limit: 200, timeout_ms: timeout }),
+          fetchPlantActualCalcBadActors('PVCI', { limit: 10, timeout_ms: timeout }),
         ]);
         
         clearInterval(progressInterval);
@@ -112,7 +120,7 @@ export function ActualCalcPage() {
           setLoadingStage('Regenerating cache with updated schema...');
           setIsFirstLoad(true);
           try {
-            const recomputed = await fetchPvciActualCalcOverall({
+            const recomputed = await fetchPlantActualCalcOverall('PVCI', {
               stale_min: 60,
               chatter_min: 10,
               include_per_source: false,

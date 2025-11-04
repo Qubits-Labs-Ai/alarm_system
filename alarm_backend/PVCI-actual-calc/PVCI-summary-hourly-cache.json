@@ -2,17 +2,17 @@
   "cache_key": [
     "PVCI",
     true,
-    60,
-    10,
+    1440,
+    0.5,
     10,
     10,
     2
   ],
-  "cached_at": 1761571315.5681844,
+  "cached_at": 1762259994.478533,
   "data": {
     "plant_id": "PVCI",
     "mode": "actual-calc",
-    "generated_at": "2025-10-27T13:21:55.568184Z",
+    "generated_at": "2025-11-04T12:39:54.440482Z",
     "params": {
       "include_system": true
     },

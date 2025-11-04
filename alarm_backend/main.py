@@ -317,21 +317,12 @@ def get_pvci_actual_calc_peak_details(
             "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
         }
         cached = read_cache(BASE_DIR, params)
-        if not cached:
-            # Try reading cache file directly (ignore param mismatch) so UI can still show details
-            try:
-                cache_path = os.path.join(BASE_DIR, "PVCI-actual-calc", "actual-calc.json")
-                if os.path.exists(cache_path):
-                    with open(cache_path, "r", encoding="utf-8") as _f:
-                        cached = json.load(_f)
-            except Exception as _ex:
-                logger.warning(f"Direct cache read failed: {_sanitize_error_message(_ex)}")
-
         s = start_iso
         e = end_iso
         if (s is None or e is None) and cached:
             try:
                 overall = (cached or {}).get("overall", {})
+
                 s = s or overall.get("peak_10min_window_start")
                 e = e or overall.get("peak_10min_window_end")
             except Exception:
@@ -2017,6 +2008,7 @@ try:
         run_actual_calc_with_cache,
         read_cache,
         write_cache,
+        get_cache_path,
         dataframe_to_json_records,
         kpis_to_json_safe,
         # Centralized activation/flood thresholds for cache params
@@ -2835,7 +2827,7 @@ def get_plant_actual_calc_cache_status(
         
         if cached:
             # Cache exists - extract metadata
-            cache_path_obj = get_cache_path(BASE_DIR, params, plant_id=plant_id)
+            cache_path_obj = get_cache_path(BASE_DIR, plant_id=plant_id)
             cache_size_mb = None
             if os.path.exists(cache_path_obj):
                 cache_size_mb = os.path.getsize(cache_path_obj) / (1024 * 1024)
@@ -3025,7 +3017,9 @@ def get_plant_actual_calc_unhealthy(
     plant_id: str,
     offset: int = 0,
     limit: int = 100,
-    raw: bool = False
+    raw: bool = False,
+    stale_min: int = 60,
+    chatter_min: int = 10,
 ):
     """Get unhealthy sources for any plant."""
     if not ACTUAL_CALC_AVAILABLE:
@@ -3036,8 +3030,15 @@ def get_plant_actual_calc_unhealthy(
     
     try:
         params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
             "unhealthy_threshold": UNHEALTHY_THRESHOLD,
             "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
         }
         
         cached = read_cache(BASE_DIR, params, plant_id=plant_id)
@@ -3071,7 +3072,9 @@ def get_plant_actual_calc_unhealthy(
 def get_plant_actual_calc_floods(
     plant_id: str,
     limit: int = 50,
-    raw: bool = False
+    raw: bool = False,
+    stale_min: int = 60,
+    chatter_min: int = 10,
 ):
     """Get flood windows for any plant."""
     if not ACTUAL_CALC_AVAILABLE:
@@ -3082,8 +3085,15 @@ def get_plant_actual_calc_floods(
     
     try:
         params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
             "window_minutes": WINDOW_MINUTES,
             "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
         }
         
         cached = read_cache(BASE_DIR, params, plant_id=plant_id)
@@ -3117,7 +3127,9 @@ def get_plant_actual_calc_floods(
 def get_plant_actual_calc_bad_actors(
     plant_id: str,
     limit: int = 20,
-    raw: bool = False
+    raw: bool = False,
+    stale_min: int = 60,
+    chatter_min: int = 10,
 ):
     """Get bad actors for any plant."""
     if not ACTUAL_CALC_AVAILABLE:
@@ -3127,7 +3139,19 @@ def get_plant_actual_calc_bad_actors(
         raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
     
     try:
-        cached = read_cache(BASE_DIR, {}, plant_id=plant_id)
+        params = {
+            "stale_min": stale_min,
+            "chatter_min": chatter_min,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
+        
+        cached = read_cache(BASE_DIR, params, plant_id=plant_id)
         if not cached:
             raise HTTPException(status_code=404, detail=f"No cached data for plant {plant_id}")
         
