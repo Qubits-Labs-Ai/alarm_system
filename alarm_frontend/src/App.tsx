@@ -48,7 +48,7 @@ const App = () => (
             <Route path="/signin" element={<SignInPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/actual-calc" element={<ActualCalcPage />} />
-            <Route path="/:plant/agent" element={<AgentPage />} />
+            <Route path="/:plant/old-pvci-agent" element={<AgentPage />} />
             <Route path="/pvci/agent-sql" element={<PVCIAgentPage />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

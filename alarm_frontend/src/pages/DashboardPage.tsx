@@ -751,14 +751,6 @@ export default function DashboardPage() {
               <>
                 <Button
                   size="sm"
-                  className="gap-2 bg-primary hover:bg-primary/90"
-                  onClick={() => navigate('/pvci/agent')}
-                  title="Open PVC-I Agent - Full page experience"
-                >
-                  <Sparkles className="h-4 w-4" /> Agent
-                </Button>
-                <Button
-                  size="sm"
                   variant="outline"
                   className="gap-2"
                   onClick={() => navigate('/pvci/agent-sql')}

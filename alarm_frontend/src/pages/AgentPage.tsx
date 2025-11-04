@@ -68,8 +68,8 @@ const AgentPage = () => {
       const data = await res.json().catch(() => ({}));
       const content: string = (data?.answer || "").trim() || "Not available in current data.";
       setMessages((m) => m.map((mm) => (mm.id === pendingId ? { ...mm, content, pending: false, animate: true } : mm)));
-    } catch (e: any) {
-      const msg = (e?.message || String(e) || "Request failed").slice(0, 500);
+    } catch (e: unknown) {
+      const msg = (e instanceof Error ? e.message : String(e) || "Request failed").slice(0, 500);
       setMessages((m) => m.map((mm) => (mm.id === pendingId ? { ...mm, content: `Error contacting agent API. ${msg}`, pending: false, animate: false } : mm)));
     } finally {
       setLoading(false);
@@ -155,7 +155,7 @@ const AgentPage = () => {
                             await navigator.clipboard.writeText(m.content);
                             setCopiedId(m.id);
                             window.setTimeout(() => setCopiedId(null), 1500);
-                          } catch {}
+                          } catch (_e) { void 0; }
                         }}
                       >
                         <Copy className="h-4 w-4" />
@@ -202,7 +202,7 @@ const AgentPage = () => {
         <div className="flex items-center gap-3 ">
           <Sparkles className="h-5 w-5 text-primary" />
           <div>
-            <h2 className="text-xl font-semibold">PVC-I Agent</h2>
+            <h2 className="text-xl font-semibold">Old PVC-I Agent</h2>
             <p className="text-xs text-muted-foreground">Minimal, clean chat experience</p>
           </div>
         </div>
@@ -243,7 +243,7 @@ const AgentPage = () => {
             <div className="text-center text-[11px] text-muted-foreground mt-2">
               {loading
                 ? "Generating response… sending disabled until completion."
-                : "Press Enter to send. Shift+Enter adds a new line. PVC‑I Agent can make mistakes—verify important information."}
+                : "Press Enter to send. Shift+Enter adds a new line. Old PVC‑I Agent can make mistakes—verify important information."}
             </div>
           </div>
         </div>
