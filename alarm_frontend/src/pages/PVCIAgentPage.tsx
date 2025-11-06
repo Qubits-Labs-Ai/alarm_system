@@ -39,6 +39,8 @@ type Message = {
   _lastReasoningPhase?: string;  // Last phase label to avoid duplicates
   // Track which section should be open (format: 'reasoning-0', 'tool-0', 'chart-0', etc)
   _openSection?: string;
+  // Internal: signature map for chart de-duplication (signature → index)
+  _chartSigMap?: Record<string, number>;
   feedback?: "like" | "dislike";
 };
 
@@ -53,6 +55,43 @@ function sanitizeAnswerChunk(raw: string | undefined): string {
   // Optional: strip fenced blocks labeled tool or arguments
   s = s.replace(/```\s*(tool|arguments|argument|tool_call)[\s\S]*?```/gi, "");
   return s;
+}
+
+// Limit how many charts we show per answer to keep UX focused
+const MAX_CHARTS_PER_ANSWER = 3;
+
+// Build a stable signature for a chart to de-duplicate across iterations
+function chartSignature(chart: ChartDataPayload): string {
+  try {
+    const { type, config, data } = chart;
+    // Normalize data lightly: round numeric values and only include first 50 rows for signature
+    const norm = (val: any) => {
+      if (typeof val === 'number' && isFinite(val)) return Math.round(val * 1000) / 1000;
+      return val;
+    };
+    const dataSample = (Array.isArray(data) ? data.slice(0, 50) : []).map((row) => {
+      const out: Record<string, any> = {};
+      Object.keys(row || {}).forEach((k) => { out[k] = norm((row as any)[k]); });
+      return out;
+    });
+    const key = {
+      t: type,
+      // Title and axis keys typically define the intent; include layout too
+      c: {
+        title: config?.title,
+        xKey: (config as any)?.xKey,
+        yKeys: (config as any)?.yKeys,
+        nameKey: (config as any)?.nameKey,
+        valueKey: (config as any)?.valueKey,
+        layout: (config as any)?.layout,
+      },
+      n: dataSample,
+      len: Array.isArray(data) ? data.length : 0,
+    };
+    return JSON.stringify(key);
+  } catch {
+    return `${chart.type}:${chart?.config?.title || ''}`;
+  }
 }
 
 const WelcomeMarkdown = `Welcome to PVCI Agent
@@ -234,10 +273,39 @@ const PVCIAgentPage = () => {
                   return updated;
                 case "chart_data": {
                   const chartPayload = event.data as ChartDataPayload;
-                  updated.charts = [...(updated.charts || []), chartPayload];
-                  // Auto-open the new chart section
-                  const chartIndex = (updated.charts || []).length - 1;
-                  updated._openSection = `chart-${chartIndex}`;
+                  const sig = chartSignature(chartPayload);
+                  const sigMap = { ...(updated._chartSigMap || {}) } as Record<string, number>;
+                  const nextCharts = [...(updated.charts || [])];
+
+                  if (sig in sigMap) {
+                    // Replace existing chart with refined latest one
+                    const idx = sigMap[sig]!;
+                    nextCharts[idx] = chartPayload;
+                    updated.charts = nextCharts;
+                    updated._chartSigMap = sigMap;
+                    updated._openSection = `chart-${idx}`;
+                  } else {
+                    if (nextCharts.length < MAX_CHARTS_PER_ANSWER) {
+                      sigMap[sig] = nextCharts.length;
+                      nextCharts.push(chartPayload);
+                      updated.charts = nextCharts;
+                      updated._chartSigMap = sigMap;
+                      // Auto-open the new chart section
+                      const chartIndex = nextCharts.length - 1;
+                      updated._openSection = `chart-${chartIndex}`;
+                    } else {
+                      // When at cap, prefer replacing the last chart to reflect latest refinement
+                      const replaceIdx = nextCharts.length - 1;
+                      // Remove old mapping for the chart being replaced
+                      const oldSig = Object.keys(sigMap).find((k) => sigMap[k] === replaceIdx);
+                      if (oldSig) delete sigMap[oldSig];
+                      nextCharts[replaceIdx] = chartPayload;
+                      sigMap[sig] = replaceIdx;
+                      updated.charts = nextCharts;
+                      updated._chartSigMap = sigMap;
+                      updated._openSection = `chart-${replaceIdx}`;
+                    }
+                  }
                   // Nudge Recharts to recalc dimensions after the chart mounts in a collapsible
                   // Delay slightly so DOM has applied layout
                   try {

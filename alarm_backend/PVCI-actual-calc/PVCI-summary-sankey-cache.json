@@ -8,11 +8,11 @@
     10,
     2
   ],
-  "cached_at": 1762261758.2673006,
+  "cached_at": 1762417518.4404929,
   "data": {
     "plant_id": "PVCI",
     "mode": "actual-calc",
-    "generated_at": "2025-11-04T13:09:18.267300Z",
+    "generated_at": "2025-11-06T08:25:18.440492Z",
     "params": {
       "include_system": true
     },

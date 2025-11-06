@@ -4,7 +4,7 @@ import json
 import inspect
 import re
 from collections import Counter
-from typing import AsyncGenerator, Dict, Any, List, Callable
+from typing import AsyncGenerator, Dict, Any, List, Callable, Optional
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 
@@ -308,7 +308,16 @@ def classify_intent(query: str) -> Dict[str, Any] | None:
             return {"type": "tool", "name": "analyze_flood_events_raw", "args": {"min_sources": min_sources, "time_period": time_period, "time_window_minutes": 10}}
         return {"type": "tool", "name": "analyze_flood_events", "args": {"min_sources": min_sources, "time_period": time_period, "summary_by_month": bool(re.search(r"month", ql))}}
 
-    if re.search(r"(health status|health summary|unhealthy|marginal)", ql):
+    # Option A (refined): For 'unhealthy' questions, prefer activation-based bad-actors with a bounded period
+    if re.search(r"\bunhealthy\b", ql):
+        # Default to last_7_days (tighter, faster) when user didn't specify
+        tp_used = time_period if time_period != "all" else "last_7_days"
+        if want_raw:
+            return {"type": "tool", "name": "get_bad_actors_raw", "args": {"top_n": top_n, "time_period": tp_used, "min_events": 100}}
+        return {"type": "tool", "name": "analyze_bad_actors", "args": {"top_n": top_n, "min_alarms": 50, "time_period": tp_used}}
+
+    # Keep explicit health summary/status queries mapped to detailed health summary
+    if re.search(r"(health status|health summary|marginal)", ql):
         return {"type": "tool", "name": "get_alarm_health_summary", "args": {"source_filter": source_like}}
 
     if _detect_cached(q):
@@ -692,6 +701,35 @@ def _summarize_tool_output(tool_name: str, args: Dict[str, Any], result: str) ->
                 obs.append(f"- **[instrument load]** Instrument tags: {inst_count} (≈{round(inst_events*100/max(1,total_events),1)}% of events)")
         if head_heavy:
             obs.append("- **[distribution]** Head-heavy: top source far exceeds next peers")
+        # Heuristic suspected reasons per source (raw fallback)
+        suspected = []
+        try:
+            for r in offenders[:min(tn, 10)]:
+                if not isinstance(r, dict):
+                    continue
+                src = str(r.get("Source"))
+                cnt = int(r.get("event_count") or r.get("count") or 0)
+                epd = r.get("events_per_day")
+                perc = r.get("percentage")
+                reasons = []
+                if src.upper().startswith(sys_prefixes):
+                    reasons.append("System/informational stream — candidate for J-coding or suppression")
+                if src.upper().startswith(tuple(x.strip('-').upper() for x in instr_prefixes)) or src.upper().startswith(instr_prefixes):
+                    try:
+                        if epd is not None and float(epd) >= 50:
+                            reasons.append("High repetition — likely nuisance/repeating; consider deadband/delay")
+                    except Exception:
+                        pass
+                try:
+                    if perc is not None and float(perc) >= 10.0:
+                        reasons.append("Major contributor — review priority and operator action requirement")
+                except Exception:
+                    pass
+                if not reasons:
+                    reasons.append("High event volume — validate priority, necessity, and suppression rules")
+                suspected.append(f"- **[reason]** {src}: " + "; ".join(reasons))
+        except Exception:
+            pass
         recs = [
             "Convert to activation-based analysis for prescriptions (unique alarms)",
             "Re-route system/informational streams to J-coded or reduce verbosity",
@@ -710,9 +748,11 @@ def _summarize_tool_output(tool_name: str, args: Dict[str, Any], result: str) ->
             body.append("## Top offenders (raw)\n" + table)
         # Keep detailed list
         body.append("## Findings\n" + ("\n".join(lines) or "- **[note]** No offenders found"))
+        if suspected:
+            body.append("## Suspected reasons (heuristics)\n" + ("\n".join(suspected)))
         body.append("## Key observations\n" + ("\n".join(obs)))
         body.append("## Recommendations\n" + rec_bullets)
-        body.append("## Next actions\n- **[tool]** analyze_bad_actors(top_n=10, min_alarms=50, time_period='last_30_days')\n- **[tool]** get_isa_compliance_report('last_30_days')\n- **[tool]** analyze_flood_events(min_sources=3)")
+        body.append("## Next actions\n- **[tool]** analyze_bad_actors(top_n=10, min_alarms=50, time_period='last_7_days')\n- **[tool]** get_isa_compliance_report('last_30_days')\n- **[tool]** analyze_flood_events(min_sources=3)")
         return "\n\n".join(body)
     if name in ("get_isa_compliance_report", "get_isa_compliance_raw"):
         if name == "get_isa_compliance_report":
@@ -1213,6 +1253,33 @@ async def run_glm_agent(
         {"role": "user", "content": query}
     ]
 
+    # Request-scoped chart dedup and cap (UX: avoid noisy duplicates)
+    MAX_CHARTS_PER_REQUEST = int(os.getenv("AGENT_MAX_CHARTS", "3"))
+    emitted_chart_sigs = set()
+    emitted_chart_count = 0
+
+    # Friendly period label for titles
+    _period_key = _extract_time_period(query)
+    def _period_label(k: str) -> str:
+        mapping = {
+            "all": "All",
+            "last_30_days": "Last 30 days",
+            "last_7_days": "Last 7 days",
+            "last_24_hours": "Last 24 hours",
+        }
+        return mapping.get((k or "").lower(), "All")
+    _friendly_period = _period_label(_period_key)
+
+    def _tool_label(name: Optional[str]) -> str:
+        if not name:
+            return ""
+        if name == "execute_sql_query":
+            return "SQL template"
+        try:
+            return name.replace("_", " ").title()
+        except Exception:
+            return str(name)
+
     tool_map = {t.__name__: t for t in tools}
 
     # Pre-route via Intent → SQL Template mapping for faster, deterministic answers
@@ -1236,8 +1303,14 @@ async def run_glm_agent(
                     used_tool_name = fn_name
                     used_args = dict(fn_args)
                     try:
-                        # Guard against long-running computations (shorter to enable fast fallback)
-                        result = await asyncio.wait_for(asyncio.to_thread(fn, **fn_args), timeout=10)
+                        # Guard against long-running computations with per-tool timeouts
+                        _timeout = 10
+                        try:
+                            if fn_name == "analyze_bad_actors":
+                                _timeout = 20  # Allow more time for activation-based analysis to produce descriptive reasons
+                        except Exception:
+                            _timeout = 10
+                        result = await asyncio.wait_for(asyncio.to_thread(fn, **fn_args), timeout=_timeout)
                     except asyncio.TimeoutError:
                         # Primary tool timed out ─ stream fallback path
                         timeout_payload = {
@@ -1251,13 +1324,53 @@ async def run_glm_agent(
                         yield {"type": "tool_result", "content": json.dumps(timeout_payload)}
                         # Fallback: if bad-actors timed out, switch to raw last_7_days; else keep existing result
                         if fn_name == "analyze_bad_actors":
-                            yield {"type": "reasoning", "content": "Primary analysis timed out. Falling back to raw bad actors for last_7_days..."}
-                            fb_args = {"top_n": int(fn_args.get("top_n") or 10), "time_period": "last_7_days", "min_events": 100}
-                            yield {"type": "tool_call", "data": {"name": "get_bad_actors_raw", "arguments": json.dumps(fb_args)}}
-                            fb_fn = tool_map.get("get_bad_actors_raw")
+                            # First try a tighter activation-based window before falling back to raw
+                            if (fn_args.get("time_period") or "") != "last_7_days":
+                                yield {"type": "reasoning", "content": "Primary analysis timed out. Retrying activation-based for last_7_days..."}
+                                fb_args = {
+                                    "top_n": int(fn_args.get("top_n") or 10),
+                                    "min_alarms": int(fn_args.get("min_alarms") or 50),
+                                    "time_period": "last_7_days"
+                                }
+                                yield {"type": "tool_call", "data": {"name": "analyze_bad_actors", "arguments": json.dumps(fb_args)}}
+                                fb_fn = tool_map.get("analyze_bad_actors")
+                                try:
+                                    result = await asyncio.wait_for(asyncio.to_thread(fb_fn, **fb_args), timeout=12)
+                                    used_tool_name = "analyze_bad_actors"
+                                    used_args = fb_args
+                                except Exception as e:
+                                    # If retry also fails, fall back to raw last_7_days
+                                    yield {"type": "reasoning", "content": "Retry failed. Falling back to raw bad actors for last_7_days..."}
+                                    rb_args = {"top_n": int(fn_args.get("top_n") or 10), "time_period": "last_7_days", "min_events": 100}
+                                    yield {"type": "tool_call", "data": {"name": "get_bad_actors_raw", "arguments": json.dumps(rb_args)}}
+                                    rb_fn = tool_map.get("get_bad_actors_raw")
+                                    try:
+                                        result = await asyncio.wait_for(asyncio.to_thread(rb_fn, **rb_args), timeout=12)
+                                        used_tool_name = "get_bad_actors_raw"
+                                        used_args = rb_args
+                                    except Exception as e2:
+                                        result = json.dumps({"error": str(e2)})
+                            else:
+                                # Already last_7_days; go directly to raw fallback
+                                yield {"type": "reasoning", "content": "Primary analysis timed out. Falling back to raw bad actors for last_7_days..."}
+                                rb_args = {"top_n": int(fn_args.get("top_n") or 10), "time_period": "last_7_days", "min_events": 100}
+                                yield {"type": "tool_call", "data": {"name": "get_bad_actors_raw", "arguments": json.dumps(rb_args)}}
+                                rb_fn = tool_map.get("get_bad_actors_raw")
+                                try:
+                                    result = await asyncio.wait_for(asyncio.to_thread(rb_fn, **rb_args), timeout=12)
+                                    used_tool_name = "get_bad_actors_raw"
+                                    used_args = rb_args
+                                except Exception as e:
+                                    result = json.dumps({"error": str(e)})
+                        elif fn_name == "get_alarm_health_summary":
+                            # Option B: health summary timeout → cached unhealthy summary
+                            yield {"type": "reasoning", "content": "Primary health summary timed out. Falling back to cached unhealthy summary..."}
+                            fb_args = {}
+                            yield {"type": "tool_call", "data": {"name": "get_unhealthy_summary_cached", "arguments": json.dumps(fb_args)}}
+                            fb_fn = tool_map.get("get_unhealthy_summary_cached")
                             try:
                                 result = await asyncio.wait_for(asyncio.to_thread(fb_fn, **fb_args), timeout=12)
-                                used_tool_name = "get_bad_actors_raw"
+                                used_tool_name = "get_unhealthy_summary_cached"
                                 used_args = fb_args
                             except Exception as e:
                                 result = json.dumps({"error": str(e)})
@@ -1294,15 +1407,32 @@ async def run_glm_agent(
                             if chart_data_source and isinstance(chart_data_source, list) and len(chart_data_source) >= 2:
                                 from chart_generator import generate_chart_data
                                 
+                                # Prefer the actual tool period used (args) over query-detected period
+                                try:
+                                    _title_period = _period_label((used_args or {}).get("time_period") or _period_key)
+                                except Exception:
+                                    _title_period = _friendly_period
                                 chart_payload = generate_chart_data(
                                     chart_type=chart_intent["chart_type"],
                                     data=chart_data_source,
                                     query=query,
-                                    metadata={"reason": chart_intent["reason"]}
+                                    metadata={
+                                        "reason": chart_intent["reason"],
+                                        "title_suffix": f"{_title_period} — {_tool_label(used_tool_name)}".strip()
+                                    }
                                 )
                                 
                                 if chart_payload:
-                                    yield {"type": "chart_data", "data": chart_payload}
+                                    # Deduplicate and cap chart emissions for this request
+                                    try:
+                                        _sig_src = f"{chart_payload.get('type','')}|{(chart_payload.get('config') or {}).get('title','')}"
+                                        _sig = f"{_sig_src}|{len(chart_payload.get('data') or [])}"
+                                    except Exception:
+                                        _sig = str(type(chart_payload))
+                                    if (_sig not in emitted_chart_sigs) and (emitted_chart_count < MAX_CHARTS_PER_REQUEST):
+                                        emitted_chart_sigs.add(_sig)
+                                        emitted_chart_count += 1
+                                        yield {"type": "chart_data", "data": chart_payload}
                     except Exception as chart_err:
                         print(f"[Chart Generation] Failed: {chart_err}")
                     
@@ -1368,7 +1498,16 @@ async def run_glm_agent(
                                 )
                                 
                                 if chart_payload:
-                                    yield {"type": "chart_data", "data": chart_payload}
+                                    # Deduplicate and cap chart emissions for this request
+                                    try:
+                                        _sig_src = f"{chart_payload.get('type','')}|{(chart_payload.get('config') or {}).get('title','')}"
+                                        _sig = f"{_sig_src}|{len(chart_payload.get('data') or [])}"
+                                    except Exception:
+                                        _sig = str(type(chart_payload))
+                                    if (_sig not in emitted_chart_sigs) and (emitted_chart_count < MAX_CHARTS_PER_REQUEST):
+                                        emitted_chart_sigs.add(_sig)
+                                        emitted_chart_count += 1
+                                        yield {"type": "chart_data", "data": chart_payload}
                     except Exception as chart_err:
                         print(f"[Chart Generation] Failed: {chart_err}")
                     
@@ -1582,15 +1721,32 @@ async def run_glm_agent(
                                 if chart_data_source and isinstance(chart_data_source, list) and len(chart_data_source) >= 2:
                                     from .chart_generator import generate_chart_data
                                     
+                                    # Prefer the actual tool period used (args) over query-detected period
+                                    try:
+                                        _title_period = _period_label((fn_args or {}).get("time_period") or _period_key)
+                                    except Exception:
+                                        _title_period = _friendly_period
                                     chart_payload = generate_chart_data(
                                         chart_type=chart_intent["chart_type"],
                                         data=chart_data_source,
                                         query=query,
-                                        metadata={"reason": chart_intent["reason"]}
+                                        metadata={
+                                            "reason": chart_intent["reason"],
+                                            "title_suffix": f"{_title_period} — {_tool_label(fn_name)}"
+                                        }
                                     )
                                     
                                     if chart_payload:
-                                        yield {"type": "chart_data", "data": chart_payload}
+                                        # Deduplicate and cap chart emissions for this request
+                                        try:
+                                            _sig_src = f"{chart_payload.get('type','')}|{(chart_payload.get('config') or {}).get('title','')}"
+                                            _sig = f"{_sig_src}|{len(chart_payload.get('data') or [])}"
+                                        except Exception:
+                                            _sig = str(type(chart_payload))
+                                        if (_sig not in emitted_chart_sigs) and (emitted_chart_count < MAX_CHARTS_PER_REQUEST):
+                                            emitted_chart_sigs.add(_sig)
+                                            emitted_chart_count += 1
+                                            yield {"type": "chart_data", "data": chart_payload}
                         except Exception as chart_err:
                             # Chart generation is non-critical, log and continue
                             print(f"[Chart Generation] Failed: {chart_err}")
@@ -1882,12 +2038,24 @@ async def run_glm_agent(
                                 chart_type=chart_intent["chart_type"],
                                 data=chart_data_source,
                                 query=query,
-                                metadata={"reason": chart_intent["reason"]}
+                                metadata={
+                                    "reason": chart_intent["reason"],
+                                    "title_suffix": f"{_friendly_period} — {_tool_label(tool_name)}"
+                                }
                             )
                             
                             if chart_payload:
                                 print(f"[Chart Generation] Generating {chart_payload['type']} chart (confidence: {chart_intent['confidence']}, reason: {chart_intent['reason']})")
-                                yield {"type": "chart_data", "data": chart_payload}
+                                # Deduplicate and cap chart emissions for this request
+                                try:
+                                    _sig_src = f"{chart_payload.get('type','')}|{(chart_payload.get('config') or {}).get('title','')}"
+                                    _sig = f"{_sig_src}|{len(chart_payload.get('data') or [])}"
+                                except Exception:
+                                    _sig = str(type(chart_payload))
+                                if (_sig not in emitted_chart_sigs) and (emitted_chart_count < MAX_CHARTS_PER_REQUEST):
+                                    emitted_chart_sigs.add(_sig)
+                                    emitted_chart_count += 1
+                                    yield {"type": "chart_data", "data": chart_payload}
                         else:
                             if chart_data_source is not None:
                                 print(f"[Chart Generation] Insufficient data points: {len(chart_data_source) if isinstance(chart_data_source, list) else 'N/A'} (need >= 2)")

@@ -9,11 +9,11 @@
     10,
     2
   ],
-  "cached_at": 1762260453.2964804,
+  "cached_at": 1762416131.93919,
   "data": {
     "plant_id": "VCMA",
     "mode": "actual-calc",
-    "generated_at": "2025-11-04T12:47:33.292091Z",
+    "generated_at": "2025-11-06T08:02:11.939190Z",
     "params": {
       "grain": "day",
       "include_system": true,

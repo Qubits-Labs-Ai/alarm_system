@@ -92,6 +92,9 @@ def generate_line_chart(data: List[Dict], query: str, metadata: Dict) -> Dict:
     
     # Generate title
     title = metadata.get("title") or extract_title_from_query(query, "Trend Over Time")
+    suffix = (metadata.get("title_suffix") or "").strip()
+    if suffix:
+        title = f"{title} — {suffix}"
     
     return {
         "type": "line",
@@ -150,6 +153,9 @@ def generate_bar_chart(data: List[Dict], query: str, metadata: Dict) -> Dict:
     
     # Generate title
     title = metadata.get("title") or extract_title_from_query(query, "Comparison")
+    suffix = (metadata.get("title_suffix") or "").strip()
+    if suffix:
+        title = f"{title} — {suffix}"
     
     # Use vertical layout if many items
     layout = "vertical" if len(chart_data) > 10 else "horizontal"
@@ -213,6 +219,9 @@ def generate_pie_chart(data: List[Dict], query: str, metadata: Dict) -> Dict:
     
     # Generate title
     title = metadata.get("title") or extract_title_from_query(query, "Distribution")
+    suffix = (metadata.get("title_suffix") or "").strip()
+    if suffix:
+        title = f"{title} — {suffix}"
     
     return {
         "type": "pie",
@@ -263,6 +272,9 @@ def generate_scatter_chart(data: List[Dict], query: str, metadata: Dict) -> Dict
         chart_data.append(point)
     
     title = metadata.get("title") or extract_title_from_query(query, "Correlation")
+    suffix = (metadata.get("title_suffix") or "").strip()
+    if suffix:
+        title = f"{title} — {suffix}"
     
     return {
         "type": "scatter",

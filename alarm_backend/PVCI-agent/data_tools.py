@@ -1088,6 +1088,15 @@ def analyze_bad_actors(top_n: int = 10, min_alarms: int = 50, time_period: str =
             .replace({"NAN": "", "NULL": "", "NONE": "", "ACK PNT": "ACK"})
         )
         
+        try:
+            counts = df["Source"].value_counts()
+            max_candidates = max(100, int(top_n) * 5)
+            candidate_sources = set(counts.head(max_candidates).index.tolist())
+            if candidate_sources:
+                df = df[df["Source"].isin(candidate_sources)]
+        except Exception:
+            pass
+
         # Calculate per-source metrics using state machine
         bad_actors = []
         for src, group in df.groupby("Source"):

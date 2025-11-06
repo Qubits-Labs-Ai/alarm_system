@@ -1,20 +1,20 @@
 {
   "cache_key": [
     "VCMA",
-    true,
+    false,
     1440,
     0.5,
     10,
     10,
     2
   ],
-  "cached_at": 1762261040.8482609,
+  "cached_at": 1762416128.7953012,
   "data": {
     "plant_id": "VCMA",
     "mode": "actual-calc",
-    "generated_at": "2025-11-04T12:57:20.848260Z",
+    "generated_at": "2025-11-06T08:02:08.740467Z",
     "params": {
-      "include_system": true
+      "include_system": false
     },
     "nodes": [
       "Total",
@@ -46,7 +46,7 @@
       {
         "source": "Total",
         "target": "Other",
-        "value": 14557
+        "value": 14553
       },
       {
         "source": "Standing",
@@ -65,7 +65,7 @@
       }
     ],
     "totals": {
-      "total": 58226,
+      "total": 58222,
       "standing": 452,
       "standing_stale": 452,
       "standing_if": 0,
@@ -73,7 +73,7 @@
       "nuisance_chattering": 18962,
       "nuisance_if_chattering": 3974,
       "flood": 20281,
-      "other": 14557
+      "other": 14553
     }
   }
 }
