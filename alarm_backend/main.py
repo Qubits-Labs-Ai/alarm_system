@@ -22,6 +22,7 @@ from typing import List, Any, Dict, Optional
 from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI, APIError, APIConnectionError, RateLimitError, BadRequestError, AuthenticationError, PermissionDeniedError
+import pandas as pd
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -2040,6 +2041,269 @@ except ImportError as ie2:
     def validate_plant_id(plant_id): return False
     def get_plant_overrides(plant_id): return {}
 
+# ==================== PVCI ACTIVATION CACHE ENDPOINTS (PHASE 2) ====================
+
+def _activation_cache_dir(plant_id: str, version: str = "v1") -> str:
+    base = os.path.join(BASE_DIR, "PVCI-actual-calc", "cache", str(plant_id or "PVCI"), str(version or "v1"))
+    return base
+
+
+def _read_activation_cache(plant_id: str, version: str = "v1") -> tuple[pd.DataFrame, Dict[str, Any]]:
+    """Load activations DataFrame and metadata from Phase 1 cache (parquet preferred, CSV fallback)."""
+    cache_dir = _activation_cache_dir(plant_id, version)
+    if not os.path.isdir(cache_dir):
+        raise HTTPException(status_code=404, detail=f"Activation cache not found for {plant_id}/{version}")
+
+    parquet_path = os.path.join(cache_dir, "activations.parquet")
+    csv_path = os.path.join(cache_dir, "activations.csv")
+    meta_path = os.path.join(cache_dir, "metadata.json")
+
+    meta: Dict[str, Any] = {}
+    try:
+        if os.path.exists(meta_path):
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+    except Exception:
+        meta = {}
+
+    df: pd.DataFrame | None = None
+    if os.path.exists(parquet_path):
+        try:
+            df = pd.read_parquet(parquet_path)
+        except Exception:
+            df = None
+    if df is None and os.path.exists(csv_path):
+        df = pd.read_csv(csv_path)
+    if df is None:
+        raise HTTPException(status_code=404, detail=f"Activation cache files missing for {plant_id}/{version}")
+
+    # Normalize timestamp columns
+    for col in ["StartTime", "AckTime", "OkTime", "EndTime", "Window10m"]:
+        if col in df.columns:
+            try:
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+            except Exception:
+                pass
+    return df, meta
+
+
+def _parse_iso_user(ts: Optional[str]):
+    if not ts:
+        return None
+    try:
+        s = str(ts).strip()
+        if s and "T" not in s and " " in s:
+            s = s.replace(" ", "T")
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+
+def _is_system_source(name: str) -> bool:
+    s = str(name or "").strip().upper()
+    return bool(s and (s == "REPORT" or s.startswith("$") or s.startswith("ACTIVITY") or s.startswith("SYS_") or s.startswith("SYSTEM")))
+
+
+def _df_datetime_to_iso(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    out = df.copy()
+    for c in cols:
+        if c in out.columns:
+            try:
+                out[c] = out[c].apply(lambda x: (x.isoformat() if hasattr(x, "isoformat") else (pd.to_datetime(x).isoformat() if pd.notna(x) else None)))
+            except Exception:
+                pass
+    return out
+
+
+@app.get("/actual-calc/activations", response_class=ORJSONResponse)
+def get_activation_records(
+    plant: str = "PVCI",
+    version: str = "v1",
+    start_iso: Optional[str] = None,
+    end_iso: Optional[str] = None,
+    source_like: Optional[str] = None,
+    condition_like: Optional[str] = None,
+    include_system: bool = False,
+    order_by: str = "StartTime",
+    order_dir: str = "desc",
+    page: int = 1,
+    page_size: int = 200,
+):
+    """Return activation records from Phase 1 cache with filters and pagination."""
+    try:
+        df, meta = _read_activation_cache(plant, version)
+
+        # Filters
+        if not include_system and "Source" in df.columns:
+            df = df[~df["Source"].apply(_is_system_source)]
+
+        if start_iso or end_iso:
+            s = _parse_iso_user(start_iso)
+            e = _parse_iso_user(end_iso)
+            if s is not None:
+                df = df[df["StartTime"] >= s]
+            if e is not None:
+                df = df[df["StartTime"] <= e]
+
+        if source_like and "Source" in df.columns:
+            df = df[df["Source"].astype(str).str.contains(source_like, case=False, na=False)]
+        if condition_like and "Condition" in df.columns:
+            df = df[df["Condition"].astype(str).str.contains(condition_like, case=False, na=False)]
+
+        # Ordering
+        if order_by in df.columns:
+            ascending = (order_dir or "").lower() == "asc"
+            try:
+                df = df.sort_values(order_by, ascending=ascending)
+            except Exception:
+                pass
+
+        total = int(len(df))
+        if page_size <= 0:
+            page_size = 200
+        if page <= 0:
+            page = 1
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        page_df = df.iloc[start_idx:end_idx].copy()
+
+        # Format timestamps to ISO strings for JSON response
+        page_df = _df_datetime_to_iso(page_df, ["StartTime", "AckTime", "OkTime", "EndTime", "Window10m"])
+
+        # Choose stable subset of columns when present
+        cols_pref = [
+            "PlantId","Source","Condition","StartTime","AckTime","OkTime","EndTime","DurationMin","Acked","StandingFlag","Window10m",
+            "Provenance","ThresholdsUsed"
+        ]
+        cols = [c for c in cols_pref if c in page_df.columns]
+        if not cols:
+            cols = list(page_df.columns)
+
+        items = [{k: r.get(k) for k in cols} for r in page_df.to_dict(orient="records")]
+        total_pages = (total + page_size - 1) // page_size
+
+        return {
+            "count": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": int(total_pages),
+            "records": items,
+            "meta": meta,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"activations endpoint error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/actual-calc/top-sources", response_class=ORJSONResponse)
+def get_activation_top_sources(
+    plant: str = "PVCI",
+    version: str = "v1",
+    start_iso: Optional[str] = None,
+    end_iso: Optional[str] = None,
+    include_system: bool = False,
+    top_n: int = 20,
+):
+    """Return top sources by activation count over optional time range from activation cache."""
+    try:
+        df, meta = _read_activation_cache(plant, version)
+        if not include_system and "Source" in df.columns:
+            df = df[~df["Source"].apply(_is_system_source)]
+        if start_iso or end_iso:
+            s = _parse_iso_user(start_iso)
+            e = _parse_iso_user(end_iso)
+            if s is not None:
+                df = df[df["StartTime"] >= s]
+            if e is not None:
+                df = df[df["StartTime"] <= e]
+
+        if df.empty:
+            return {"count": 0, "records": [], "meta": meta}
+
+        grp = df.groupby("Source").size().reset_index(name="activations")
+        grp = grp.sort_values("activations", ascending=False)
+        if isinstance(top_n, int) and top_n > 0:
+            grp = grp.head(top_n)
+        return {
+            "count": int(len(grp)),
+            "records": grp.to_dict(orient="records"),
+            "meta": meta,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"top-sources endpoint error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/actual-calc/daily-summary", response_class=ORJSONResponse)
+def get_activation_daily_summary(
+    plant: str = "PVCI",
+    version: str = "v1",
+    start_iso: Optional[str] = None,
+    end_iso: Optional[str] = None,
+    include_system: bool = False,
+    iso_threshold: int = 288,
+    unacceptable_threshold: int = 720,
+):
+    """Return daily activation counts and ISO/EEMUA threshold summaries from activation cache."""
+    try:
+        df, meta = _read_activation_cache(plant, version)
+        if not include_system and "Source" in df.columns:
+            df = df[~df["Source"].apply(_is_system_source)]
+        if start_iso or end_iso:
+            s = _parse_iso_user(start_iso)
+            e = _parse_iso_user(end_iso)
+            if s is not None:
+                df = df[df["StartTime"] >= s]
+            if e is not None:
+                df = df[df["StartTime"] <= e]
+
+        if df.empty:
+            return {
+                "params": {"iso_threshold": iso_threshold, "unacceptable_threshold": unacceptable_threshold},
+                "summary": {"avg_alarms_per_day": 0, "days_over_288_count": 0, "days_unacceptable_count": 0, "total_days_analyzed": 0, "total_unique_alarms": 0},
+                "alarms_per_day": [],
+                "days_over_288": [],
+                "days_unacceptable": [],
+            }
+
+        ddf = df.copy()
+        ddf["day"] = pd.to_datetime(ddf["StartTime"]).dt.date
+        per_day = ddf.groupby("day").size().reset_index(name="count")
+        per_day = per_day.sort_values("day")
+
+        total_days = int(len(per_day))
+        total_activations = int(per_day["count"].sum())
+        avg_per_day = float(total_activations) / total_days if total_days else 0.0
+        over_288 = per_day[per_day["count"] > int(iso_threshold)]
+        unacceptable = per_day[per_day["count"] >= int(unacceptable_threshold)]
+
+        out = {
+            "params": {"iso_threshold": int(iso_threshold), "unacceptable_threshold": int(unacceptable_threshold)},
+            "summary": {
+                "avg_alarms_per_day": round(avg_per_day, 2),
+                "days_over_288_count": int(len(over_288)),
+                "days_unacceptable_count": int(len(unacceptable)),
+                "total_days_analyzed": total_days,
+                "total_unique_alarms": total_activations,
+            },
+            "alarms_per_day": per_day.rename(columns={"day": "date", "count": "activations"}).assign(date=lambda x: x["date"].astype(str)).to_dict(orient="records"),
+            "days_over_288": over_288.rename(columns={"day": "date", "count": "activations"}).assign(date=lambda x: x["date"].astype(str)).to_dict(orient="records"),
+            "days_unacceptable": unacceptable.rename(columns={"day": "date", "count": "activations"}).assign(date=lambda x: x["date"].astype(str)).to_dict(orient="records"),
+            "meta": meta,
+        }
+        return out
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"daily-summary endpoint error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ============================================================================
 # PERSISTENT DISK CACHE HELPERS FOR SUMMARY ENDPOINTS
@@ -3250,8 +3514,8 @@ def get_plant_actual_calc_condition_distribution(
     try:
         # Build params consistent with cache
         params = {
-            "stale_min": STALE_THRESHOLD_MIN,
-            "chatter_min": CHATTER_THRESHOLD_MIN,
+            "stale_min": 60,
+            "chatter_min": 10,
             "unhealthy_threshold": UNHEALTHY_THRESHOLD,
             "window_minutes": WINDOW_MINUTES,
             "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,

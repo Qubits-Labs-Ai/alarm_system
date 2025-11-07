@@ -20,6 +20,7 @@ sys.path.insert(0, str(backend_dir / "PVCI-actual-calc"))
 from actual_calc_service import (
     run_actual_calc, run_actual_calc_with_cache, write_cache, read_cache, get_cache_path,
     load_pvci_merged_csv,
+    compute_activations, write_activation_cache,
     UNHEALTHY_THRESHOLD, WINDOW_MINUTES, FLOOD_SOURCE_THRESHOLD,
     ACT_WINDOW_OVERLOAD_OP, ACT_WINDOW_OVERLOAD_THRESHOLD,
     ACT_WINDOW_UNACCEPTABLE_OP, ACT_WINDOW_UNACCEPTABLE_THRESHOLD
@@ -207,11 +208,42 @@ def test_actual_calc(use_cache: bool = False, plant_id: str = None):
         return False
 
 
+def test_compute_activations_smoke():
+    """Minimal unit test for compute_activations(): one activation with ACK/OK.
+    Verifies one activation row, Acked=True, StandingFlag=False, and required columns exist.
+    """
+    import pandas as pd
+    df = pd.DataFrame([
+        {"Event Time": "2025-01-01 10:00:00", "Source": "TI-100", "Action": "", "Condition": "PVHI"},
+        {"Event Time": "2025-01-01 10:01:00", "Source": "TI-100", "Action": "ACK", "Condition": "PVHI"},
+        {"Event Time": "2025-01-01 10:02:00", "Source": "TI-100", "Action": "OK",  "Condition": "PVHI"},
+    ])
+    df["Event Time"] = pd.to_datetime(df["Event Time"])  # explicit parse
+    df = df.sort_values(["Source", "Event Time"]).reset_index(drop=True)
+
+    act = compute_activations(df, plant_id="TEST")
+    assert not act.empty, "compute_activations returned empty for simple sequence"
+    assert len(act) == 1, f"Expected 1 activation, got {len(act)}"
+    row = act.iloc[0]
+    assert bool(row.get("Acked")) is True, "Acked should be True"
+    assert bool(row.get("StandingFlag")) is False, "StandingFlag should be False under default 1440 min"
+    for col in [
+        "PlantId","Source","Condition","StartTime","EndTime","DurationMin",
+        "Acked","StandingFlag","Day","Hour","Month","Window10m",
+        "Provenance","ComputationTimestamp","ThresholdsUsed"
+    ]:
+        assert col in act.columns, f"Missing column in activations: {col}"
+    logger.info("✓ compute_activations smoke test passed")
+    return True
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run actual calc and regenerate cache")
     parser.add_argument("--use-cache", "-c", action="store_true", help="Use cache if valid")
     parser.add_argument("--plant", "-p", default=None, help="Plant ID to process (e.g., PVCI, VCMA). If not specified, uses DEFAULT_CSV_* (VCMA)")
     parser.add_argument("--skip-unit-test", action="store_true", help="Skip the time-only row unit test")
+    parser.add_argument("--gen-activations", action="store_true", help="Generate activation cache for the selected plant (Phase 1)")
+    parser.add_argument("--skip-main", action="store_true", help="Skip main actual-calc run (run only unit/smoke tests)")
     args = parser.parse_args()
     
     # Run unit test first (unless skipped)
@@ -225,7 +257,39 @@ if __name__ == "__main__":
             logger.error(f"Unit test failed with exception: {e}", exc_info=True)
             sys.exit(1)
     
-    # Run main test
+    # Run main test (unless skipped)
     plant = args.plant.upper() if args.plant else None
-    success = test_actual_calc(use_cache=args.use_cache, plant_id=plant)
-    sys.exit(0 if success else 1)
+    if not args.skip_main:
+        success = test_actual_calc(use_cache=args.use_cache, plant_id=plant)
+        if not success:
+            sys.exit(1)
+
+    # Optionally generate activation cache using the new Phase 1 utilities
+    if args.gen_activations:
+        try:
+            alarm_data_dir = backend_dir / "ALARM_DATA_DIR"
+            if not alarm_data_dir.exists():
+                logger.error(f"ALARM_DATA_DIR not found at {alarm_data_dir}")
+                sys.exit(1)
+            # Load data using existing loader (sorted, cleaned)
+            df = load_pvci_merged_csv(
+                alarm_data_dir=str(alarm_data_dir),
+                csv_relative_path=None,
+                csv_file_name=None,
+                plant_id=plant,
+            )
+            act_df = compute_activations(df, plant_id=plant or "PVCI")
+            res = write_activation_cache(plant or "PVCI", act_df, version="v1")
+            logger.info(f"Activation cache written: {res}")
+        except Exception as e:
+            logger.error(f"Activation cache generation failed: {e}", exc_info=True)
+            sys.exit(1)
+
+    # Run smoke unit test for activations
+    try:
+        test_compute_activations_smoke()
+    except AssertionError as e:
+        logger.error(str(e))
+        sys.exit(1)
+
+    sys.exit(0)

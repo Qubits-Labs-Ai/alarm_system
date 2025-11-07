@@ -89,11 +89,26 @@ def reconstruct_event_time(df: pd.DataFrame, seed_dt: Optional[datetime]) -> pd.
     pattern_time_24h = r"^\d{1,2}:\d{2}:\d{2}$"
     pattern_mmss = r"^\d{1,2}:\d{2}(\.\d+)?$"
 
+    # Additional patterns with milliseconds and HH:MM (no seconds)
+    pattern_full_ampm_ms = r"^\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}:\d{2}\.\d+\s+(AM|PM)$"
+    pattern_full_iso_ms = r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+$"
+    pattern_time_ampm_ms = r"^\d{1,2}:\d{2}:\d{2}\.\d+\s+(AM|PM)$"
+    pattern_time_24h_ms = r"^\d{1,2}:\d{2}:\d{2}\.\d+$"
+    pattern_time_ampm_hm = r"^\d{1,2}:\d{2}\s+(AM|PM)$"
+    pattern_time_24h_hm = r"^\d{1,2}:\d{2}$"
+
     is_full_ampm = et_str.str.match(pattern_full_ampm, na=False)
     is_full_iso = et_str.str.match(pattern_full_iso, na=False)
     is_time_ampm = et_str.str.match(pattern_time_ampm, na=False)
     is_time_24h = et_str.str.match(pattern_time_24h, na=False)
     is_mmss = et_str.str.match(pattern_mmss, na=False)
+    is_full_ampm_ms = et_str.str.match(pattern_full_ampm_ms, na=False)
+    is_full_iso_ms = et_str.str.match(pattern_full_iso_ms, na=False)
+    is_time_ampm_ms = et_str.str.match(pattern_time_ampm_ms, na=False)
+    is_time_24h_ms = et_str.str.match(pattern_time_24h_ms, na=False)
+    is_time_ampm_hm = et_str.str.match(pattern_time_ampm_hm, na=False)
+    # Careful: HH:MM (no seconds) overlaps with MM:SS pattern. We'll treat HH:MM only when not matching MM:SS.
+    is_time_24h_hm = et_str.str.match(pattern_time_24h_hm, na=False) & (~is_mmss)
 
     # Disambiguate HH:MM:SS vs MM:SS
     ambiguous = is_time_24h & is_mmss
@@ -106,6 +121,10 @@ def reconstruct_event_time(df: pd.DataFrame, seed_dt: Optional[datetime]) -> pd.
     parsed = pd.Series([pd.NaT] * len(df), index=df.index, dtype="datetime64[ns]")
 
     # 1) Full datetime rows
+    if is_full_ampm_ms.any():
+        parsed.loc[is_full_ampm_ms] = pd.to_datetime(et_str[is_full_ampm_ms], format="%m/%d/%Y %I:%M:%S.%f %p", errors="coerce")
+    if is_full_iso_ms.any():
+        parsed.loc[is_full_iso_ms] = pd.to_datetime(et_str[is_full_iso_ms], format="%Y-%m-%d %H:%M:%S.%f", errors="coerce")
     if is_full_ampm.any():
         parsed.loc[is_full_ampm] = pd.to_datetime(et_str[is_full_ampm], format="%m/%d/%Y %I:%M:%S %p", errors="coerce")
     if is_full_iso.any():
@@ -126,23 +145,47 @@ def reconstruct_event_time(df: pd.DataFrame, seed_dt: Optional[datetime]) -> pd.
         ff_full_ts = ff_full_ts.ffill()
 
     # 3) Time-only rows (AM/PM)
-    time_only_ampm = is_time_ampm
+    time_only_ampm = is_time_ampm | is_time_ampm_ms | is_time_ampm_hm
     if time_only_ampm.any():
         # Build combined strings from forward-filled date + time
         base_dates = ff_full_ts.dt.date
-        mask = time_only_ampm & base_dates.notna()
-        if mask.any():
-            combined = base_dates.astype(str) + " " + et_str
-            parsed.loc[mask] = pd.to_datetime(combined[mask], format="%Y-%m-%d %I:%M:%S %p", errors="coerce")
+        mask_common = base_dates.notna()
+        # AM/PM with milliseconds
+        mask_ms = is_time_ampm_ms & mask_common
+        if mask_ms.any():
+            combined_ms = base_dates.astype(str) + " " + et_str
+            parsed.loc[mask_ms] = pd.to_datetime(combined_ms[mask_ms], format="%Y-%m-%d %I:%M:%S.%f %p", errors="coerce")
+        # AM/PM HH:MM:SS
+        mask_hms = is_time_ampm & mask_common
+        if mask_hms.any():
+            combined_hms = base_dates.astype(str) + " " + et_str
+            parsed.loc[mask_hms] = pd.to_datetime(combined_hms[mask_hms], format="%Y-%m-%d %I:%M:%S %p", errors="coerce")
+        # AM/PM HH:MM
+        mask_hm = is_time_ampm_hm & mask_common
+        if mask_hm.any():
+            combined_hm = base_dates.astype(str) + " " + et_str
+            parsed.loc[mask_hm] = pd.to_datetime(combined_hm[mask_hm], format="%Y-%m-%d %I:%M %p", errors="coerce")
 
     # 4) Time-only rows (24h)
-    time_only_24 = is_time_24h
+    time_only_24 = is_time_24h | is_time_24h_ms | is_time_24h_hm
     if time_only_24.any():
         base_dates = ff_full_ts.dt.date
-        mask = time_only_24 & base_dates.notna()
-        if mask.any():
-            combined = base_dates.astype(str) + " " + et_str
-            parsed.loc[mask] = pd.to_datetime(combined[mask], format="%Y-%m-%d %H:%M:%S", errors="coerce")
+        mask_common = base_dates.notna()
+        # 24h with milliseconds
+        mask_ms = is_time_24h_ms & mask_common
+        if mask_ms.any():
+            combined_ms = base_dates.astype(str) + " " + et_str
+            parsed.loc[mask_ms] = pd.to_datetime(combined_ms[mask_ms], format="%Y-%m-%d %H:%M:%S.%f", errors="coerce")
+        # 24h HH:MM:SS
+        mask_hms = is_time_24h & mask_common
+        if mask_hms.any():
+            combined_hms = base_dates.astype(str) + " " + et_str
+            parsed.loc[mask_hms] = pd.to_datetime(combined_hms[mask_hms], format="%Y-%m-%d %H:%M:%S", errors="coerce")
+        # 24h HH:MM (no seconds)
+        mask_hm = is_time_24h_hm & mask_common
+        if mask_hm.any():
+            combined_hm = base_dates.astype(str) + " " + et_str
+            parsed.loc[mask_hm] = pd.to_datetime(combined_hm[mask_hm], format="%Y-%m-%d %H:%M", errors="coerce")
 
     # Refresh forward-fill after any new full timestamps
     ff_full_ts = parsed.ffill()
@@ -204,21 +247,29 @@ def main():
     # Reconstruct Event Time
     parsed_dt = reconstruct_event_time(df, seed_dt)
 
-    # Drop rows where Event Time could not be parsed
-    before = len(df)
-    df = df.loc[parsed_dt.notna()].copy()
-    parsed_dt = parsed_dt.loc[df.index]
-
-    # Format as Excel-like text with milliseconds
-    df["Event Time"] = parsed_dt.dt.strftime("%m/%d/%Y %I:%M:%S.%f %p").str.replace(r"0{3}$", "", regex=True)
+    # Keep ALL rows. Format parsed datetimes; fallback to original text for unparsed
+    total_rows = len(df)
+    parsed_mask = parsed_dt.notna()
+    # Start with original values as strings
+    event_time_out = df["Event Time"].astype(str).str.strip()
+    # Fill where parsed
+    if parsed_mask.any():
+        formatted = parsed_dt.loc[parsed_mask].dt.strftime("%m/%d/%Y %I:%M:%S.%f %p")
+        # Trim microseconds to milliseconds for readability
+        formatted = formatted.str.replace(r"(\.\d{3})\d{3}", r"\1", regex=True)
+        event_time_out.loc[parsed_mask] = formatted
+    df["Event Time"] = event_time_out
 
     # Output path
     out_path = args.out or os.path.join(os.path.dirname(excel_path), "VCMA_clean.csv")
 
     # Write CSV
     df.to_csv(out_path, index=False, encoding="utf-8")
+    parsed_count = int(parsed_mask.sum())
+    unparsed_count = int(total_rows - parsed_count)
     print(f"✓ Wrote cleaned CSV with full datetimes: {out_path}")
-    print(f"Rows: {len(df)} (from {before})  Columns: {len(df.columns)}")
+    print(f"Rows: {len(df)} (from {total_rows})  Columns: {len(df.columns)}")
+    print(f"Parsed Event Time: {parsed_count}  Unparsed (kept raw): {unparsed_count}")
 
 
 if __name__ == "__main__":

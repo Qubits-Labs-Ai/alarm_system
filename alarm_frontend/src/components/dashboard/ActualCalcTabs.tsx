@@ -393,7 +393,7 @@ export default function ActualCalcTabs({
               />
 
               {/* Tree Structure */}
-              <ActualCalcTree data={actualCalcData} plantId={plantId} />
+              <ActualCalcTree data={actualCalcData} plantId={plantId} includeSystem={includeSystem} />
 
               {/* Summary Statistics Card */}
               <Card className="bg-card rounded-lg border p-6">
@@ -405,27 +405,54 @@ export default function ActualCalcTabs({
                   </div>
                   <div>
                     <p className="text-muted-foreground">Total Alarms</p>
-                    <p className="text-lg font-semibold">{actualCalcData.counts.total_alarms.toLocaleString()}</p>
+                    <p className="text-lg font-semibold">{(actualCalcData.overall?.total_unique_alarms || 0).toLocaleString()}</p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Standing</p>
-                    <p className="text-lg font-semibold">{(actualCalcData.counts.total_standing || 0).toLocaleString()}</p>
+                    <p className="text-lg font-semibold">{(() => {
+                      const ab = (actualCalcData.counts as unknown as { activation_based?: { total_standing?: number } }).activation_based;
+                      const val = ab?.total_standing ?? actualCalcData.counts.total_standing ?? 0;
+                      return Number(val).toLocaleString();
+                    })()}</p>
                     <p className="text-xs text-muted-foreground">
-                      {((((actualCalcData.counts.total_standing || 0)) / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
+                      {(() => {
+                        const ab = (actualCalcData.counts as unknown as { activation_based?: { total_standing?: number; total_activations?: number } }).activation_based;
+                        const num = ab?.total_standing ?? actualCalcData.counts.total_standing ?? 0;
+                        const den = (ab?.total_activations ?? actualCalcData.counts.total_alarms ?? 1);
+                        return ((Number(num) / Number(den)) * 100).toFixed(1);
+                      })()}%
                     </p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Stale</p>
-                    <p className="text-lg font-semibold">{actualCalcData.counts.total_stale.toLocaleString()}</p>
+                    <p className="text-lg font-semibold">{(() => {
+                      const ab = (actualCalcData.counts as unknown as { activation_based?: { total_standing_stale?: number } }).activation_based;
+                      const val = ab?.total_standing_stale ?? actualCalcData.counts.total_stale ?? 0;
+                      return Number(val).toLocaleString();
+                    })()}</p>
                     <p className="text-xs text-muted-foreground">
-                      {((actualCalcData.counts.total_stale / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
+                      {(() => {
+                        const ab = (actualCalcData.counts as unknown as { activation_based?: { total_standing_stale?: number; total_activations?: number } }).activation_based;
+                        const num = ab?.total_standing_stale ?? actualCalcData.counts.total_stale ?? 0;
+                        const den = (ab?.total_activations ?? actualCalcData.counts.total_alarms ?? 1);
+                        return ((Number(num) / Number(den)) * 100).toFixed(1);
+                      })()}%
                     </p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Chattering</p>
-                    <p className="text-lg font-semibold">{actualCalcData.counts.total_chattering.toLocaleString()}</p>
+                    <p className="text-lg font-semibold">{(() => {
+                      const ab = (actualCalcData.counts as unknown as { activation_based?: { total_nuisance_chattering?: number } }).activation_based;
+                      const val = ab?.total_nuisance_chattering ?? actualCalcData.counts.total_chattering ?? 0;
+                      return Number(val).toLocaleString();
+                    })()}</p>
                     <p className="text-xs text-muted-foreground">
-                      {((actualCalcData.counts.total_chattering / actualCalcData.counts.total_alarms) * 100).toFixed(1)}%
+                      {(() => {
+                        const ab = (actualCalcData.counts as unknown as { activation_based?: { total_nuisance_chattering?: number; total_activations?: number } }).activation_based;
+                        const num = ab?.total_nuisance_chattering ?? actualCalcData.counts.total_chattering ?? 0;
+                        const den = (ab?.total_activations ?? actualCalcData.counts.total_alarms ?? 1);
+                        return ((Number(num) / Number(den)) * 100).toFixed(1);
+                      })()}%
                     </p>
                   </div>
                 </div>
@@ -448,6 +475,7 @@ export default function ActualCalcTabs({
                   <CompositionSankey
                     plantId={plantId}
                     includeSystem={includeSystem}
+                    totalUniqueAlarms={actualCalcData.overall?.total_unique_alarms}
                     preloadedData={
                       includeSystem
                         ? (actualCalcData.alarm_summary?.sankey_composition_all || actualCalcData.alarm_summary?.sankey_composition || null)

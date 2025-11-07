@@ -13,6 +13,7 @@ import { fetchPlantActualCalcSankey } from '@/api/actualCalc';
 type Props = {
   data: ActualCalcOverallResponse;
   plantId: string;
+  includeSystem?: boolean;
   standingTotal?: number; // optional override
   instrumentsFaultyTotal?: number; // optional override
   instrumentsFaultyChatteringTotal?: number; // optional override for chattering instruments faulty
@@ -63,17 +64,16 @@ function StatNode({ title, value, nodeRef, bg, split }: { title: string; value: 
   );
 }
 
-export function ActualCalcTree({ data, plantId, standingTotal: standingOverride = 0, instrumentsFaultyTotal: faultyOverride = 0, instrumentsFaultyChatteringTotal: faultyChatteringOverride = 0, staleTotal: staleOverride = 0 }: Props) {
+export function ActualCalcTree({ data, plantId, includeSystem = true, standingTotal: standingOverride = 0, instrumentsFaultyTotal: faultyOverride = 0, instrumentsFaultyChatteringTotal: faultyChatteringOverride = 0, staleTotal: staleOverride = 0 }: Props) {
   // Use activation-based counts for consistency with charts (per-activation counts)
   // Fall back to episode-based counts (per-source counts) for backward compatibility
   const activationCounts = data?.counts?.activation_based;
-  const totalAlarms = Number(activationCounts?.total_activations ?? data?.counts?.total_alarms ?? 0);
-  const standingTotal = Number(activationCounts?.total_standing ?? data?.counts?.total_standing ?? standingOverride ?? 0);
-  const instrumentsFaultyTotal = Number(activationCounts?.total_standing_if ?? data?.counts?.total_instrument_failure ?? faultyOverride ?? 0);
-  const staleTotal = Number(activationCounts?.total_standing_stale ?? data?.counts?.total_stale ?? staleOverride ?? 0);
-  const chatteringTotal = Number(activationCounts?.total_nuisance_chattering ?? data?.counts?.total_chattering ?? 0);
-  const instrumentsFaultyChatteringTotal = Number(activationCounts?.total_nuisance_if_chattering ?? data?.counts?.total_instrument_failure_chattering ?? faultyChatteringOverride ?? 0);
-  const nuisanceTotal = chatteringTotal + instrumentsFaultyChatteringTotal;
+  const uniqueTotal = Number(data?.overall?.total_unique_alarms || 0);
+  const totalAlarms = Number(
+    (uniqueTotal && uniqueTotal > 0 ? uniqueTotal : (activationCounts?.total_activations))
+    ?? data?.counts?.total_alarms
+    ?? 0
+  );
 
   // Refs for nodes
   const containerRef = useRef<HTMLDivElement>(null);
@@ -136,6 +136,21 @@ export function ActualCalcTree({ data, plantId, standingTotal: standingOverride 
     if (plantId) load();
     return () => { cancelled = true; };
   }, [plantId]);
+
+  // Derive node values (prefer Sankey with includeSystem toggle). Fallback to activation/counts if unavailable.
+  const preferred = includeSystem ? sankeyAll : sankeyOp;
+  const fallbackStanding = Number(activationCounts?.total_standing ?? data?.counts?.total_standing ?? standingOverride ?? 0);
+  const fallbackStale = Number(activationCounts?.total_standing_stale ?? data?.counts?.total_stale ?? staleOverride ?? 0);
+  const fallbackFaultStanding = Number(activationCounts?.total_standing_if ?? data?.counts?.total_instrument_failure ?? faultyOverride ?? 0);
+  const fallbackChat = Number(activationCounts?.total_nuisance_chattering ?? data?.counts?.total_chattering ?? 0);
+  const fallbackIFChat = Number(activationCounts?.total_nuisance_if_chattering ?? data?.counts?.total_instrument_failure_chattering ?? faultyChatteringOverride ?? 0);
+
+  const standingTotal = Number(preferred?.standing ?? fallbackStanding);
+  const staleTotal = Number(preferred?.standing_stale ?? fallbackStale);
+  const instrumentsFaultyTotal = Number(preferred?.standing_if ?? fallbackFaultStanding);
+  const chatteringTotal = Number(preferred?.nuisance_chattering ?? fallbackChat);
+  const instrumentsFaultyChatteringTotal = Number(preferred?.nuisance_if_chattering ?? fallbackIFChat);
+  const nuisanceTotal = chatteringTotal + instrumentsFaultyChatteringTotal;
 
   const sysSplit = (allV?: number, opV?: number) => {
     const a = Math.max(0, Number(allV || 0));

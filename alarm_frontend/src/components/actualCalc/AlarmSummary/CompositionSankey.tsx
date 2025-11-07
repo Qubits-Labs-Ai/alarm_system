@@ -11,6 +11,7 @@ interface Props {
   plantId: string;
   includeSystem?: boolean;
   preloadedData?: SankeyResponse | null;
+  totalUniqueAlarms?: number;
 }
 
 const CATEGORY_COLORS = {
@@ -40,6 +41,7 @@ const CompositionSankey: React.FC<Props> = ({
   plantId,
   includeSystem = false,
   preloadedData = null,
+  totalUniqueAlarms,
 }) => {
   const [loading, setLoading] = React.useState<boolean>(!preloadedData);
   const [error, setError] = React.useState<string | null>(null);
@@ -167,6 +169,9 @@ const CompositionSankey: React.FC<Props> = ({
 
   const totals = data.totals;
   const total = totals.total;
+  const displayTotal = typeof totalUniqueAlarms === 'number' && totalUniqueAlarms > 0
+    ? totalUniqueAlarms
+    : total;
 
   // Calculate percentages
   const standingPct = (totals.standing / total) * 100;
@@ -198,7 +203,7 @@ const CompositionSankey: React.FC<Props> = ({
               Alarm Composition
             </CardTitle>
             <CardDescription>
-              Exclusive category breakdown ({total.toLocaleString()} total activations)
+              Exclusive category breakdown ({displayTotal.toLocaleString()} total alarms)
             </CardDescription>
           </div>
           <Button variant="outline" size="sm" onClick={fetchData}>
@@ -216,7 +221,7 @@ const CompositionSankey: React.FC<Props> = ({
                 className="h-12 rounded flex items-center justify-between px-4 text-white font-semibold"
                 style={{ backgroundColor: CHART_GREEN_PALE, color: 'var(--foreground)' }}
               >
-                <span>{total.toLocaleString()}</span>
+                <span>{displayTotal.toLocaleString()}</span>
                 <span className="text-sm font-normal">100%</span>
               </div>
             </div>

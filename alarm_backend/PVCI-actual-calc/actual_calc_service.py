@@ -1437,6 +1437,219 @@ def load_pvci_merged_csv(
         raise
 
 
+# ---------- ACTIVATION CACHE (PHASE 1) ----------
+
+def compute_activations(
+    df: pd.DataFrame,
+    plant_id: Optional[str] = None,
+    refractory_seconds: int = 10,
+    timeout_minutes: Optional[int] = None,
+) -> pd.DataFrame:
+    """Extract unique alarm activations per Source+Condition using ISA/EEMUA-style
+    state machine (Blank→ACK→OK). Assumes `df` is already sorted by ['Source', 'Event Time'].
+
+    Returns a DataFrame with columns:
+      PlantId, Source, Condition, StartTime, AckTime, OkTime, EndTime,
+      DurationMin, Acked, StandingFlag, Day, Hour, Month, Window10m,
+      SourceAlias, Provenance, ComputationTimestamp, ThresholdsUsed
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(columns=[
+            "PlantId","Source","Condition","StartTime","AckTime","OkTime","EndTime",
+            "DurationMin","Acked","StandingFlag","Day","Hour","Month","Window10m",
+            "SourceAlias","Provenance","ComputationTimestamp","ThresholdsUsed"
+        ])
+
+    d = df.copy()
+    d["Event Time"] = pd.to_datetime(d["Event Time"], errors="coerce")
+    d = d.dropna(subset=["Event Time", "Source"])
+    d["Action"] = d["Action"].fillna("").astype(str).str.upper().str.strip()
+    if "Condition" in d.columns:
+        d["Condition"] = d["Condition"].fillna("").astype(str).str.upper().str.strip()
+    else:
+        d["Condition"] = "NOT PROVIDED"
+
+    # Skip common non-alarm conditions (extendable)
+    non_alarm_conditions = {"CHANGE", "ONREQ.PV", "NORMAL", "ONREQ", "MESSAGE", "CHECKPOINT"}
+
+    rows = []
+    comp_ts = datetime.utcnow().isoformat()
+    provenance = "activation_cache_v1"
+    thresholds_used = {
+        "stale_min": int(STALE_THRESHOLD_MIN),
+        "chatter_min": float(CHATTER_THRESHOLD_MIN),
+        "unhealthy_threshold": int(UNHEALTHY_THRESHOLD),
+        "window_minutes": int(WINDOW_MINUTES),
+    }
+
+    # Debounce window for consecutive blanks
+    ref_delta = timedelta(seconds=max(0, int(refractory_seconds)))
+    to_minutes = lambda td: (td.total_seconds() / 60.0) if isinstance(td, timedelta) else None
+
+    for (src, cond), g in d.groupby(["Source", "Condition"], sort=False):
+        if str(cond or "").upper() in non_alarm_conditions:
+            continue
+        g = g.sort_values("Event Time")
+
+        state = "IDLE"
+        active_start = None
+        last_start = None
+        ack_time = None
+        ok_time = None
+
+        for _, r in g.iterrows():
+            action = r.get("Action", "")
+            t = r.get("Event Time")
+            if pd.isna(t):
+                continue
+
+            if action == "":
+                # Debounce multiple blanks in quick succession
+                if state in ("IDLE", "ACKED"):
+                    if last_start is None or (t - last_start) > ref_delta:
+                        active_start = t
+                        last_start = t
+                        ack_time = None
+                        ok_time = None
+                        state = "ACTIVE"
+            elif action == "ACK" and state == "ACTIVE":
+                ack_time = t
+                state = "ACKED"
+            elif action == "OK" and state in ("ACTIVE", "ACKED"):
+                ok_time = t
+                # Close activation
+                end_time = ok_time
+                standing = False
+                if ack_time is not None and active_start is not None:
+                    standing = ((ack_time - active_start).total_seconds() / 60.0) >= float(STALE_THRESHOLD_MIN)
+                duration = None
+                if active_start is not None and end_time is not None:
+                    duration = to_minutes(end_time - active_start)
+
+                start = active_start if active_start is not None else t
+                win_minutes = max(1, int(WINDOW_MINUTES) if WINDOW_MINUTES else 10)
+                window_start = (start.floor(f"{win_minutes}min") if hasattr(start, 'floor')
+                                else pd.to_datetime(start).floor(f"{win_minutes}min"))
+
+                rows.append({
+                    "PlantId": plant_id or "",
+                    "Source": src,
+                    "Condition": cond,
+                    "StartTime": start,
+                    "AckTime": ack_time,
+                    "OkTime": ok_time,
+                    "EndTime": end_time,
+                    "DurationMin": duration,
+                    "Acked": bool(ack_time is not None),
+                    "StandingFlag": bool(standing),
+                    "Day": (start.date() if hasattr(start, 'date') else pd.to_datetime(start).date()),
+                    "Hour": int((start.hour if hasattr(start, 'hour') else pd.to_datetime(start).hour)),
+                    "Month": (start.strftime("%Y-%m") if hasattr(start, 'strftime') else pd.to_datetime(start).strftime("%Y-%m")),
+                    "Window10m": window_start,
+                    "SourceAlias": None,
+                    "Provenance": provenance,
+                    "ComputationTimestamp": comp_ts,
+                    "ThresholdsUsed": json.dumps(thresholds_used),
+                })
+
+                # Reset
+                state = "IDLE"
+                active_start = None
+                ack_time = None
+                ok_time = None
+
+        # Handle trailing ACTIVE/ACKED without OK using timeout or group end
+        if state in ("ACTIVE", "ACKED") and active_start is not None:
+            end_time = None
+            if timeout_minutes is not None and timeout_minutes > 0:
+                end_time = active_start + timedelta(minutes=int(timeout_minutes))
+            else:
+                # Fallback to last event time in this group
+                end_time = g["Event Time"].iloc[-1]
+            standing = False
+            if ack_time is not None:
+                standing = ((ack_time - active_start).total_seconds() / 60.0) >= float(STALE_THRESHOLD_MIN)
+            duration = to_minutes(end_time - active_start) if end_time is not None else None
+            start = active_start
+            win_minutes = max(1, int(WINDOW_MINUTES) if WINDOW_MINUTES else 10)
+            window_start = (start.floor(f"{win_minutes}min") if hasattr(start, 'floor')
+                            else pd.to_datetime(start).floor(f"{win_minutes}min"))
+
+            rows.append({
+                "PlantId": plant_id or "",
+                "Source": src,
+                "Condition": cond,
+                "StartTime": start,
+                "AckTime": ack_time,
+                "OkTime": ok_time,
+                "EndTime": end_time,
+                "DurationMin": duration,
+                "Acked": bool(ack_time is not None),
+                "StandingFlag": bool(standing),
+                "Day": (start.date() if hasattr(start, 'date') else pd.to_datetime(start).date()),
+                "Hour": int((start.hour if hasattr(start, 'hour') else pd.to_datetime(start).hour)),
+                "Month": (start.strftime("%Y-%m") if hasattr(start, 'strftime') else pd.to_datetime(start).strftime("%Y-%m")),
+                "Window10m": window_start,
+                "SourceAlias": None,
+                "Provenance": provenance,
+                "ComputationTimestamp": comp_ts,
+                "ThresholdsUsed": json.dumps(thresholds_used),
+            })
+
+    act_df = pd.DataFrame(rows)
+    if not act_df.empty:
+        # Stable types
+        act_df["Acked"] = act_df["Acked"].astype(bool)
+        act_df["StandingFlag"] = act_df["StandingFlag"].astype(bool)
+    return act_df
+
+
+def write_activation_cache(plant_id: str, activations_df: pd.DataFrame, version: str = "v1") -> Dict[str, Any]:
+    """Persist activations to PVCI-actual-calc/cache/{plant}/{version}/.
+    Writes Parquet when available, otherwise falls back to CSV. Also writes metadata.json.
+    Returns dict with written paths and counts.
+    """
+    cache_root = os.path.join(os.path.dirname(__file__), "cache", str(plant_id or ""), str(version or "v1"))
+    os.makedirs(cache_root, exist_ok=True)
+
+    meta = {
+        "plant_id": plant_id,
+        "version": version or "v1",
+        "record_count": int(len(activations_df) if activations_df is not None else 0),
+        "computation_timestamp": datetime.utcnow().isoformat(),
+        "thresholds": {
+            "stale_min": int(STALE_THRESHOLD_MIN),
+            "chatter_min": float(CHATTER_THRESHOLD_MIN),
+            "unhealthy_threshold": int(UNHEALTHY_THRESHOLD),
+            "window_minutes": int(WINDOW_MINUTES),
+        },
+        "provenance": "activation_cache_v1",
+    }
+
+    parquet_path = os.path.join(cache_root, "activations.parquet")
+    csv_path = os.path.join(cache_root, "activations.csv")
+    metadata_path = os.path.join(cache_root, "metadata.json")
+
+    wrote = {"parquet": None, "csv": None, "metadata": metadata_path}
+    try:
+        if activations_df is not None and not activations_df.empty:
+            # Prefer Parquet when engine available
+            try:
+                activations_df.to_parquet(parquet_path, index=False)
+                wrote["parquet"] = parquet_path
+            except Exception:
+                # Fallback to CSV when parquet engine missing
+                activations_df.to_csv(csv_path, index=False)
+                wrote["csv"] = csv_path
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to write activation cache: {e}")
+        raise
+
+    return {"paths": wrote, "meta": meta}
+
+
 # ---------- MAIN COMPUTATION WRAPPER ----------
 
 def run_actual_calc(
@@ -2061,6 +2274,9 @@ def compute_exclusive_categories_per_activation(
             t = row["Event Time"]
             cond = row.get("Condition", "") if "Condition" in group.columns else ""
             
+            if cond in ["CHANGE", "ONREQ.PV", "NORMAL", "ONREQ"]:
+                continue
+            
             # New activation
             if action == "" and state in ("IDLE", "ACKED"):
                 activations.append({
@@ -2100,6 +2316,10 @@ def compute_exclusive_categories_per_activation(
             action = row["Action"]
             t = row["Event Time"]
             cond = row.get("Condition", "") if "Condition" in df.columns else ""
+            
+            # Skip non-alarm transitions (align with unique-alarms state machine)
+            if cond in ["CHANGE", "ONREQ.PV", "NORMAL", "ONREQ"]:
+                continue
             
             # New alarm
             if action == "" and state in ["IDLE", "ACKED"]:

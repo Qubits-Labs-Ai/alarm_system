@@ -435,7 +435,7 @@ export function ActualCalcPage() {
               </div>
               <div>
                 <p className="text-muted-foreground">Total Alarms</p>
-                <p className="text-lg font-semibold">{data.counts.total_alarms.toLocaleString()}</p>
+                <p className="text-lg font-semibold">{(data.overall?.total_unique_alarms || 0).toLocaleString()}</p>
               </div>
               <div>
                 <p className="text-muted-foreground">Standing</p>

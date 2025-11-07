@@ -54,7 +54,12 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
     total_nuisance?: number;
   }};
   const activationCounts = countsAny.activation_based;
-  const totalAlarms = Number(activationCounts?.total_activations ?? counts.total_alarms ?? 0);
+  const uniqueTotal = Number(kpis?.total_unique_alarms ?? 0);
+  const totalAlarms = Number(
+    (uniqueTotal && uniqueTotal > 0 ? uniqueTotal : (activationCounts?.total_activations))
+      ?? counts.total_alarms
+      ?? 0
+  );
   const standingTotal = Number(activationCounts?.total_standing ?? counts.total_standing ?? 0);
   const nuisanceTotal = Number(activationCounts?.total_nuisance ?? 
     (counts.total_chattering || 0) + (counts.total_instrument_failure_chattering || 0));

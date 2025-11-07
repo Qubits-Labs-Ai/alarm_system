@@ -1,0 +1,13 @@
+{
+  "plant_id": "PVCI",
+  "version": "v1",
+  "record_count": 68621,
+  "computation_timestamp": "2025-11-06T13:01:16.198248",
+  "thresholds": {
+    "stale_min": 1440,
+    "chatter_min": 0.5,
+    "unhealthy_threshold": 10,
+    "window_minutes": 10
+  },
+  "provenance": "activation_cache_v1"
+}

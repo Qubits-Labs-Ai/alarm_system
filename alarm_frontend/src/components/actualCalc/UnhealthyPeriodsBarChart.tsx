@@ -15,7 +15,7 @@ import { useInsightModal } from '@/components/insights/useInsightModal';
 interface UnhealthyPeriodRecord {
   Source?: string;
   source?: string;
-  Unhealthy_Periods: number | string;
+  Unhealthy_Periods?: number | string;
   unhealthy_periods?: number | string;
   count?: number | string;
   hits?: number | string;

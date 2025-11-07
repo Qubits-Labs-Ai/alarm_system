@@ -2077,6 +2077,121 @@ def get_bad_actors_raw(top_n: int = 20, time_period: str = "all", min_events: in
         return json.dumps({"error": f"Bad actor analysis failed: {str(e)}"})
 
 
+ENGINEERING_TOOLS = os.getenv('PVCI_AGENT_ENGINEERING_TOOLS', '').strip().lower() in ('1','true','yes','y')
+
+def _activation_cache_dir(plant_id: str = 'PVCI', version: str = 'v1') -> str:
+    return os.path.join(BACKEND_DIR, 'PVCI-actual-calc', 'cache', str(plant_id or 'PVCI'), str(version or 'v1'))
+
+def _read_activation_cache(plant_id: str = 'PVCI', version: str = 'v1'):
+    cache_dir = _activation_cache_dir(plant_id, version)
+    parquet_path = os.path.join(cache_dir, 'activations.parquet')
+    csv_path = os.path.join(cache_dir, 'activations.csv')
+    meta_path = os.path.join(cache_dir, 'metadata.json')
+    meta = {}
+    try:
+        if os.path.exists(meta_path):
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                meta = json.load(f)
+    except Exception:
+        meta = {}
+    df = None
+    if os.path.exists(parquet_path):
+        try:
+            df = pd.read_parquet(parquet_path)
+        except Exception:
+            df = None
+    if df is None and os.path.exists(csv_path):
+        df = pd.read_csv(csv_path)
+    if df is None:
+        return None, meta
+    for col in ['StartTime','AckTime','OkTime','EndTime','Window10m']:
+        if col in df.columns:
+            try:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+            except Exception:
+                pass
+    return df, meta
+
+def _parse_iso_user(ts: str | None):
+    if not ts:
+        return None
+    try:
+        s = str(ts).strip()
+        if s and 'T' not in s and ' ' in s:
+            s = s.replace(' ', 'T')
+        if s.endswith('Z'):
+            s = s[:-1] + '+00:00'
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+def _is_system_source(name: str) -> bool:
+    s = str(name or '').strip().upper()
+    return bool(s and (s == 'REPORT' or s.startswith('$') or s.startswith('ACTIVITY') or s.startswith('SYS_') or s.startswith('SYSTEM')))
+
+def get_activation_top_sources(top_n: int = 20, plant_id: str = 'PVCI', start_iso: str | None = None, end_iso: str | None = None, include_system: bool = False, version: str = 'v1') -> str:
+    try:
+        df, meta = _read_activation_cache(plant_id, version)
+        if df is None or df.empty:
+            return json.dumps({'status':'empty','records':[],'meta':meta})
+        if not include_system and 'Source' in df.columns:
+            df = df[~df['Source'].apply(_is_system_source)]
+        if start_iso or end_iso:
+            s = _parse_iso_user(start_iso)
+            e = _parse_iso_user(end_iso)
+            if s is not None:
+                df = df[df['StartTime'] >= s]
+            if e is not None:
+                df = df[df['StartTime'] <= e]
+        grp = df.groupby('Source').size().reset_index(name='activations').sort_values('activations', ascending=False)
+        if isinstance(top_n, int) and top_n > 0:
+            grp = grp.head(top_n)
+        recs = grp.to_dict(orient='records')
+        return json.dumps({'status':'success','count':len(recs),'records':recs,'meta':meta})
+    except Exception as e:
+        return json.dumps({'status':'error','error':str(e)})
+
+def get_activation_daily_summary(plant_id: str = 'PVCI', version: str = 'v1', start_iso: str | None = None, end_iso: str | None = None, include_system: bool = False, iso_threshold: int = 288, unacceptable_threshold: int = 720) -> str:
+    try:
+        df, meta = _read_activation_cache(plant_id, version)
+        if df is None or df.empty:
+            return json.dumps({'status':'empty','summary':{},'alarms_per_day':[],'days_over_288':[],'days_unacceptable':[],'meta':meta})
+        if not include_system and 'Source' in df.columns:
+            df = df[~df['Source'].apply(_is_system_source)]
+        if start_iso or end_iso:
+            s = _parse_iso_user(start_iso)
+            e = _parse_iso_user(end_iso)
+            if s is not None:
+                df = df[df['StartTime'] >= s]
+            if e is not None:
+                df = df[df['StartTime'] <= e]
+        ddf = df.copy()
+        ddf['day'] = pd.to_datetime(ddf['StartTime']).dt.date.astype(str)
+        per_day = ddf.groupby('day').size().reset_index(name='activations').sort_values('day')
+        total_days = int(len(per_day))
+        total_acts = int(per_day['activations'].sum())
+        avg_per_day = round((total_acts / total_days), 2) if total_days else 0.0
+        over_288 = per_day[per_day['activations'] > int(iso_threshold)]
+        unacceptable = per_day[per_day['activations'] >= int(unacceptable_threshold)]
+        result = {
+            'status':'success',
+            'params': {'iso_threshold': int(iso_threshold), 'unacceptable_threshold': int(unacceptable_threshold)},
+            'summary': {
+                'avg_alarms_per_day': avg_per_day,
+                'days_over_288_count': int(len(over_288)),
+                'days_unacceptable_count': int(len(unacceptable)),
+                'total_days_analyzed': total_days,
+                'total_unique_alarms': total_acts
+            },
+            'alarms_per_day': per_day.to_dict(orient='records'),
+            'days_over_288': over_288.to_dict(orient='records'),
+            'days_unacceptable': unacceptable.to_dict(orient='records'),
+            'meta': meta
+        }
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({'status':'error','error':str(e)})
+
 # ==================== TOOL REGISTRY ====================
 
 AVAILABLE_TOOLS = [
@@ -2099,3 +2214,19 @@ AVAILABLE_TOOLS = [
     get_floods_summary_cached,
     read_overall_health_cache
 ]
+
+if not ENGINEERING_TOOLS:
+    def _nm(f):
+        try:
+            return f.__name__
+        except Exception:
+            return ''
+    _filtered = []
+    for _fn in AVAILABLE_TOOLS:
+        _n = _nm(_fn)
+        if _n in ('execute_sql_query','analyze_flood_events_raw','get_isa_compliance_raw','get_bad_actors_raw'):
+            continue
+        _filtered.append(_fn)
+    AVAILABLE_TOOLS = [get_activation_top_sources, get_activation_daily_summary] + _filtered
+else:
+    AVAILABLE_TOOLS = [get_activation_top_sources, get_activation_daily_summary] + AVAILABLE_TOOLS
