@@ -23,6 +23,12 @@ PLANTS: Dict[str, Dict[str, Any]] = {
         "csv_relative_path": "PVCI-merged",
         "csv_filename": "All_Merged.csv",
         "active": True,
+        "overrides": {
+            "stale_min": 60,
+            "chatter_min": 10,
+            "unhealthy_threshold": 10,
+            "window_minutes": 10,
+        },
     },
     "VCMA": {
         "id": "VCMA",
@@ -33,6 +39,12 @@ PLANTS: Dict[str, Dict[str, Any]] = {
         "csv_relative_path": "VCMA",
         "csv_filename": "VCMA.csv",
         "active": True,
+        "overrides": {
+            "stale_min": 60,
+            "chatter_min": 10,
+            "unhealthy_threshold": 10,
+            "window_minutes": 10,
+        },
     },
 }
 

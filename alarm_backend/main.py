@@ -17,6 +17,7 @@ import re
 import logging
 import json
 from datetime import datetime, timedelta, timezone
+import hashlib
 from pydantic import BaseModel
 from typing import List, Any, Dict, Optional
 from pathlib import Path
@@ -2322,6 +2323,26 @@ def get_summary_cache_path(plant_id: str, endpoint_type: str) -> str:
     """
     cache_dir = os.path.join(BASE_DIR, "PVCI-actual-calc")
     os.makedirs(cache_dir, exist_ok=True)
+    # Variant-specific: include a short hash of the cache_key when available via caller
+    try:
+        # Peek into the call stack to get the cache_key from the caller function
+        import inspect
+        frame = inspect.currentframe()
+        caller_locals = frame.f_back.f_locals if frame and frame.f_back else {}
+        cache_key = (
+            caller_locals.get("cache_key")
+            or caller_locals.get("cats_cache_key")
+            or caller_locals.get("hourly_cache_key")
+            or caller_locals.get("sankey_cache_key")
+        )
+        if cache_key:
+            key_bytes = json.dumps(list(cache_key), default=str).encode("utf-8")
+            suffix = hashlib.sha1(key_bytes).hexdigest()[:10]
+            filename = f"{plant_id}-summary-{endpoint_type}-{suffix}.json"
+            return os.path.join(cache_dir, filename)
+    except Exception:
+        pass
+    # Fallback (legacy single-file per type)
     filename = f"{plant_id}-summary-{endpoint_type}-cache.json"
     return os.path.join(cache_dir, filename)
 
@@ -3699,20 +3720,14 @@ def get_plant_actual_calc_category_time_series(
             dataframe_to_json_records,
         )
         
-        # Load CSV data
-        df = load_pvci_merged_csv(
-            ALARM_DATA_DIR,
-            plant_id=plant_id,
-        )
-        
-        # Get plant overrides for thresholds
+        # Get plant overrides for thresholds (no CSV needed)
         overrides = get_plant_overrides(plant_id)
         stale_min = overrides.get("stale_min", STALE_THRESHOLD_MIN)
         chatter_min = overrides.get("chatter_min", CHATTER_THRESHOLD_MIN)
         unhealthy_threshold = overrides.get("unhealthy_threshold", UNHEALTHY_THRESHOLD)
         window_minutes = overrides.get("window_minutes", WINDOW_MINUTES)
         flood_source_threshold = FLOOD_SOURCE_THRESHOLD
-        
+
         # Build cache key
         import time
         cats_cache_key = (
@@ -3750,7 +3765,9 @@ def get_plant_actual_calc_category_time_series(
                     or alarm_summary.get("category_time_series")
                     or {}
                 )
-            if category_time_series and grain in category_time_series:
+            # Map API grains to JSON keys: day->daily, week->weekly, month->monthly
+            json_grain = {"day": "daily", "week": "weekly", "month": "monthly"}.get(grain, grain)
+            if category_time_series and json_grain in category_time_series:
                 logger.info(f"[MAIN JSON CACHE] HIT for {plant_id}/categories (grain={grain}, include_system={include_system}) - instant load!")
                 return {
                     "plant_id": plant_id,
@@ -3765,7 +3782,7 @@ def get_plant_actual_calc_category_time_series(
                         "window_minutes": window_minutes,
                     },
                     "grain": grain,
-                    "series": category_time_series[grain],
+                    "series": category_time_series[json_grain],
                 }
         
         # PRIORITY 2: Try disk cache (persistent across restarts, but not always available)
@@ -3787,6 +3804,12 @@ def get_plant_actual_calc_category_time_series(
             logger.info(f"[RAM CACHE] summary/categories hit for {plant_id}, grain={grain}")
             return cats_cached["data"]
         
+        # Load CSV data only if cache miss
+        df = load_pvci_merged_csv(
+            ALARM_DATA_DIR,
+            plant_id=plant_id,
+        )
+
         # Optional pre-filter: exclude system/meta sources before heavy classification
         if not include_system:
             def is_system(src: str) -> bool:
@@ -3918,12 +3941,6 @@ def get_plant_actual_calc_hourly_matrix(
             dataframe_to_json_records,
         )
         
-        # Load CSV data
-        df = load_pvci_merged_csv(
-            ALARM_DATA_DIR,
-            plant_id=plant_id,
-        )
-        
         # Get plant overrides for thresholds
         overrides = get_plant_overrides(plant_id)
         stale_min = overrides.get("stale_min", STALE_THRESHOLD_MIN)
@@ -3993,7 +4010,13 @@ def get_plant_actual_calc_hourly_matrix(
         if hourly_cached and (time.time() - hourly_cached["ts"] < HOURLY_TTL_SECONDS):
             logger.info(f"[RAM CACHE] summary/hourly_matrix hit for {plant_id}")
             return hourly_cached["data"]
-
+        
+        # Load CSV data
+        df = load_pvci_merged_csv(
+            ALARM_DATA_DIR,
+            plant_id=plant_id,
+        )
+        
         # Optional pre-filter: exclude system/meta sources before heavy classification
         if not include_system:
             def is_system(src: str) -> bool:
@@ -4002,7 +4025,7 @@ def get_plant_actual_calc_hourly_matrix(
             before = len(df)
             df = df[~df["Source"].apply(is_system)]
             logger.info(f"Pre-filtered system/meta sources: {before - len(df)} rows removed (include_system=False)")
-
+        
         # Classify activations (we need the StartTime column)
         logger.info(f"Computing activations for plant {plant_id}...")
         activations_df = compute_exclusive_categories_per_activation(
@@ -4059,10 +4082,10 @@ def get_plant_actual_calc_hourly_matrix(
 
 
 @app.get("/actual-calc/{plant_id}/summary/sankey", response_class=ORJSONResponse)
-def get_plant_actual_calc_sankey(
+def get_sankey_composition(
     plant_id: str,
     include_system: bool = False,
-):
+) -> Dict[str, Any]:
     """
     Get Sankey diagram data for exclusive category flow visualization.
     
@@ -4117,20 +4140,14 @@ def get_plant_actual_calc_sankey(
             compute_category_sankey,
         )
         
-        # Load CSV data
-        df = load_pvci_merged_csv(
-            ALARM_DATA_DIR,
-            plant_id=plant_id,
-        )
-        
-        # Get plant overrides for thresholds
+        # Get plant overrides for thresholds (no CSV needed)
         overrides = get_plant_overrides(plant_id)
         stale_min = overrides.get("stale_min", STALE_THRESHOLD_MIN)
         chatter_min = overrides.get("chatter_min", CHATTER_THRESHOLD_MIN)
         unhealthy_threshold = overrides.get("unhealthy_threshold", UNHEALTHY_THRESHOLD)
         window_minutes = overrides.get("window_minutes", WINDOW_MINUTES)
         flood_source_threshold = FLOOD_SOURCE_THRESHOLD
-        
+
         # Build cache key
         import time
         sankey_cache_key = (
@@ -4196,6 +4213,12 @@ def get_plant_actual_calc_sankey(
             logger.info(f"[RAM CACHE] summary/sankey hit for {plant_id}")
             return sankey_cached["data"]
         
+        # Load CSV data only if cache miss
+        df = load_pvci_merged_csv(
+            ALARM_DATA_DIR,
+            plant_id=plant_id,
+        )
+
         # Optional pre-filter: exclude system/meta sources before heavy classification
         if not include_system:
             def is_system(src: str) -> bool:

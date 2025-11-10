@@ -2864,8 +2864,16 @@ def read_cache(
         # Overlay any explicit caller-provided params on top of current
         effective_requested = {**current_params, **(params or {})}
 
-        # All keys in effective_requested must match cached_params
-        params_match = all(cached_params.get(k) == v for k, v in effective_requested.items())
+        # Backward-compatible param matching:
+        # Only enforce equality for keys that exist in the cached params.
+        # This allows older caches (without newer keys like iso/unacceptable thresholds)
+        # to still be considered valid if all overlapping keys match.
+        def _param_equal(k: str, v: Any) -> bool:
+            if k not in cached_params:
+                return True
+            return cached_params.get(k) == v
+
+        params_match = all(_param_equal(k, v) for k, v in effective_requested.items())
         
         # Validate CSV metadata if csv_path provided
         csv_metadata_match = True
