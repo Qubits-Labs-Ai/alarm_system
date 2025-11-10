@@ -71,7 +71,7 @@ def classify_per_source(df, time_col="Event Time"):
 def detect_unhealthy_and_badactor(df, time_col="Event Time"):
     df = ensure_datetime(df, time_col)
     # Unhealthy: sources with >= UNHEALTHY_COUNT in FLOOD_WINDOW_MINUTES rolling window
-    window = f"{FLOOD_WINDOW_MINUTES}T"
+    window = f"{FLOOD_WINDOW_MINUTES}min"
     temp = df.set_index(time_col)
     counts_by_time = temp.resample(window)['Source'].value_counts().unstack(fill_value=0)
     # flatten to find sources that in any window meet threshold
@@ -93,7 +93,7 @@ def detect_unhealthy_and_badactor(df, time_col="Event Time"):
 
 def detect_floods(df, time_col="Event Time"):
     df = ensure_datetime(df, time_col)
-    window = f"{FLOOD_WINDOW_MINUTES}T"
+    window = f"{FLOOD_WINDOW_MINUTES}min"
     temp = df.set_index(time_col)
     rolling_counts = temp['Source'].resample(window).count()
     floods = rolling_counts[rolling_counts >= FLOOD_THRESHOLD]

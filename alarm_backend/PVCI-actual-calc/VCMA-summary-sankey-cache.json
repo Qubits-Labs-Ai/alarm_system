@@ -1,20 +1,20 @@
 {
   "cache_key": [
     "VCMA",
-    false,
+    true,
     1440,
     0.5,
     10,
     10,
     2
   ],
-  "cached_at": 1762456990.410076,
+  "cached_at": 1762511393.9455752,
   "data": {
     "plant_id": "VCMA",
     "mode": "actual-calc",
-    "generated_at": "2025-11-06T19:23:10.407536Z",
+    "generated_at": "2025-11-07T10:29:53.944573Z",
     "params": {
-      "include_system": false
+      "include_system": true
     },
     "nodes": [
       "Total",
@@ -31,49 +31,49 @@
       {
         "source": "Total",
         "target": "Standing",
-        "value": 591
+        "value": 74
       },
       {
         "source": "Total",
         "target": "Nuisance",
-        "value": 42110
+        "value": 42108
       },
       {
         "source": "Total",
         "target": "Flood",
-        "value": 37952
+        "value": 37906
       },
       {
         "source": "Total",
         "target": "Other",
-        "value": 25782
+        "value": 25257
       },
       {
         "source": "Standing",
         "target": "Standing_Stale",
-        "value": 591
+        "value": 74
       },
       {
         "source": "Nuisance",
         "target": "Nuisance_Chattering",
-        "value": 35732
+        "value": 35672
       },
       {
         "source": "Nuisance",
         "target": "Nuisance_IF_Chattering",
-        "value": 6378
+        "value": 6436
       }
     ],
     "totals": {
-      "total": 106435,
-      "standing": 591,
-      "standing_stale": 591,
+      "total": 105345,
+      "standing": 74,
+      "standing_stale": 74,
       "standing_if": 0,
-      "nuisance": 42110,
-      "nuisance_chattering": 35732,
-      "nuisance_if_chattering": 6378,
-      "flood": 37952,
-      "other": 25782
+      "nuisance": 42108,
+      "nuisance_chattering": 35672,
+      "nuisance_if_chattering": 6436,
+      "flood": 37906,
+      "other": 25257
     }
   }
 }

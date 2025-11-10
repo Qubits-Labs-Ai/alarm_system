@@ -822,8 +822,51 @@ def analyze_alarm_behavior(sql_query: str) -> str:
                 "hint": "Use SELECT * FROM alerts WHERE ... to get data for behavioral analysis."
             })
 
+        effective_sql = sql_query.strip().rstrip(';')
+        auto_injected = False
+        capped = False
+        applied_limit = None
+        try:
+            m = re.search(r"\bLIMIT\s+(\d+)\s*,\s*(\d+)", effective_sql, flags=re.IGNORECASE)
+            if m:
+                cnt = int(m.group(2))
+                if cnt > _LIMIT_MAX:
+                    effective_sql = re.sub(r"\bLIMIT\s+(\d+)\s*,\s*(\d+)", lambda s: f"LIMIT {s.group(1)},{_LIMIT_MAX}", effective_sql, flags=re.IGNORECASE)
+                    capped = True
+                    applied_limit = _LIMIT_MAX
+                else:
+                    applied_limit = cnt
+            else:
+                m2 = re.search(r"\bLIMIT\s+(\d+)\s+OFFSET\s+(\d+)", effective_sql, flags=re.IGNORECASE)
+                if m2:
+                    cnt = int(m2.group(1))
+                    if cnt > _LIMIT_MAX:
+                        effective_sql = re.sub(r"\bLIMIT\s+(\d+)\s+OFFSET\s+(\d+)", lambda s: f"LIMIT {_LIMIT_MAX} OFFSET {s.group(2)}", effective_sql, flags=re.IGNORECASE)
+                        capped = True
+                        applied_limit = _LIMIT_MAX
+                    else:
+                        applied_limit = cnt
+                else:
+                    m3 = re.search(r"\bLIMIT\s+(\d+)", effective_sql, flags=re.IGNORECASE)
+                    if m3:
+                        cnt = int(m3.group(1))
+                        if cnt > _LIMIT_MAX:
+                            effective_sql = re.sub(r"\bLIMIT\s+(\d+)", f"LIMIT {_LIMIT_MAX}", effective_sql, flags=re.IGNORECASE)
+                            capped = True
+                            applied_limit = _LIMIT_MAX
+                        else:
+                            applied_limit = cnt
+                    else:
+                        effective_sql = f"{effective_sql} LIMIT {_LIMIT_DEFAULT}"
+                        auto_injected = True
+                        applied_limit = _LIMIT_DEFAULT
+        except Exception:
+            effective_sql = f"{effective_sql} LIMIT {_LIMIT_DEFAULT}"
+            auto_injected = True
+            applied_limit = _LIMIT_DEFAULT
+
         conn = sqlite3.connect(DB_FILE)
-        df = pd.read_sql_query(sql_query, conn)
+        df = pd.read_sql_query(effective_sql, conn)
         conn.close()
 
         if df.empty:
@@ -864,6 +907,11 @@ def analyze_alarm_behavior(sql_query: str) -> str:
             "time_range": {
                 "start": str(df['Event Time'].min()) if 'Event Time' in df.columns else None,
                 "end": str(df['Event Time'].max()) if 'Event Time' in df.columns else None
+            },
+            "limit_policy": {
+                "auto_injected": auto_injected,
+                "capped": capped,
+                "applied_limit": applied_limit
             }
         }
         
@@ -2224,7 +2272,8 @@ if not ENGINEERING_TOOLS:
     _filtered = []
     for _fn in AVAILABLE_TOOLS:
         _n = _nm(_fn)
-        if _n in ('execute_sql_query','analyze_flood_events_raw','get_isa_compliance_raw','get_bad_actors_raw'):
+        # Filter only raw/event-heavy tools; keep execute_sql_query available (it has LIMIT/timeouts)
+        if _n in ('analyze_flood_events_raw','get_isa_compliance_raw','get_bad_actors_raw'):
             continue
         _filtered.append(_fn)
     AVAILABLE_TOOLS = [get_activation_top_sources, get_activation_daily_summary] + _filtered

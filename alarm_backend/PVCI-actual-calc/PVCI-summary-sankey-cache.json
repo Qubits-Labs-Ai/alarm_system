@@ -8,11 +8,11 @@
     10,
     2
   ],
-  "cached_at": 1762455964.59225,
+  "cached_at": 1762753130.1280417,
   "data": {
     "plant_id": "PVCI",
     "mode": "actual-calc",
-    "generated_at": "2025-11-06T19:06:04.590252Z",
+    "generated_at": "2025-11-10T05:38:50.128041Z",
     "params": {
       "include_system": true
     },
@@ -31,54 +31,49 @@
       {
         "source": "Total",
         "target": "Standing",
-        "value": 1162
+        "value": 545
       },
       {
         "source": "Total",
         "target": "Nuisance",
-        "value": 27734
+        "value": 27668
       },
       {
         "source": "Total",
         "target": "Flood",
-        "value": 1035
+        "value": 1036
       },
       {
         "source": "Total",
         "target": "Other",
-        "value": 67398
+        "value": 66465
       },
       {
         "source": "Standing",
         "target": "Standing_Stale",
-        "value": 1161
-      },
-      {
-        "source": "Standing",
-        "target": "Standing_IF",
-        "value": 1
+        "value": 545
       },
       {
         "source": "Nuisance",
         "target": "Nuisance_Chattering",
-        "value": 6999
+        "value": 6930
       },
       {
         "source": "Nuisance",
         "target": "Nuisance_IF_Chattering",
-        "value": 20735
+        "value": 20738
       }
     ],
     "totals": {
-      "total": 97329,
-      "standing": 1162,
-      "standing_stale": 1161,
-      "standing_if": 1,
-      "nuisance": 27734,
-      "nuisance_chattering": 6999,
-      "nuisance_if_chattering": 20735,
-      "flood": 1035,
-      "other": 67398
+      "total": 95714,
+      "standing": 545,
+      "standing_stale": 545,
+      "standing_if": 0,
+      "nuisance": 27668,
+      "nuisance_chattering": 6930,
+      "nuisance_if_chattering": 20738,
+      "flood": 1036,
+      "other": 66465
     }
   }
 }

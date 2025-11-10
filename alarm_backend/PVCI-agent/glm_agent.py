@@ -296,17 +296,30 @@ def classify_intent(query: str) -> Dict[str, Any] | None:
     want_raw = _detect_raw(q)
 
     if re.search(r"(isa|eemua).*(compliance|288|720)", ql):
-        return {"type": "tool", "name": "get_isa_compliance_raw" if want_raw else "get_isa_compliance_report", "args": {"time_period": time_period}}
+        _eng = os.getenv("PVCI_AGENT_ENGINEERING_TOOLS", "").strip().lower() in ("1","true","yes","y")
+        if want_raw and _eng:
+            return {"type": "tool", "name": "get_isa_compliance_raw", "args": {"time_period": time_period}}
+        return {"type": "tool", "name": "get_isa_compliance_report", "args": {"time_period": time_period}}
 
     if re.search(r"(bad actors|worst sources|top offenders)", ql):
-        if want_raw:
+        _eng = os.getenv("PVCI_AGENT_ENGINEERING_TOOLS", "").strip().lower() in ("1","true","yes","y")
+        if want_raw and _eng:
             return {"type": "tool", "name": "get_bad_actors_raw", "args": {"top_n": top_n, "time_period": time_period, "min_events": 100}}
         return {"type": "tool", "name": "analyze_bad_actors", "args": {"top_n": top_n, "min_alarms": 50, "time_period": time_period}}
 
     if re.search(r"(flood|disturbance|plant-?wide)", ql):
-        if want_raw:
+        _eng = os.getenv("PVCI_AGENT_ENGINEERING_TOOLS", "").strip().lower() in ("1","true","yes","y")
+        if want_raw and _eng:
             return {"type": "tool", "name": "analyze_flood_events_raw", "args": {"min_sources": min_sources, "time_period": time_period, "time_window_minutes": 10}}
         return {"type": "tool", "name": "analyze_flood_events", "args": {"min_sources": min_sources, "time_period": time_period, "summary_by_month": bool(re.search(r"month", ql))}}
+
+    # Direct behavior keywords → activation-first path with bounded period
+    if re.search(r"(chatter|chattering|standing|stale)", ql):
+        tp_used = time_period if time_period != "all" else "last_7_days"
+        _eng = os.getenv("PVCI_AGENT_ENGINEERING_TOOLS", "").strip().lower() in ("1","true","yes","y")
+        if want_raw and _eng:
+            return {"type": "tool", "name": "get_bad_actors_raw", "args": {"top_n": top_n, "time_period": tp_used, "min_events": 100}}
+        return {"type": "tool", "name": "analyze_bad_actors", "args": {"top_n": top_n, "min_alarms": 50, "time_period": tp_used}}
 
     # Option A (refined): For 'unhealthy' questions, prefer activation-based bad-actors with a bounded period
     if re.search(r"\bunhealthy\b", ql):
@@ -336,6 +349,10 @@ def classify_intent(query: str) -> Dict[str, Any] | None:
         if want_raw:
             return {"type": "tool", "name": "get_bad_actors_raw", "args": {"top_n": top_n, "time_period": tp_used, "min_events": 100}}
         return {"type": "tool", "name": "analyze_bad_actors", "args": {"top_n": top_n, "min_alarms": 50, "time_period": tp_used}}
+
+    # Location ranking (e.g., "most active locations", "top locations") → template SQL
+    if re.search(r"(most\s+active\s+locations?|top\s*\d*\s*locations?|top\s+locations?|locations?\s+by\s+(count|activity))", ql):
+        return {"type": "template", "template": "TOP_N_LOCATIONS", "time_period": time_period, "top_n": top_n}
 
     if re.search(r"priority\s+(breakdown|distribution)", ql):
         return {"type": "template", "template": "PRIORITY_DISTRIB", "time_period": time_period, "source_like": source_like}
@@ -524,6 +541,7 @@ def analyze_tool_result_chartability(tool_result: Dict[str, Any]) -> Dict[str, A
 
 _TEMPLATES = {
     "TOP_N_SOURCES": 'SELECT Source, COUNT(*) AS cnt FROM alerts {WHERE} GROUP BY Source ORDER BY cnt DESC LIMIT {limit}',
+    "TOP_N_LOCATIONS": 'SELECT "Location Tag" AS location, COUNT(*) AS cnt FROM alerts {WHERE} GROUP BY "Location Tag" ORDER BY cnt DESC LIMIT {limit}',
     "PRIORITY_DISTRIB": 'SELECT Priority, COUNT(*) AS cnt FROM alerts {WHERE} GROUP BY Priority ORDER BY cnt DESC',
     "HOURLY_SERIES": 'SELECT strftime(\'%H\', "Event Time") AS hour, COUNT(*) AS cnt FROM alerts {WHERE} GROUP BY hour ORDER BY hour',
     "DAILY_SERIES": 'SELECT date("Event Time") AS day, COUNT(*) AS cnt FROM alerts {WHERE} GROUP BY day ORDER BY day',
@@ -754,6 +772,92 @@ def _summarize_tool_output(tool_name: str, args: Dict[str, Any], result: str) ->
         body.append("## Recommendations\n" + rec_bullets)
         body.append("## Next actions\n- **[tool]** analyze_bad_actors(top_n=10, min_alarms=50, time_period='last_7_days')\n- **[tool]** get_isa_compliance_report('last_30_days')\n- **[tool]** analyze_flood_events(min_sources=3)")
         return "\n\n".join(body)
+    if name == "execute_sql_query":
+        rows = (data.get("data") or []) if isinstance(data, dict) else []
+        if not rows:
+            # Fall back to compact default
+            n = 0
+            try:
+                n = int((data.get("metadata") or {}).get("row_count") or 0)
+            except Exception:
+                pass
+            cols = []
+            try:
+                cols = list((data.get("metadata") or {}).get("columns") or [])
+            except Exception:
+                cols = []
+            return f"Returned {n} row(s). Columns: {', '.join(cols) if cols else 'N/A'}."
+
+        # Detect common aggregate shapes
+        first = rows[0] if isinstance(rows[0], dict) else {}
+        keys = {k.lower(): k for k in first.keys()}
+
+        label_key = None
+        count_key = None
+        for lk in ("location", "Source", "Priority", "name", "Location Tag"):
+            if lk in first:
+                label_key = lk
+                break
+            if lk.lower() in keys:
+                label_key = keys[lk.lower()]
+                break
+        for ck in ("cnt", "count", "total"):
+            if ck in first:
+                count_key = ck
+                break
+            if ck.lower() in keys:
+                count_key = keys[ck.lower()]
+                break
+
+        # Compose humanized summary when we have a clear (label, count) table
+        if label_key and count_key:
+            # Compute totals and head-heaviness
+            try:
+                totals = [int((r or {}).get(count_key) or 0) for r in rows]
+            except Exception:
+                totals = []
+            s_total = sum(totals) if totals else 0
+            head_heavy = False
+            try:
+                if len(totals) >= 3 and totals[2] > 0 and totals[0] > 2 * totals[2]:
+                    head_heavy = True
+            except Exception:
+                pass
+
+            # Build top list (cap 10 for readability)
+            lines = []
+            for idx, r in enumerate(rows[:10], start=1):
+                try:
+                    lbl = str(r.get(label_key))
+                    c = int(r.get(count_key) or 0)
+                    share = f" (~{round(c*100/max(1,s_total),1)}%)" if s_total else ""
+                    lines.append(f"- **[rank {idx}]** {lbl} — {c}{share}")
+                except Exception:
+                    continue
+
+            obs = []
+            if head_heavy:
+                obs.append("- **[distribution]** Head-heavy: top item significantly exceeds next peers")
+            if s_total:
+                obs.append(f"- **[coverage]** Top {min(10,len(rows))} cover ~{round(sum(totals[:min(10,len(totals))])*100/max(1,s_total),1)}% of the returned activity")
+
+            # Determine context label
+            table_label = "locations" if label_key.lower().startswith("location") else label_key
+
+            body = []
+            body.append(f"## Findings\n- **[scope]** Top {table_label} by alarm count\n" + ("\n".join(lines) or "- **[note]** No rows"))
+            if obs:
+                body.append("## Key Observations\n" + "\n".join(obs))
+            body.append("## Next Actions\n- **[ask]** Drill into the top item (e.g., show top sources within that location)\n- **[ask]** Switch to activation-based analysis for prescriptions (analyze_bad_actors)")
+            return "\n\n".join(body)
+
+        # Unknown shape → compact fallback
+        try:
+            n = len(rows)
+            cols = list(first.keys()) if isinstance(first, dict) else []
+            return f"Returned {n} row(s). Columns: {', '.join(cols) if cols else 'N/A'}."
+        except Exception:
+            return (result or "").strip()
     if name in ("get_isa_compliance_report", "get_isa_compliance_raw"):
         if name == "get_isa_compliance_report":
             # Prefer direct metrics from activation-based tool; fallback to frequency.summary if present
@@ -1884,7 +1988,25 @@ async def run_glm_agent(
                                     elif lv in ("0","false","no","n"): v = False
                             coerced[pname] = v
                     tool_args.update(coerced)
-                    tool_result = await asyncio.to_thread(tool_func, **tool_args)
+                    # Guard against long-running tool execution with per-tool timeout
+                    _timeout = 10
+                    try:
+                        if tool_name == "analyze_bad_actors":
+                            _timeout = 20
+                    except Exception:
+                        _timeout = 10
+                    try:
+                        tool_result = await asyncio.wait_for(asyncio.to_thread(tool_func, **tool_args), timeout=_timeout)
+                    except asyncio.TimeoutError:
+                        # Standard timeout payload to keep UX responsive; downstream summary handles nicely
+                        tool_result = json.dumps({
+                            "status": "timeout",
+                            "message": f"{tool_name} took too long.",
+                            "suggestions": [
+                                "Use a shorter period (e.g., last_7_days)",
+                                "Try cached/raw alternative"
+                            ]
+                        })
                 except Exception as tool_error:
                     error_msg = str(tool_error)
                     print(f"❌ Tool '{tool_name}' execution failed: {error_msg}")
