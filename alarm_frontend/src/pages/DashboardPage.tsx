@@ -19,9 +19,10 @@ import {
   fetchPlantActualCalcUnhealthy,
   fetchPlantActualCalcFloods,
   fetchPlantActualCalcBadActors,
-  fetchPlantActualCalcCacheStatus
+  fetchPlantActualCalcCacheStatus,
+  fetchPlantComprehensiveHealth
 } from '@/api/actualCalc';
-import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
+import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse, ComprehensiveHealthResponse } from '@/types/actualCalc';
 import UnhealthySourcesChart from '@/components/UnhealthySourcesChart';
 import UnhealthySourcesWordCloud from '@/components/UnhealthySourcesWordCloud';
 import UnhealthySourcesBarChart from '@/components/UnhealthySourcesBarChart';
@@ -174,6 +175,7 @@ export default function DashboardPage() {
   const [actualCalcFloods, setActualCalcFloods] = useState<ActualCalcFloodsResponse | null>(null);
   const [actualCalcLoading, setActualCalcLoading] = useState<boolean>(false);
   const [actualCalcBadActors, setActualCalcBadActors] = useState<ActualCalcBadActorsResponse | null>(null);
+  const [healthScore, setHealthScore] = useState<ComprehensiveHealthResponse | null>(null);
 
   const toIso = (v?: string) => (v ? new Date(v).toISOString() : undefined);
   const applyIsaRange = () => {
@@ -336,6 +338,14 @@ export default function DashboardPage() {
           fetchPlantActualCalcBadActors(actualCalcPlantId, { limit: 9999, timeout_ms: timeout }),
         ]);
 
+        // Fetch comprehensive health separately so a 404 doesn't fail the whole load
+        let healthResp: ComprehensiveHealthResponse | null = null;
+        try {
+          healthResp = await fetchPlantComprehensiveHealth(actualCalcPlantId, { timeout_ms: timeout });
+        } catch (e) {
+          console.warn('Comprehensive health not available yet:', e);
+        }
+
         // Recompute fallback: server cache may not have activation-based fields yet after deploy
         const kpis = overall?.overall || ({} as any);
         const hasData = Number(kpis?.avg_alarms_per_day || 0) > 0 || Number(overall?.counts?.total_alarms || 0) > 0;
@@ -365,6 +375,7 @@ export default function DashboardPage() {
           setActualCalcUnhealthy(unhealthyResp);
           setActualCalcFloods(floodsResp);
           setActualCalcBadActors(badActorsResp);
+          setHealthScore(healthResp);
         }
       } catch (err) {
         console.error('Failed to load actual-calc data:', err);
@@ -986,6 +997,7 @@ export default function DashboardPage() {
             actualCalcUnhealthy={actualCalcUnhealthy}
             actualCalcFloods={actualCalcFloods}
             actualCalcBadActors={actualCalcBadActors}
+            healthScore={healthScore}
             actualCalcLoading={actualCalcLoading}
             selectedWindow={selectedWindow}
             onWindowChange={setSelectedWindow}

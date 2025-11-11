@@ -63,7 +63,7 @@ export default function ActivationOverloadSummary({ overall, params }: Props) {
     <Card className="shadow-metric-card">
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle className="text-sm font-medium text-muted-foreground">Activation-based Health (10‑min windows)</CardTitle>
+          <CardTitle className="text-sm font-medium text-muted-foreground">Flood-Free Time (10-min windows)</CardTitle>
           <div className="text-xs text-muted-foreground">
             Overload: {overloadOp} {overloadThr} · Unacceptable: {unaccOp} {unaccThr}
           </div>
@@ -73,7 +73,7 @@ export default function ActivationOverloadSummary({ overall, params }: Props) {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
           <div className="space-y-3">
             <div className={`text-4xl font-bold ${healthColor}`}>{health.toFixed(2)}%</div>
-            <div className="text-xs text-muted-foreground">Overall Health (100 − % time in overload windows)</div>
+            <div className="text-xs text-muted-foreground">Time Without Alarm Floods (100 − % time in overload windows)</div>
             <Progress value={Math.max(0, Math.min(100, health))} className="h-2" />
           </div>
 

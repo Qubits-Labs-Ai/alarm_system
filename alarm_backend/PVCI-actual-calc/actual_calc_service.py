@@ -180,6 +180,7 @@ Cache is invalidated when:
 """
 
 import pandas as pd
+import numpy as np
 import os
 import logging
 import sys
@@ -804,14 +805,21 @@ def compute_activation_window_metrics(
     unacceptable_threshold: int,
 ) -> Dict[str, Any]:
     """
-    Compute ISA-style overall health metrics using UNIQUE activations per fixed 10-min window.
+    Compute ISA-style flood-free time metrics using UNIQUE activations per fixed 10-min window.
+    
+    NOTE: This measures FLOOD-FREE TIME (% of time without alarm floods), NOT overall plant health.
+    A high percentage indicates low flood risk but does NOT account for:
+    - Daily alarm overload (chronic operator fatigue)
+    - Alarm quality issues (chattering, repeating, standing)
+    - Instrument failures or system reliability
+    
     Returns dict with:
       - total_windows
       - overload_windows_count
       - unacceptable_windows_count
       - activation_time_in_overload_windows_pct
       - activation_time_in_unacceptable_windows_pct
-      - activation_overall_health_pct (100 - overload_pct)
+      - activation_overall_health_pct (100 - overload_pct) [RENAMED to flood_free_time in future]
       - peak_10min_activation_count, peak_10min_window_start, peak_10min_window_end
     """
     if activations_df is None or activations_df.empty:
@@ -1915,6 +1923,96 @@ def run_actual_calc(
     )
     
     # ========================================================================
+    # COMPREHENSIVE HEALTH SCORE (ISO 18.2 compliant multi-dimensional)
+    # ========================================================================
+    try:
+        from health_score_calculator import calculate_comprehensive_health
+        
+        logger.info("Computing comprehensive health score...")
+        health_start = datetime.now()
+        
+        # Calculate additional required metrics
+        # 1. Coefficient of variation for daily alarms
+        alarms_per_day_df = frequency_result.get("Alarms_Per_Day", pd.DataFrame())
+        if not alarms_per_day_df.empty and len(alarms_per_day_df) > 1:
+            daily_counts = alarms_per_day_df["Alarm_Count"].values
+            cv_daily_alarms = float(np.std(daily_counts) / np.mean(daily_counts)) if np.mean(daily_counts) > 0 else 0.0
+        else:
+            cv_daily_alarms = 0.0
+        
+        # 2. Percentages for repeating, chattering, standing
+        total_alarms_for_pct = int(kpis.get('total_unique_alarms', 1))
+        if total_alarms_for_pct == 0:
+            total_alarms_for_pct = 1  # Avoid division by zero
+        
+        repeating_count = int(summary['Repeating_Alarms'].sum())
+        chattering_count = int(summary['Chattering_Count'].sum())
+        standing_count = int(summary['Standing_Alarms'].sum())
+        instrument_failure_count = int(summary['Instrument_Failure'].sum())
+        
+        repeating_pct = (repeating_count / total_alarms_for_pct) * 100
+        chattering_pct = (chattering_count / total_alarms_for_pct) * 100
+        standing_pct = (standing_count / total_alarms_for_pct) * 100
+        
+        # 3. Total unique sources
+        total_sources = len(summary)
+        
+        # Store these metrics for reference
+        health_metrics = {
+            "repeating_pct": round(repeating_pct, 2),
+            "chattering_pct": round(chattering_pct, 2),
+            "standing_pct": round(standing_pct, 2),
+            "cv_daily_alarms": round(cv_daily_alarms, 4),
+            "total_sources": total_sources,
+            "repeating_count": repeating_count,
+            "chattering_count": chattering_count,
+            "standing_count": standing_count,
+            "instrument_failure_count": instrument_failure_count
+        }
+        
+        # Prepare metrics dict for health calculator
+        health_input_metrics = {
+            'avg_alarms_per_day': float(kpis.get('avg_alarms_per_day', 0)),
+            'overload_pct': float(kpis.get('activation_time_in_overload_windows_pct', 0)),
+            'peak_count': int(kpis.get('peak_10min_activation_count', 0)),
+            'repeating_pct': repeating_pct,
+            'chattering_pct': chattering_pct,
+            'total_alarms': total_alarms_for_pct,
+            'instrument_failures': instrument_failure_count,
+            'total_sources': total_sources,
+            'standing_count': standing_count,
+            'avg_ack_delay': float(kpis.get('avg_ack_delay_min', 0)),
+            'completion_rate': float(kpis.get('completion_rate_pct', 0)),
+            'days_over_threshold_pct': float(kpis.get('days_over_288_alarms_pct', 0)),
+            'cv_daily_alarms': cv_daily_alarms
+        }
+        
+        # Calculate comprehensive health
+        comprehensive_health = calculate_comprehensive_health(health_input_metrics)
+        
+        health_dur = (datetime.now() - health_start).total_seconds()
+        logger.info(
+            f"Comprehensive Health Score: {comprehensive_health['overall_health']:.1f}% "
+            f"(Grade: {comprehensive_health['grade']}, Risk: {comprehensive_health['risk_level']}) "
+            f"computed in {health_dur:.3f}s"
+        )
+        logger.info(
+            f"  Tier Scores: Load={comprehensive_health['tier_scores']['load_compliance']:.1f}%, "
+            f"Quality={comprehensive_health['tier_scores']['alarm_quality']:.1f}%, "
+            f"Response={comprehensive_health['tier_scores']['operator_response']:.1f}%, "
+            f"Reliability={comprehensive_health['tier_scores']['system_reliability']:.1f}%"
+        )
+        
+    except ImportError as e:
+        logger.warning(f"Health score calculator not available: {e}")
+        comprehensive_health = None
+        health_metrics = {}
+    except Exception as e:
+        logger.error(f"Error calculating comprehensive health score: {e}", exc_info=True)
+        comprehensive_health = None
+        health_metrics = {}
+    
+    # ========================================================================
     # PRE-COMPUTE ALARM SUMMARY VISUALIZATIONS (for instant frontend loading)
     # ========================================================================
     logger.info("Pre-computing alarm summary visualizations...")
@@ -2056,6 +2154,8 @@ def run_actual_calc(
         floods_dict, 
         bad_actors_dict, 
         frequency_dict, 
+        comprehensive_health,          # Comprehensive health score (ISO 18.2 compliant)
+        health_metrics,                # Health-related metrics (percentages, CV, etc.)
         source_meta,
         category_summary,              # Pre-computed category time series (ALL)
         hourly_matrix,                 # Pre-computed hourly seasonality (ALL)
@@ -2161,7 +2261,7 @@ def run_actual_calc_with_cache(
     
     # Run calculation
     logger.info("Running fresh calculation...")
-    summary, kpis, cycles, unhealthy, floods, bad_actors, frequency, source_meta, category_summary, hourly_matrix, sankey_data, category_summary_no_system, hourly_matrix_no_system, sankey_data_no_system = run_actual_calc(
+    summary, kpis, cycles, unhealthy, floods, bad_actors, frequency, comprehensive_health, health_metrics, source_meta, category_summary, hourly_matrix, sankey_data, category_summary_no_system, hourly_matrix_no_system, sankey_data_no_system = run_actual_calc(
         alarm_data_dir,
         plant_id=plant_id,
         csv_relative_path=csv_relative_path,
@@ -2185,6 +2285,8 @@ def run_actual_calc_with_cache(
             floods=floods,
             bad_actors=bad_actors,
             frequency=frequency,
+            comprehensive_health=comprehensive_health,
+            health_metrics=health_metrics,
             source_meta=source_meta,
             category_summary=category_summary,
             category_summary_no_system=category_summary_no_system,
@@ -2916,6 +3018,8 @@ def write_cache(
     floods: Dict[str, Any] | None = None,
     bad_actors: Dict[str, Any] | None = None,
     frequency: Dict[str, Any] | None = None,
+    comprehensive_health: Dict[str, Any] | None = None,
+    health_metrics: Dict[str, Any] | None = None,
     source_meta: Dict[str, Any] | None = None,
     category_summary: Dict[str, Any] | None = None,
     category_summary_no_system: Dict[str, Any] | None = None,
@@ -3046,6 +3150,11 @@ def write_cache(
                 cache_data["counts"]["total_bad_actors"] = 0
         if isinstance(frequency, dict):
             cache_data["frequency"] = frequency
+        if isinstance(comprehensive_health, dict):
+            cache_data["comprehensive_health"] = comprehensive_health
+            logger.info(f"Added comprehensive health score to cache: {comprehensive_health.get('overall_health', 0):.1f}% (Grade: {comprehensive_health.get('grade', 'N/A')})")
+        if isinstance(health_metrics, dict):
+            cache_data["health_metrics"] = health_metrics
         if isinstance(source_meta, dict):
             cache_data["source_meta"] = source_meta
         

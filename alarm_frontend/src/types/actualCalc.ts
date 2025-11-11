@@ -324,3 +324,51 @@ export interface SankeyResponse {
     other: number;
   };
 }
+
+// Comprehensive Health Score (ISO 18.2 Compliant)
+export interface ComprehensiveHealthScore {
+  overall_health: number;          // 0-100 (weighted composite)
+  grade: string;                    // A+, A, B+, B, C, D, F
+  risk_level: string;               // Excellent, Good, Acceptable, Overloaded, Critical
+  tier_scores: {
+    load_compliance: number;        // 40% weight - Tier 1
+    alarm_quality: number;          // 30% weight - Tier 2
+    operator_response: number;      // 20% weight - Tier 3
+    system_reliability: number;     // 10% weight - Tier 4
+  };
+  sub_scores: {
+    // Tier 1: Load Compliance (40%)
+    daily_load_score: number;                  // 50% of Tier 1
+    window_overload_score: number;             // 30% of Tier 1
+    peak_intensity_score: number;              // 20% of Tier 1
+    
+    // Tier 2: Alarm Quality (30%)
+    nuisance_score: number;                    // 60% of Tier 2
+    instrument_health_score: number;           // 40% of Tier 2
+    
+    // Tier 3: Operator Response (20%)
+    standing_control_score: number;            // 50% of Tier 3
+    response_score: number;                    // 50% of Tier 3
+    
+    // Tier 4: System Reliability (10%)
+    consistency_score: number;                 // 100% of Tier 4
+  };
+  interpretation: string;           // Human-readable health summary
+}
+
+export interface HealthMetrics {
+  repeating_pct: number;            // % of alarms that are repeating
+  chattering_pct: number;           // % of alarms that are chattering
+  standing_pct: number;             // % of alarms that are standing
+  cv_daily_alarms: number;          // Coefficient of variation for daily alarm consistency
+  total_sources: number;            // Total unique alarm sources
+}
+
+export interface ComprehensiveHealthResponse {
+  plant_id: string;
+  plant_folder: string;
+  mode: string;
+  generated_at: string;
+  comprehensive_health: ComprehensiveHealthScore;
+  health_metrics: HealthMetrics;
+}

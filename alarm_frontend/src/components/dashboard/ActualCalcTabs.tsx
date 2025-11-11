@@ -15,6 +15,7 @@ import { Progress } from '@/components/ui/progress';
 import ActivationOverloadSummary from './ActivationOverloadSummary';
 import { ActualCalcKPICards } from './ActualCalcKPICards';
 import { ActualCalcTree } from './ActualCalcTree';
+import ComprehensiveHealthCard from './ComprehensiveHealthCard';
 import { AlarmFrequencyTrendChart } from './AlarmFrequencyTrendChart';
 import { BadActorsParetoChart } from '../actualCalc/BadActorsParetoChart';
 import { UnhealthyPeriodsBarChart } from '../actualCalc/UnhealthyPeriodsBarChart';
@@ -34,7 +35,8 @@ import {
   ActualCalcOverallResponse, 
   ActualCalcUnhealthyResponse, 
   ActualCalcFloodsResponse, 
-  ActualCalcBadActorsResponse 
+  ActualCalcBadActorsResponse,
+  ComprehensiveHealthResponse
 } from '@/types/actualCalc';
 import { UnhealthyBar } from '@/types/dashboard';
 
@@ -50,6 +52,7 @@ interface ActualCalcTabsProps {
   actualCalcUnhealthy: ActualCalcUnhealthyResponse | null;
   actualCalcFloods: ActualCalcFloodsResponse | null;
   actualCalcBadActors: ActualCalcBadActorsResponse | null;
+  healthScore: ComprehensiveHealthResponse | null;
   actualCalcLoading: boolean;
   
   // Window selection state (for Detailed Analytics)
@@ -83,6 +86,7 @@ export default function ActualCalcTabs({
   actualCalcUnhealthy,
   actualCalcFloods,
   actualCalcBadActors,
+  healthScore,
   actualCalcLoading,
   selectedWindow,
   onWindowChange,
@@ -331,7 +335,7 @@ export default function ActualCalcTabs({
 
   return (
     <div className="space-y-6">
-      {/* Always visible: Activation-based Health Summary */}
+      {/* Always visible: Flood-Free Time Summary */}
       {actualCalcLoading || !actualCalcData ? (
         <Card className="shadow-metric-card animate-pulse">
           <div className="p-6">
@@ -376,6 +380,14 @@ export default function ActualCalcTabs({
             />
           ) : (
             <>
+              {/* Comprehensive Health Score Card */}
+              {healthScore && (
+                <ComprehensiveHealthCard 
+                  healthScore={healthScore.comprehensive_health} 
+                  loading={false}
+                />
+              )}
+
               {/* KPI Cards for Alarm Summary */}
               <ActualCalcKPICards
                 kpis={actualCalcData.overall}

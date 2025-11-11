@@ -3462,6 +3462,65 @@ def get_plant_actual_calc_bad_actors(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/actual-calc/{plant_id}/comprehensive-health", response_class=ORJSONResponse)
+def get_plant_comprehensive_health(
+    plant_id: str,
+):
+    """Get ISO 18.2 compliant comprehensive health score for any plant.
+    
+    Returns multi-tier weighted health assessment:
+    - Tier 1: Load Compliance (40%) - Daily load, window overload, peak intensity
+    - Tier 2: Alarm Quality (30%) - Nuisance/chattering, instrument failures
+    - Tier 3: Operator Response (20%) - Standing alarms, response times
+    - Tier 4: System Reliability (10%) - Day-to-day consistency
+    """
+    if not ACTUAL_CALC_AVAILABLE:
+        raise HTTPException(status_code=501, detail="Actual calculation service not available")
+    
+    if not validate_plant_id(plant_id):
+        raise HTTPException(status_code=404, detail=f"Plant '{plant_id}' not found")
+    
+    try:
+        # Read from cache - comprehensive health is pre-computed during cache generation
+        params = {
+            "stale_min": 60,
+            "chatter_min": 10,
+            "unhealthy_threshold": UNHEALTHY_THRESHOLD,
+            "window_minutes": WINDOW_MINUTES,
+            "flood_source_threshold": FLOOD_SOURCE_THRESHOLD,
+            "act_window_overload_op": ACT_WINDOW_OVERLOAD_OP,
+            "act_window_overload_threshold": ACT_WINDOW_OVERLOAD_THRESHOLD,
+            "act_window_unacceptable_op": ACT_WINDOW_UNACCEPTABLE_OP,
+            "act_window_unacceptable_threshold": ACT_WINDOW_UNACCEPTABLE_THRESHOLD,
+        }
+        
+        cached = read_cache(BASE_DIR, params, plant_id=plant_id)
+        if not cached:
+            raise HTTPException(status_code=404, detail=f"No cached data for plant {plant_id}. Please trigger cache regeneration first.")
+        
+        # Extract comprehensive health data from cache
+        health_data = cached.get("comprehensive_health")
+        if not health_data:
+            raise HTTPException(status_code=404, detail=f"Comprehensive health data not found in cache for plant {plant_id}. Cache may be outdated.")
+        
+        health_metrics = cached.get("health_metrics", {})
+        
+        return {
+            "plant_id": cached.get("plant_id", plant_id),
+            "plant_folder": cached.get("plant_folder"),
+            "mode": "actual-calc",
+            "generated_at": cached.get("generated_at"),
+            "comprehensive_health": health_data,
+            "health_metrics": health_metrics,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching comprehensive health for plant {plant_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/actual-calc/{plant_id}/regenerate-cache", response_class=ORJSONResponse)
 def regenerate_plant_actual_calc_cache(
     plant_id: str,

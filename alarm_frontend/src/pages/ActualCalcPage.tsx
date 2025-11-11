@@ -4,10 +4,11 @@
  */
 
 import { useMemo, useState, useEffect } from 'react';
-import { fetchPlantActualCalcOverall, fetchPlantActualCalcUnhealthy, fetchPlantActualCalcFloods, fetchPlantActualCalcBadActors, fetchPlantActualCalcCacheStatus } from '@/api/actualCalc';
-import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse } from '@/types/actualCalc';
+import { fetchPlantActualCalcOverall, fetchPlantActualCalcUnhealthy, fetchPlantActualCalcFloods, fetchPlantActualCalcBadActors, fetchPlantActualCalcCacheStatus, fetchPlantComprehensiveHealth } from '@/api/actualCalc';
+import { ActualCalcOverallResponse, ActualCalcUnhealthyResponse, ActualCalcFloodsResponse, ActualCalcBadActorsResponse, ComprehensiveHealthResponse } from '@/types/actualCalc';
 import { ActualCalcKPICards } from '@/components/dashboard/ActualCalcKPICards';
 import { ActualCalcTree } from '@/components/dashboard/ActualCalcTree';
+import ComprehensiveHealthCard from '@/components/dashboard/ComprehensiveHealthCard';
 import { AlarmFrequencyTrendChart } from '@/components/dashboard/AlarmFrequencyTrendChart';
 import { BadActorsParetoChart } from '@/components/actualCalc/BadActorsParetoChart';
 import { UnhealthyPeriodsBarChart } from '@/components/actualCalc/UnhealthyPeriodsBarChart';
@@ -25,7 +26,9 @@ export function ActualCalcPage() {
   const [unhealthy, setUnhealthy] = useState<ActualCalcUnhealthyResponse | null>(null);
   const [floods, setFloods] = useState<ActualCalcFloodsResponse | null>(null);
   const [badActors, setBadActors] = useState<ActualCalcBadActorsResponse | null>(null);
+  const [healthScore, setHealthScore] = useState<ComprehensiveHealthResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingHealth, setIsLoadingHealth] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingStage, setLoadingStage] = useState<string>('Initializing...');
@@ -94,10 +97,11 @@ export function ActualCalcPage() {
           timeout_ms: timeout,
         });
         // 2) Then fetch dependent summaries in parallel from the generated cache
-        const [unhealthyResp, floodsResp, badActorsResp] = await Promise.all([
+        const [unhealthyResp, floodsResp, badActorsResp, healthResp] = await Promise.all([
           fetchPlantActualCalcUnhealthy('PVCI', { limit: 500, timeout_ms: timeout }),
           fetchPlantActualCalcFloods('PVCI', { limit: 200, timeout_ms: timeout }),
           fetchPlantActualCalcBadActors('PVCI', { limit: 10, timeout_ms: timeout }),
+          fetchPlantComprehensiveHealth('PVCI', { timeout_ms: timeout }),
         ]);
         
         clearInterval(progressInterval);
@@ -144,6 +148,7 @@ export function ActualCalcPage() {
         setUnhealthy(unhealthyResp);
         setFloods(floodsResp);
         setBadActors(badActorsResp);
+        setHealthScore(healthResp);
       } finally {
         clearInterval(progressInterval);
       }
@@ -391,6 +396,14 @@ export function ActualCalcPage() {
       {/* Tree view at top */}
       {data && !isLoading && (
         <ActualCalcTree data={data} plantId="PVCI" />
+      )}
+
+      {/* Comprehensive Health Score Card */}
+      {healthScore && !isLoading && (
+        <ComprehensiveHealthCard 
+          healthScore={healthScore.comprehensive_health} 
+          loading={isLoadingHealth}
+        />
       )}
 
       {/* KPI Cards */}

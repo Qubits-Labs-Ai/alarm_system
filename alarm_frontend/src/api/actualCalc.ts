@@ -13,6 +13,7 @@ import {
   ActualCalcBadActorsResponse,
   PeakDetailsResponse,
   ActualCalcConditionDistributionResponse,
+  ComprehensiveHealthResponse,
 } from '@/types/actualCalc';
 
 // Simple cache reuse from plantHealth.ts pattern
@@ -173,6 +174,28 @@ export async function fetchPvciActualCalcBadActors(params?: {
   url.searchParams.set('chatter_min', String(chatter_min));
   url.searchParams.set('limit', String(limit));
   return fetchWithCache<ActualCalcBadActorsResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
+}
+
+/**
+ * Fetch comprehensive health score for any plant (ISO 18.2 compliant)
+ * 
+ * Returns multi-tier weighted health score (0-100) with breakdown:
+ * - Tier 1: Load Compliance (40%) - Daily load, window overload, peak intensity
+ * - Tier 2: Alarm Quality (30%) - Nuisance/chattering, instrument failures
+ * - Tier 3: Operator Response (20%) - Standing alarms, response times
+ * - Tier 4: System Reliability (10%) - Day-to-day consistency
+ */
+export async function fetchPlantComprehensiveHealth(
+  plantId: string,
+  params?: {
+    timeout_ms?: number;
+  }
+): Promise<ComprehensiveHealthResponse> {
+  const { timeout_ms } = params || {};
+  const url = new URL(`${API_BASE_URL}/actual-calc/${plantId}/comprehensive-health`);
+  
+  // Use 5-minute cache for health scores (they're derived from already-cached data)
+  return fetchWithCache<ComprehensiveHealthResponse>(url.toString(), 5 * 60 * 1000, timeout_ms);
 }
 
 function getStorageKey(key: string) {
