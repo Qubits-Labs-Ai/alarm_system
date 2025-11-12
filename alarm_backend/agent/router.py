@@ -100,6 +100,8 @@ async def agent_stream(payload: StreamRequest):
             "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "X-Buffering": "no",  # Disable proxy buffering
+            "Transfer-Encoding": "chunked",  # Force chunked encoding
         },
     )
 
