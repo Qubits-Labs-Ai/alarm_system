@@ -102,6 +102,10 @@ async def agent_stream(payload: StreamRequest):
             "X-Accel-Buffering": "no",  # Disable nginx buffering
             "X-Buffering": "no",  # Disable proxy buffering
             "Transfer-Encoding": "chunked",  # Force chunked encoding
+            # Critical: ensure upstream GZip middleware/proxies do NOT compress or buffer SSE
+            # Starlette's GZipMiddleware skips compression if Content-Encoding is already set.
+            # Setting 'identity' explicitly prevents it from wrapping the stream and buffering.
+            "Content-Encoding": "identity",
         },
     )
 
