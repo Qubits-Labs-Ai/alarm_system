@@ -3,7 +3,7 @@
  * Supports: line, bar, pie, scatter, area charts
  */
 
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, ScatterChart, Scatter,
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -18,6 +18,55 @@ interface AgentInlineChartProps {
 
 export const AgentInlineChart: React.FC<AgentInlineChartProps> = ({ chartData }) => {
   const { type, data, config } = chartData;
+  // Theme-aware label color: light mode -> dark text; dark mode -> light text
+  const [labelColor, setLabelColor] = useState<string>('#111827');
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const recompute = () => {
+      try {
+        const isDark = document.documentElement.classList.contains('dark');
+        setLabelColor(isDark ? '#e5e7eb' : '#111827');
+      } catch { /* noop */ }
+    };
+    recompute();
+    const moHtml = new MutationObserver(recompute);
+    const moBody = new MutationObserver(recompute);
+    try {
+      moHtml.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+    } catch { /* noop */ }
+    try {
+      moBody.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+    } catch { /* noop */ }
+    let mql: MediaQueryList | null = null;
+    const handler = () => recompute();
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      mql = window.matchMedia('(prefers-color-scheme: dark)');
+      try { mql.addEventListener('change', handler); } catch { /* noop */ }
+    }
+    return () => {
+      try { moHtml.disconnect(); } catch { /* noop */ }
+      try { moBody.disconnect(); } catch { /* noop */ }
+      if (mql) {
+        try { mql.removeEventListener('change', handler); } catch { /* noop */ }
+      }
+    };
+  }, []);
+
+  type RechartsTickProps = { x: number; y: number; payload: { value: string | number } };
+  const XTick: React.FC<RechartsTickProps> = ({ x, y, payload }) => (
+    <g transform={`translate(${x},${y})`}>
+      <text x={0} y={0} dy={16} textAnchor="middle" style={{ fill: labelColor, fillOpacity: 1 }} fontSize={11}>
+        {String(payload.value)}
+      </text>
+    </g>
+  );
+  const YTick: React.FC<RechartsTickProps> = ({ x, y, payload }) => (
+    <g transform={`translate(${x},${y})`}>
+      <text x={-4} y={0} dy={4} textAnchor="end" style={{ fill: labelColor, fillOpacity: 1 }} fontSize={11}>
+        {String(payload.value)}
+      </text>
+    </g>
+  );
 
   const renderChart = () => {
     const commonTooltipStyle = {
@@ -36,17 +85,22 @@ export const AgentInlineChart: React.FC<AgentInlineChartProps> = ({ chartData })
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
             <XAxis 
               dataKey={config.xKey} 
-              label={config.xLabel ? { value: config.xLabel, position: 'insideBottom', offset: -5, style: { fontSize: 12 } } : undefined}
-              tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+              label={config.xLabel ? { value: config.xLabel, position: 'insideBottom', offset: -5, style: { fontSize: 12, fill: labelColor } } : undefined}
+              tick={<XTick />}
               stroke="hsl(var(--border))"
             />
             <YAxis 
-              label={config.yLabel ? { value: config.yLabel, angle: -90, position: 'insideLeft', style: { fontSize: 12 } } : undefined}
-              tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+              label={config.yLabel ? { value: config.yLabel, angle: -90, position: 'insideLeft', style: { fontSize: 12, fill: labelColor } } : undefined}
+              tick={<YTick />}
               stroke="hsl(var(--border))"
             />
             {config.tooltip && <Tooltip {...commonTooltipStyle} />}
-            {config.legend && <Legend wrapperStyle={{ fontSize: '12px' }} />}
+            {config.legend && (
+              <Legend
+                wrapperStyle={{ fontSize: '12px' }}
+                formatter={(value) => <span style={{ color: labelColor }}>{String(value)}</span>}
+              />
+            )}
             {(config.yKeys || [config.yKey]).filter(Boolean).map((key, idx) => (
               <Line
                 key={key}
@@ -69,13 +123,13 @@ export const AgentInlineChart: React.FC<AgentInlineChartProps> = ({ chartData })
               <>
                 <XAxis 
                   type="number" 
-                  tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                  tick={<XTick />}
                   stroke="hsl(var(--border))"
                 />
                 <YAxis 
                   type="category" 
                   dataKey={config.xKey} 
-                  tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                  tick={<YTick />}
                   width={150}
                   stroke="hsl(var(--border))"
                 />
@@ -84,17 +138,22 @@ export const AgentInlineChart: React.FC<AgentInlineChartProps> = ({ chartData })
               <>
                 <XAxis 
                   dataKey={config.xKey} 
-                  tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                  tick={<XTick />}
                   stroke="hsl(var(--border))"
                 />
                 <YAxis 
-                  tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                  tick={<YTick />}
                   stroke="hsl(var(--border))"
                 />
               </>
             )}
             {config.tooltip && <Tooltip {...commonTooltipStyle} />}
-            {config.legend && <Legend wrapperStyle={{ fontSize: '12px' }} />}
+            {config.legend && (
+              <Legend
+                wrapperStyle={{ fontSize: '12px' }}
+                formatter={(value) => <span style={{ color: labelColor }}>{String(value)}</span>}
+              />
+            )}
             {(config.yKeys || [config.yKey]).filter(Boolean).map((key, idx) => (
               <Bar
                 key={key}
@@ -116,10 +175,18 @@ export const AgentInlineChart: React.FC<AgentInlineChartProps> = ({ chartData })
               cx="50%"
               cy="50%"
               outerRadius={120}
-              label={(entry) => {
-                const name = entry[config.nameKey || 'name'];
-                const value = entry[config.valueKey || 'value'];
-                return `${name}: ${value}`;
+              label={(props: unknown) => {
+                const p = props as { x: number; y: number } & Record<string, unknown>;
+                const nKey = (config.nameKey || 'name') as string;
+                const vKey = (config.valueKey || 'value') as string;
+                const name = String(p[nKey] ?? p['name'] ?? '');
+                const value = String(p[vKey] ?? p['value'] ?? '');
+                const { x, y } = p;
+                return (
+                  <text x={x} y={y} fill={labelColor} textAnchor="middle" dominantBaseline="central" fontSize={11}>
+                    {`${name}: ${value}`}
+                  </text>
+                );
               }}
               labelLine={{ stroke: 'hsl(var(--border))' }}
             >
@@ -131,7 +198,12 @@ export const AgentInlineChart: React.FC<AgentInlineChartProps> = ({ chartData })
               ))}
             </Pie>
             {config.tooltip && <Tooltip {...commonTooltipStyle} />}
-            {config.legend && <Legend wrapperStyle={{ fontSize: '12px' }} />}
+            {config.legend && (
+              <Legend
+                wrapperStyle={{ fontSize: '12px' }}
+                formatter={(value) => <span style={{ color: labelColor }}>{String(value)}</span>}
+              />
+            )}
           </PieChart>
         );
 
@@ -142,15 +214,15 @@ export const AgentInlineChart: React.FC<AgentInlineChartProps> = ({ chartData })
             <XAxis 
               dataKey={config.xKey || 'x'}
               type="number"
-              label={config.xLabel ? { value: config.xLabel, position: 'insideBottom', offset: -5, style: { fontSize: 12 } } : undefined}
-              tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+              label={config.xLabel ? { value: config.xLabel, position: 'insideBottom', offset: -5, style: { fontSize: 12, fill: labelColor } } : undefined}
+              tick={<XTick />}
               stroke="hsl(var(--border))"
             />
             <YAxis 
               dataKey={config.yKey || 'y'}
               type="number"
-              label={config.yLabel ? { value: config.yLabel, angle: -90, position: 'insideLeft', style: { fontSize: 12 } } : undefined}
-              tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+              label={config.yLabel ? { value: config.yLabel, angle: -90, position: 'insideLeft', style: { fontSize: 12, fill: labelColor } } : undefined}
+              tick={<YTick />}
               stroke="hsl(var(--border))"
             />
             {config.tooltip && <Tooltip {...commonTooltipStyle} cursor={{ strokeDasharray: '3 3' }} />}
@@ -167,15 +239,20 @@ export const AgentInlineChart: React.FC<AgentInlineChartProps> = ({ chartData })
             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
             <XAxis 
               dataKey={config.xKey}
-              tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+              tick={<XTick />}
               stroke="hsl(var(--border))"
             />
             <YAxis 
-              tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+              tick={<YTick />}
               stroke="hsl(var(--border))"
             />
             {config.tooltip && <Tooltip {...commonTooltipStyle} />}
-            {config.legend && <Legend wrapperStyle={{ fontSize: '12px' }} />}
+            {config.legend && (
+              <Legend
+                wrapperStyle={{ fontSize: '12px' }}
+                formatter={(value) => <span style={{ color: labelColor }}>{String(value)}</span>}
+              />
+            )}
             {(config.yKeys || [config.yKey]).filter(Boolean).map((key, idx) => (
               <Area
                 key={key}
@@ -207,9 +284,11 @@ export const AgentInlineChart: React.FC<AgentInlineChartProps> = ({ chartData })
         </CardTitle>
       </CardHeader>
       <CardContent className="pb-3">
-        <ResponsiveContainer width="100%" height={config.height || 300}>
-          {renderChart()}
-        </ResponsiveContainer>
+        <div ref={wrapperRef} className="text-foreground">
+          <ResponsiveContainer width="100%" height={config.height || 300}>
+            {renderChart()}
+          </ResponsiveContainer>
+        </div>
       </CardContent>
     </Card>
   );

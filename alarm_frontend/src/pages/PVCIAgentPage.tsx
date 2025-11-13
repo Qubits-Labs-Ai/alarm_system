@@ -57,6 +57,44 @@ function sanitizeAnswerChunk(raw: string | undefined): string {
   return s;
 }
 
+// Heuristic: upgrade certain colon-ended lines (e.g., "Key Insights:") to markdown headings (## ...)
+function applyHeadingHeuristics(raw: string): string {
+  if (!raw) return "";
+  // Avoid touching fenced code blocks by splitting and rejoining
+  const parts = raw.split(/```/g);
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 1) continue; // inside a code fence, skip
+    const lines = parts[i].split(/\n/);
+    const mapped = lines.map((line) => {
+      // Ignore if already a heading, list, quote or table row
+      if (/^\s*(#|[-*]\s|>\s|\|)/.test(line)) return line;
+      const m = line.match(/^\s*([A-Za-z][A-Za-z0-9()/ &-]{2,60})\s*:\s*$/);
+      if (!m) return line;
+      const titleRaw = m[1].trim();
+      // Only upgrade known section titles to be safe
+      const allow = [
+        'Key Insights',
+        'Insights',
+        'Recommendations',
+        'Next Actions',
+        'Next Steps',
+        'Summary',
+        'Findings',
+        'Observations',
+        'Notes',
+        'Key Takeaways',
+        'Takeaways',
+      ];
+      const titleNormalized = titleRaw.replace(/\s+/g, ' ').trim();
+      const found = allow.find((t) => t.toLowerCase() === titleNormalized.toLowerCase());
+      if (!found) return line; // keep as-is if not in allow-list
+      return `## ${found}`;
+    });
+    parts[i] = mapped.join('\n');
+  }
+  return parts.join('```');
+}
+
 // Limit how many charts we show per answer to keep UX focused
 const MAX_CHARTS_PER_ANSWER = 3;
 
@@ -437,7 +475,7 @@ const PVCIAgentPage = () => {
               <>
                 {m.reasoningPhases && m.reasoningPhases.length > 0 && (
                   <div className="mb-3">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                       <span className="font-medium">💭 Reasoning</span>
                       <span className="opacity-70">({m.reasoningPhases.length} phase{m.reasoningPhases.length > 1 ? 's' : ''})</span>
                     </div>
@@ -452,8 +490,8 @@ const PVCIAgentPage = () => {
                             onOpenChange={() => toggleSection(sectionId, open)}
                             className="group/collapsible"
                           >
-                            <CollapsibleTrigger className="flex w-full items-center justify-between text-left text-[13px] rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-muted/60">
-                              <span className="font-medium text-primary flex items-center gap-2">
+                            <CollapsibleTrigger className="flex w-full items-center justify-between text-left text-[11px] rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-muted/60">
+                              <span className="font-medium text-muted-foreground flex items-center gap-2">
                                 <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-xs">{idx + 1}</span>
                                 {phase.label}
                               </span>
@@ -461,8 +499,8 @@ const PVCIAgentPage = () => {
                             </CollapsibleTrigger>
                             <CollapsibleContent className="transition-all duration-200 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
                               <div className="mt-2 pl-1">
-                                <ScrollArea className="h-24 pr-1">
-                                  <div className="text-[13px] whitespace-pre-wrap leading-6 text-muted-foreground">{phase.content}</div>
+                                <ScrollArea className="max-h-[360px] pr-1">
+                                  <div className="text-[11px] whitespace-pre-wrap leading-6 text-muted-foreground">{phase.content}</div>
                                 </ScrollArea>
                               </div>
                             </CollapsibleContent>
@@ -475,7 +513,7 @@ const PVCIAgentPage = () => {
 
                 {m.toolCalls && m.toolCalls.length > 0 && (
                   <div className="mb-3">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
                       <span className="font-medium">🔧 Tool Calls</span>
                       <span className="opacity-70">{m.toolCalls.length}</span>
                     </div>
@@ -496,7 +534,7 @@ const PVCIAgentPage = () => {
                             onOpenChange={() => toggleSection(sectionId, open)}
                             className="group/collapsible"
                           >
-                            <CollapsibleTrigger className="flex w-full items-center justify-between text-left text-[13px] text-primary rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-muted/60">
+                            <CollapsibleTrigger className="flex w-full items-center justify-between text-left text-[11px] text-primary rounded-md -mx-1 px-1 py-1 transition-colors hover:bg-muted/60">
                               <span className="underline-offset-2 hover:underline">{tool.name}</span>
                               <ChevronDown className="h-4 w-4 opacity-60 transition-all duration-200 group-data-[state=open]/collapsible:rotate-180" />
                             </CollapsibleTrigger>
@@ -504,15 +542,15 @@ const PVCIAgentPage = () => {
                               <div className="grid gap-2 mt-2">
                                 <div>
                                   <div className="text-[11px] font-medium text-muted-foreground mb-1">Arguments</div>
-                                  <ScrollArea className="h-28 rounded-lg border border-border/60 p-2 bg-card/60">
-                                    <pre className="text-[13px] whitespace-pre-wrap font-mono text-muted-foreground">{prettyArgs}</pre>
+                                  <ScrollArea className="max-h-[360px] rounded-lg border border-border/60 p-2 bg-card/60">
+                                    <pre className="text-[11px] whitespace-pre-wrap font-mono text-muted-foreground">{prettyArgs}</pre>
                                   </ScrollArea>
                                 </div>
                                 {toolResult && (
                                   <div>
                                     <div className="text-[11px] font-medium text-muted-foreground mb-1">Result</div>
-                                    <ScrollArea className="h-28 rounded-lg border border-border/60 p-2 bg-card/60">
-                                      <pre className="text-[13px] whitespace-pre-wrap font-mono text-muted-foreground">{toolResult}</pre>
+                                    <ScrollArea className="max-h-[360px] rounded-lg border border-border/60 p-2 bg-card/60">
+                                      <pre className="text-[11px] whitespace-pre-wrap font-mono text-muted-foreground">{toolResult}</pre>
                                     </ScrollArea>
                                   </div>
                                 )}
@@ -560,8 +598,8 @@ const PVCIAgentPage = () => {
                 )}
 
                 <div className="pt-1">
-                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground mb-2">Answer</div>
-                  <div className="prose prose-sm dark:prose-invert agent-prose max-w-none leading-6 prose-p:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-strong:font-semibold prose-code:text-[13px]">
+                  <div className="text-[20px] font-semibold text-foreground mb-2">Answer</div>
+                  <div className="prose prose-base dark:prose-invert agent-prose max-w-none leading-7 text-foreground prose-headings:text-foreground prose-headings:font-bold prose-headings:text-[15px] prose-p:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-strong:font-semibold prose-code:text-[13px]">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={{
@@ -569,13 +607,13 @@ const PVCIAgentPage = () => {
                           <a {...props} target="_blank" rel="noreferrer" />
                         ),
                         table: ({ node, ...props }) => (
-                          <div className="overflow-auto max-h-96 rounded-xl border border-border/70 shadow-sm bg-card relative">
+                          <div className="overflow-x-auto rounded-xl border border-border/70 shadow-sm bg-card relative">
                             <table {...props} />
                           </div>
                         ),
                       }}
                     >
-                      {m.content || ""}
+                      {applyHeadingHeuristics(m.content || "")}
                     </ReactMarkdown>
                   </div>
                   {m.isStreaming && <span className="inline-block w-2 h-4 ml-1 bg-primary animate-pulse" />}
