@@ -10,6 +10,8 @@ import { ActualCalcKPIs, ActualCalcCounts, ActualCalcUnhealthyResponse, ActualCa
 import { UnhealthyPeriodsModal } from './UnhealthyPeriodsModal';
 import { FloodWindowsModal } from './FloodWindowsModal';
 import { BadActorsModal } from './BadActorsModal';
+import { InfoIcon } from '@/components/actualCalc/InfoIcon';
+import { KPI_FORMULAS } from '@/config/kpiFormulas';
 
 interface KPICard {
   title: string;
@@ -17,6 +19,7 @@ interface KPICard {
   description: string;
   icon: LucideIcon;
   trend: 'positive' | 'neutral' | 'negative';
+  formulaId: string;
 }
 
 interface ActualCalcKPICardsProps {
@@ -48,27 +51,29 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
 
   // Use activation-based counts for consistency with charts (per-activation counts)
   // Fall back to episode-based counts (per-source counts) for backward compatibility
-  const countsAny = counts as unknown as { activation_based?: {
-    total_activations?: number;
-    total_standing?: number;
-    total_nuisance?: number;
-  }};
+  const countsAny = counts as unknown as {
+    activation_based?: {
+      total_activations?: number;
+      total_standing?: number;
+      total_nuisance?: number;
+    }
+  };
   const activationCounts = countsAny.activation_based;
   const uniqueTotal = Number(kpis?.total_unique_alarms ?? 0);
   const totalAlarms = Number(
     (uniqueTotal && uniqueTotal > 0 ? uniqueTotal : (activationCounts?.total_activations))
-      ?? counts.total_alarms
-      ?? 0
+    ?? counts.total_alarms
+    ?? 0
   );
   const standingTotal = Number(activationCounts?.total_standing ?? counts.total_standing ?? 0);
-  const nuisanceTotal = Number(activationCounts?.total_nuisance ?? 
+  const nuisanceTotal = Number(activationCounts?.total_nuisance ??
     (counts.total_chattering || 0) + (counts.total_instrument_failure_chattering || 0));
   const total = Math.max(1, totalAlarms);
 
   // Calculate trends
-  const standingTrend: 'positive' | 'neutral' | 'negative' = 
+  const standingTrend: 'positive' | 'neutral' | 'negative' =
     standingTotal === 0 ? 'positive' : standingTotal / total <= 0.05 ? 'neutral' : 'negative';
-  const nuisanceTrend: 'positive' | 'neutral' | 'negative' = 
+  const nuisanceTrend: 'positive' | 'neutral' | 'negative' =
     nuisanceTotal === 0 ? 'positive' : nuisanceTotal / totalAlarms <= 0.1 ? 'neutral' : 'negative';
 
   // Section 1: Alarm Summary
@@ -79,20 +84,23 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
       description: `From ${counts.total_sources.toLocaleString()} sources`,
       icon: Activity,
       trend: 'neutral',
+      formulaId: 'total_alarms',
     },
     {
-        title: 'Total Flood Alarms',
-        value: Number(totals?.total_flood_count || 0).toLocaleString(),
-        description: 'Sum of alarms within flood windows',
-        icon: Activity,
-        trend: 'neutral',
+      title: 'Total Flood Alarms',
+      value: Number(totals?.total_flood_count || 0).toLocaleString(),
+      description: 'Sum of alarms within flood windows',
+      icon: Activity,
+      trend: 'neutral',
+      formulaId: 'total_flood_alarms',
     },
     {
       title: 'Standing Alarms',
       value: standingTotal.toLocaleString(),
-      description: 'Alarms standing beyond threshold',
+      description: 'Stale alarms active beyond time threshold',
       icon: ShieldAlert,
       trend: standingTrend,
+      formulaId: 'standing_alarms',
     },
     {
       title: 'Nuisance/Repeating Alarms',
@@ -100,19 +108,20 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
       description: 'Chattering and instrument-faulty chattering',
       icon: Activity,
       trend: nuisanceTrend,
+      formulaId: 'nuisance_repeating',
     },
   ];
 
   // Calculate frequency trends
-  const dailyTrend: 'positive' | 'neutral' | 'negative' = 
+  const dailyTrend: 'positive' | 'neutral' | 'negative' =
     kpis.avg_alarms_per_day <= 288 ? 'positive' : kpis.avg_alarms_per_day <= 720 ? 'neutral' : 'negative';
-  const hourlyTrend: 'positive' | 'neutral' | 'negative' = 
+  const hourlyTrend: 'positive' | 'neutral' | 'negative' =
     kpis.avg_alarms_per_hour <= 12 ? 'positive' : kpis.avg_alarms_per_hour <= 30 ? 'neutral' : 'negative';
-  const tenMinTrend: 'positive' | 'neutral' | 'negative' = 
+  const tenMinTrend: 'positive' | 'neutral' | 'negative' =
     kpis.avg_alarms_per_10min <= 10 ? 'positive' : kpis.avg_alarms_per_10min <= 50 ? 'neutral' : 'negative';
-  const isaTrend: 'positive' | 'neutral' | 'negative' = 
+  const isaTrend: 'positive' | 'neutral' | 'negative' =
     kpis.days_over_288_alarms_pct <= 10 ? 'positive' : kpis.days_over_288_alarms_pct <= 30 ? 'neutral' : 'negative';
-  const criticalTrend: 'positive' | 'neutral' | 'negative' = 
+  const criticalTrend: 'positive' | 'neutral' | 'negative' =
     kpis.days_unacceptable_pct === 0 ? 'positive' : kpis.days_unacceptable_pct <= 5 ? 'neutral' : 'negative';
 
   // Section 2: Frequency Metrics (Time-based)
@@ -123,6 +132,7 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
       description: 'ISO/EEMUA 191 - Average per day',
       icon: Calendar,
       trend: dailyTrend,
+      formulaId: 'alarm_rate_daily',
     },
     {
       title: 'Alarm Rate (Hourly)',
@@ -130,6 +140,7 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
       description: 'ISO/EEMUA 191 - Average per hour',
       icon: Activity,
       trend: hourlyTrend,
+      formulaId: 'alarm_rate_hourly',
     },
     {
       title: 'Alarm Rate (10min)',
@@ -137,6 +148,7 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
       description: 'ISO/EEMUA 191 - Average per 10 minutes',
       icon: TrendingUp,
       trend: tenMinTrend,
+      formulaId: 'alarm_rate_10min',
     },
     {
       title: 'ISA Compliance',
@@ -144,6 +156,7 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
       description: `Days under 288 alarms/day${kpis.total_days_analyzed ? ` (${kpis.total_days_analyzed} days analyzed)` : ''}`,
       icon: Calendar,
       trend: isaTrend,
+      formulaId: 'isa_compliance',
     },
     ...(typeof kpis.days_unacceptable_pct === 'number' ? [{
       title: 'Critical Overload',
@@ -151,33 +164,37 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
       description: `Days ≥720 alarms/day (${kpis.days_unacceptable_count || 0} days)`,
       icon: AlertTriangle,
       trend: criticalTrend,
+      formulaId: 'critical_overload',
     }] : []),
   ];
 
   // Section 3: Detailed Analytics (Clickable)
   const detailedAnalyticsCards: KPICard[] = totals ? [
-      {
-        title: 'Unhealthy Periods',
-        value: Number(totals?.total_unhealthy_periods || 0).toLocaleString(),
-        description: '10‑min windows per source over threshold',
-        icon: AlertTriangle,
-        trend: 'neutral',
-      },
-      {
-        title: 'Flood Windows',
-        value: Number(totals?.total_flood_windows || 0).toLocaleString(),
-        description: 'Windows with ≥2 sources unhealthy',
-        icon: Calendar,
-        trend: 'neutral',
-      },
-      {
-        title: 'Bad Actors',
-        value: Number(badActorsData?.total_actors || 0).toLocaleString(),
-        description: 'Top sources driving flood alarms',
-        icon: ShieldAlert,
-        trend: 'neutral',
-      }
-    ] : [];
+    {
+      title: 'Unhealthy Periods',
+      value: Number(totals?.total_unhealthy_periods || 0).toLocaleString(),
+      description: '10‑min windows per source over threshold',
+      icon: AlertTriangle,
+      trend: 'neutral',
+      formulaId: 'unhealthy_periods',
+    },
+    {
+      title: 'Flood Windows',
+      value: Number(totals?.total_flood_windows || 0).toLocaleString(),
+      description: 'Windows with ≥2 sources unhealthy',
+      icon: Calendar,
+      trend: 'neutral',
+      formulaId: 'flood_windows',
+    },
+    {
+      title: 'Bad Actors',
+      value: Number(badActorsData?.total_actors || 0).toLocaleString(),
+      description: 'Top sources driving flood alarms',
+      icon: ShieldAlert,
+      trend: 'neutral',
+      formulaId: 'bad_actors',
+    }
+  ] : [];
 
   const renderCardSection = (cards: KPICard[], sectionTitle: string) => (
     <div className="space-y-4">
@@ -192,13 +209,12 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
           const isFloodCard = card.title === 'Flood Windows';
           const isBadActorsCard = card.title === 'Bad Actors';
           const isClickable = (isUnhealthyCard && unhealthyData && !isLoading) || (isFloodCard && floodsData && !isLoading) || (isBadActorsCard && badActorsData && !isLoading);
-          
+
           return (
-            <Card 
-              key={card.title} 
-              className={`shadow-metric-card bg-dashboard-metric-card-bg h-full min-h-[140px] flex flex-col ${
-                isClickable ? 'cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02]' : ''
-              }`}
+            <Card
+              key={card.title}
+              className={`shadow-metric-card bg-dashboard-metric-card-bg h-full min-h-[140px] flex flex-col ${isClickable ? 'cursor-pointer transition-all hover:shadow-lg hover:scale-[1.02]' : ''
+                }`}
               onClick={() => {
                 if (isUnhealthyCard && unhealthyData && !isLoading) {
                   setUnhealthyModalOpen(true);
@@ -210,17 +226,22 @@ export function ActualCalcKPICards({ kpis, counts, isLoading = false, totals, un
               }}
             >
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground truncate">
-                  {card.title}
-                </CardTitle>
-                <Icon 
-                  className={`h-4 w-4 ${
-                    card.trend === 'positive' 
-                      ? 'text-success' 
-                      : card.trend === 'negative' 
-                      ? 'text-destructive' 
+                <div className="flex items-center gap-1.5">
+                  <CardTitle className="text-sm font-medium text-muted-foreground truncate">
+                    {card.title}
+                  </CardTitle>
+                  <InfoIcon
+                    formula={KPI_FORMULAS[card.formulaId]?.formula}
+                    title={KPI_FORMULAS[card.formulaId]?.title}
+                  />
+                </div>
+                <Icon
+                  className={`h-4 w-4 ${card.trend === 'positive'
+                    ? 'text-success'
+                    : card.trend === 'negative'
+                      ? 'text-destructive'
                       : 'text-muted-foreground'
-                  }`} 
+                    }`}
                 />
               </CardHeader>
               <CardContent className="mt-auto">

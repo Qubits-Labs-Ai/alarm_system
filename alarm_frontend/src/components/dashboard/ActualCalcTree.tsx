@@ -9,6 +9,8 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ActualCalcOverallResponse } from '@/types/actualCalc';
 import { fetchPlantActualCalcSankey } from '@/api/actualCalc';
+import { InfoIcon } from '@/components/actualCalc/InfoIcon';
+import { KPI_FORMULAS } from '@/config/kpiFormulas';
 
 type Props = {
   data: ActualCalcOverallResponse;
@@ -20,7 +22,7 @@ type Props = {
   staleTotal?: number; // optional override
 };
 
-function StatNode({ title, value, nodeRef, bg, split }: { title: string; value: number; nodeRef: React.RefObject<HTMLDivElement>; bg?: string; split?: { operational: number; system: number } }) {
+function StatNode({ title, value, nodeRef, bg, split, formulaId }: { title: string; value: number; nodeRef: React.RefObject<HTMLDivElement>; bg?: string; split?: { operational: number; system: number }; formulaId?: string }) {
   return (
     <div ref={nodeRef} className="inline-block relative">
       <Card
@@ -28,9 +30,17 @@ function StatNode({ title, value, nodeRef, bg, split }: { title: string; value: 
         style={bg ? ({ background: bg } as CSSProperties) : undefined}
       >
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium text-muted-foreground text-center truncate">
-            {title}
-          </CardTitle>
+          <div className="flex items-center justify-center gap-1.5">
+            <CardTitle className="text-sm font-medium text-muted-foreground text-center truncate">
+              {title}
+            </CardTitle>
+            {formulaId && (
+              <InfoIcon
+                formula={KPI_FORMULAS[formulaId]?.formula}
+                title={KPI_FORMULAS[formulaId]?.title}
+              />
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="text-xl sm:text-2xl font-bold text-center">
@@ -283,7 +293,7 @@ export function ActualCalcTree({ data, plantId, includeSystem = true, standingTo
 
       {/* Row 1: Root */}
       <div className="flex justify-center mb-10">
-        <StatNode title="Total Alarms" value={totalAlarms} nodeRef={rootRef} />
+        <StatNode title="Total Alarms" value={totalAlarms} nodeRef={rootRef} formulaId="tree_total_alarms" />
       </div>
 
       {/* Row 2: Standing | Nuisance */}
@@ -295,6 +305,7 @@ export function ActualCalcTree({ data, plantId, includeSystem = true, standingTo
             nodeRef={standingRef}
             bg={bgStanding}
             split={sankeyOp && sankeyAll ? scaledSplit(standingTotal, sankeyAll.standing, sankeyOp.standing) : undefined}
+            formulaId="tree_standing"
           />
         </div>
         <div className="flex justify-center">
@@ -306,12 +317,13 @@ export function ActualCalcTree({ data, plantId, includeSystem = true, standingTo
             split={
               sankeyOp && sankeyAll
                 ? scaledSplit(
-                    nuisanceTotal,
-                    (sankeyAll.nuisance_chattering + sankeyAll.nuisance_if_chattering),
-                    (sankeyOp.nuisance_chattering + sankeyOp.nuisance_if_chattering)
-                  )
+                  nuisanceTotal,
+                  (sankeyAll.nuisance_chattering + sankeyAll.nuisance_if_chattering),
+                  (sankeyOp.nuisance_chattering + sankeyOp.nuisance_if_chattering)
+                )
                 : undefined
             }
+            formulaId="tree_nuisance"
           />
         </div>
       </div>
@@ -325,6 +337,7 @@ export function ActualCalcTree({ data, plantId, includeSystem = true, standingTo
             nodeRef={faultyRef}
             bg={bgFaulty}
             split={sankeyOp && sankeyAll ? scaledSplit(instrumentsFaultyTotal, sankeyAll.standing_if, sankeyOp.standing_if) : undefined}
+            formulaId="tree_instruments_faulty"
           />
         </div>
         <div className="flex justify-center order-3 md:order-2">
@@ -334,6 +347,7 @@ export function ActualCalcTree({ data, plantId, includeSystem = true, standingTo
             nodeRef={staleRef}
             bg={bgStale}
             split={sankeyOp && sankeyAll ? scaledSplit(staleTotal, sankeyAll.standing_stale, sankeyOp.standing_stale) : undefined}
+            formulaId="tree_stale"
           />
         </div>
         <div className="flex justify-center order-2 md:order-3">
@@ -343,6 +357,7 @@ export function ActualCalcTree({ data, plantId, includeSystem = true, standingTo
             nodeRef={chatteringRef}
             bg={bgChat}
             split={sankeyOp && sankeyAll ? scaledSplit(chatteringTotal, sankeyAll.nuisance_chattering, sankeyOp.nuisance_chattering) : undefined}
+            formulaId="tree_chattering"
           />
         </div>
         <div className="flex justify-center order-4 md:order-4">
@@ -352,6 +367,7 @@ export function ActualCalcTree({ data, plantId, includeSystem = true, standingTo
             nodeRef={faultyChatteringRef}
             bg={bgFaultyChat}
             split={sankeyOp && sankeyAll ? scaledSplit(instrumentsFaultyChatteringTotal, sankeyAll.nuisance_if_chattering, sankeyOp.nuisance_if_chattering) : undefined}
+            formulaId="tree_instruments_faulty_chattering"
           />
         </div>
       </div>
