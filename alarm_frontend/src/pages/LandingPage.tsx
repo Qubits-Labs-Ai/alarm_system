@@ -1,20 +1,26 @@
-import { useState, useEffect } from 'react';
-import { ArrowRight, ShieldCheck, BarChart3, CheckCircle, TrendingUp, AlertTriangle, Activity, Sparkles, ChevronDown, MapPin, Phone, Clock } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowRight, ShieldCheck, BarChart3, CheckCircle, TrendingUp, AlertTriangle, Activity, Sparkles, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { ThemeToggle } from '@/components/ui/theme-toggle';
+import { Header } from '@/components/shared/Header';
+import { Footer } from '@/components/shared/Footer';
 import PixelBlast from '@/components/ui/PixelBlast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { usePlantHealth } from '@/hooks/usePlantHealth';
 import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
-import engroLogo from '@/assets/engro-logo.png';
-import qbitLogo from '@/assets/qbit-logo.png';
 import AnimatedChartDisplay from '@/components/landing/AnimatedChartDisplay';
+import { GridBackground } from '@/components/landing/GridBackground';
+import { GradientOrb } from '@/components/landing/GradientOrb';
+import { AnimatedCounter } from '@/components/landing/AnimatedCounter';
+import { DashboardMockup } from '@/components/landing/DashboardMockup';
+import { BentoGrid, BentoCard } from '@/components/landing/BentoGrid';
+import { FeatureCard } from '@/components/landing/FeatureCard';
+import { ScrollIndicator } from '@/components/landing/ScrollIndicator';
 
 // Motion-aware component for animations
 const MotionDiv = ({ children, delay = 0 }: { children: React.ReactNode, delay?: number }) => (
-  <div 
-    className="motion-safe:animate-fade-up motion-safe:opacity-0" 
+  <div
+    className="motion-safe:animate-fade-up motion-safe:opacity-0"
     style={{ animationFillMode: 'forwards', animationDelay: `${delay}ms` }}
   >
     {children}
@@ -58,332 +64,464 @@ const LandingPage = () => {
     'Seamlessly transition from insight to action in the dashboard',
   ];
 
-  return (
-    <div className="min-h-screen bg-background text-foreground font-sans scroll-smooth selection:bg-primary/30">
-      {/* Background Aurora */}
-      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
-        <div className="absolute top-[-20%] left-1/2 -translate-x-1/2 w-[150%] h-[120%] bg-[radial-gradient(ellipse_50%_40%_at_50%_0%,hsl(var(--primary)/0.15),transparent_80%)]"></div>
-      </div>
-      
-      {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-border bg-background/50 backdrop-blur-lg">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <img src={engroLogo} alt="Engro Logo" className="h-8 w-auto" />
-             {/* Builder brand */}
-             <div className="hidden sm:flex items-center gap-2 border-l border-border pl-4">
-              
-              <img
-                src={qbitLogo}
-                alt="Qbit Dynamics"
-                className="h-6 w-auto opacity-90 invert dark:invert-0"
-              />
-            </div>
-            <div className="hidden sm:flex items-center gap-3 border-l border-border pl-4">
-              <ShieldCheck className="h-6 w-6 text-primary" />
-              <div>
-                <h1 className="font-bold text-foreground">Alarm Management System</h1>
-                <p className="text-xs text-muted-foreground">Powered by Qbit Dynamics</p>
-              </div>
-            </div>
-           
-          </div>
-          <nav className="hidden md:flex items-center gap-6 text-sm text-muted-foreground">
-            <a href="#features" onClick={(e) => { e.preventDefault(); document.querySelector('#features')?.scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-foreground transition-colors">Features</a>
-            <a href="#snapshot" onClick={(e) => { e.preventDefault(); document.querySelector('#snapshot')?.scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-foreground transition-colors">Live Snapshot</a>
-            <a href="#benefits" onClick={(e) => { e.preventDefault(); document.querySelector('#benefits')?.scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-foreground transition-colors">Benefits</a>
-          </nav>
-          <div className="flex items-center gap-3">
-            <ThemeToggle />
-            <Button asChild className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold transition-all duration-300 transform hover:scale-105">
-              <a href="/signin">Access Dashboard</a>
-            </Button>
-          </div>
-        </div>
-      </header>
+  const navLinks = [
+    {
+      label: 'Features',
+      href: '#features',
+      onClick: (e: React.MouseEvent) => {
+        e.preventDefault();
+        document.querySelector('#features')?.scrollIntoView({ behavior: 'smooth' });
+      }
+    },
+    {
+      label: 'Live Snapshot',
+      href: '#snapshot',
+      onClick: (e: React.MouseEvent) => {
+        e.preventDefault();
+        document.querySelector('#snapshot')?.scrollIntoView({ behavior: 'smooth' });
+      }
+    },
+    {
+      label: 'Benefits',
+      href: '#benefits',
+      onClick: (e: React.MouseEvent) => {
+        e.preventDefault();
+        document.querySelector('#benefits')?.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+  ];
 
-      <main className="relative z-10 ">
-        {/* Hero Section */}
-        <section className="relative h-screen flex items-center justify-center overflow-hidden ">
-          {/* Interactive background */}
-          <div className="absolute h-screen overflow-hidden inset-0 z-0">
+  return (
+    <div className="min-h-screen bg-background text-foreground font-sans scroll-smooth selection:bg-lime-accent/20">
+      <Header
+        variant="landing"
+        navLinks={navLinks}
+      />
+
+      <main className="relative">
+        {/* ===== HERO SECTION ===== */}
+        <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
+          {/* Sophisticated Background */}
+          <div className="absolute inset-0 z-0">
+            {/* Grid Background */}
+            <GridBackground gridSize={60} gridColor="var(--landing-grid-hero)" />
+
+            {/* Animated Gradient Orbs */}
+            <GradientOrb
+              size="xl"
+              color="green"
+              className="top-1/4 left-1/4"
+            />
+            <GradientOrb
+              size="lg"
+              color="green"
+              className="bottom-1/3 right-1/4"
+              animated={true}
+            />
+
+            {/* Subtle PixelBlast Effect */}
             <PixelBlast
-              className="absolute inset-0"
+              className="absolute inset-0 opacity-30"
               variant="circle"
-              pixelSize={6}
-              color="#09b073"
-              patternScale={3}
-              patternDensity={1.2}
-              pixelSizeJitter={0.45}
-              enableRipples
-              rippleSpeed={0.4}
-              rippleThickness={0.12}
-              rippleIntensityScale={1.5}
-              liquid
-              liquidStrength={0.12}
-              liquidRadius={1.15}
-              liquidWobbleSpeed={5}
-              speed={0.6}
-              edgeFade={0.22}
+              pixelSize={4}
+              color="#a3e635"
+              patternScale={4}
+              patternDensity={0.8}
+              speed={0.3}
               transparent
-              noiseAmount={0.06}
+              noiseAmount={0.03}
             />
-            <PixelBlast
-              className="absolute inset-0"
-              variant="square"
-              pixelSize={1}
-              color="#888888"
-              patternScale={1}
-              patternDensity={0.2} // Lower density for subtlety
-              speed={0.1}
-              lineCount={2.0} // Render 2 diagonal lines
-              transparent
-            />
-            {/* Subtle gradient vignette for readability */}
-            <div className="absolute inset-0 bg-gradient-to-b from-background/40 via-background/10 to-background/60" />
+
+            {/* Vignette for focus */}
+            <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/20 to-background/80" />
           </div>
-          {/* Content */}
-          <div className="container mx-auto px-6 relative z-10">
-            <div className="flex flex-col items-center text-center">
+
+          {/* Hero Content */}
+          <div className="container mx-auto px-6 relative z-10 py-32">
+            <div className="flex flex-col items-center text-center max-w-6xl mx-auto">
+
+              {/* Badge */}
               <MotionDiv>
-                <Badge variant="outline" className="mb-6 border-primary/30 bg-primary/10 text-primary py-1 px-4 backdrop-blur-sm">
-                  <Sparkles className="h-4 w-4 mr-2 text-primary" />
+                <Badge
+                  variant="outline"
+                  className="mb-8 border-lime-accent/30 bg-lime-accent/5 text-lime-accent py-2 px-5 backdrop-blur-sm text-sm font-medium"
+                >
+                  <Sparkles className="h-4 w-4 mr-2" />
                   Standards-Aligned Alarm Health Monitoring
                 </Badge>
               </MotionDiv>
+
+              {/* Massive Headline - Perfectly Centered */}
               <MotionDiv delay={150}>
-                <h1 className="text-4xl md:text-6xl lg:text-7xl font-extrabold pb-6 mb-6 bg-clip-text text-transparent bg-gradient-to-r from-foreground to-muted-foreground leading-tight">
-                  Transform Alarm Data into Actionable Intelligence
+                <h1 className="text-5xl md:text-7xl lg:text-8xl font-black text-foreground mb-8 leading-[1.1] tracking-tight">
+                  Transform Alarm Data
+                  <br />
+                  into{' '}
+                  <span className="text-lime-accent">Actionable</span>
+                  {' '}Intelligence
                 </h1>
               </MotionDiv>
+
+              {/* Subtitle - Concise & Clear */}
               <MotionDiv delay={300}>
-                <p className="text-lg md:text-xl text-muted-foreground mb-10 max-w-3xl mx-auto">
-                  Monitor alarm performance in real-time. Quantify source health, surface hotspots, and act with confidence—starting with the PVC-I production line.
+                <p className="text-xl md:text-2xl text-muted-foreground mb-12 max-w-3xl leading-relaxed">
+                  Monitor alarm performance in real-time. Quantify source health, surface hotspots,
+                  and act with confidence—starting with the{' '}
+                  <span className="text-lime-accent font-semibold">PVC-I production line</span>.
                 </p>
               </MotionDiv>
+
+              {/* CTA Buttons with Clear Hierarchy */}
               <MotionDiv delay={450}>
-                <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                  <Button size="lg" asChild className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-lg px-8 py-6 transition-transform hover:scale-105">
+                <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
+                  <Button
+                    size="lg"
+                    asChild
+                    className="bg-lime-accent hover:bg-lime-accent/90 text-black font-bold text-lg px-10 py-7 transition-all hover:scale-105 hover:shadow-xl hover:shadow-lime-accent/30"
+                  >
                     <a href="/dashboard">
                       View Live Dashboard <ArrowRight className="ml-2 h-5 w-5" />
                     </a>
                   </Button>
-                  <Button size="lg" variant="outline" asChild className="border-border text-foreground bg-background/50 hover:bg-accent/60 backdrop-blur-sm text-lg px-8 py-6">
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    asChild
+                    className="border-border/40 text-foreground bg-background/50 hover:bg-accent/60 backdrop-blur-sm text-lg px-10 py-7"
+                  >
                     <a href="#features">Learn More</a>
                   </Button>
+                </div>
+              </MotionDiv>
+
+              {/* Dashboard Mockups - Both Variants */}
+              <MotionDiv delay={600}>
+                <div className="w-full space-y-8">
+                  {/* Browser Frame Mockup */}
+                  <DashboardMockup variant="browser">
+                    <div className="grid grid-cols-4 gap-4">
+                      <Card className="col-span-4 md:col-span-2 bg-card/50 border-lime-accent/20">
+                        <CardHeader className="pb-3">
+                          <div className="flex items-center justify-between">
+                            <CardTitle className="text-base">Overall Health</CardTitle>
+                            <TrendingUp className="h-4 w-4 text-lime-accent" />
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="text-4xl font-bold text-lime-accent">
+                            <AnimatedCounter value={93.8} decimals={1} suffix="%" />
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">System performing optimally</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="col-span-2 md:col-span-1 bg-card/50 border-primary/20">
+                        <CardContent className="pt-6 text-center">
+                          <div className="text-3xl font-bold text-foreground">
+                            <AnimatedCounter value={26740} />
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">Active Sources</p>
+                        </CardContent>
+                      </Card>
+                      <Card className="col-span-2 md:col-span-1 bg-card/50 border-primary/20">
+                        <CardContent className="pt-6 text-center">
+                          <div className="text-3xl font-bold text-foreground">
+                            <AnimatedCounter value={76} />
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">Data Files</p>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  </DashboardMockup>
+                </div>
+              </MotionDiv>
+
+              {/* Scroll Indicator */}
+              <MotionDiv delay={750}>
+                <div className="mt-20">
+                  <ScrollIndicator targetId="snapshot" />
                 </div>
               </MotionDiv>
             </div>
           </div>
         </section>
 
-        {/* Dashboard Preview Section */}
-        <section id="snapshot" className="py-24 sm:py-32">
-          <div className="container mx-auto px-6">
+        {/* ===== LIVE SNAPSHOT SECTION ===== */}
+        <section id="snapshot" className="py-32 relative">
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-muted/20 to-transparent" />
+          <div className="container mx-auto px-6 relative z-10">
             <MotionDiv>
-                <div className="text-center mb-16">
-                    <h2 className="text-3xl md:text-4xl font-bold text-foreground">Live Plant Snapshot: <span className="text-primary">PVC-I</span></h2>
-                    <p className="mt-4 text-lg text-muted-foreground max-w-2xl mx-auto">An overview of the current alarm system health and top offenders.</p>
-                     <p className="text-sm text-muted-foreground/70 mt-2">
-                        Last updated: {metrics?.last_updated ? new Date(metrics.last_updated).toLocaleString() : 'Loading...'}
-                    </p>
-                </div>
+              <div className="text-center mb-20">
+                <Badge className="mb-4 bg-primary/10 text-primary border-primary/20">Live Data</Badge>
+                <h2 className="text-4xl md:text-5xl font-black text-foreground mb-4">
+                  Live Plant Snapshot: <span className="text-lime-accent">PVC-I</span>
+                </h2>
+                <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
+                  Real-time overview of alarm system health and top offenders
+                </p>
+                <p className="text-sm text-muted-foreground/70 mt-3">
+                  Last updated: {metrics?.last_updated ? new Date(metrics.last_updated).toLocaleString() : 'Loading...'}
+                </p>
+              </div>
             </MotionDiv>
+
             <MotionDiv delay={200}>
               <div className="grid lg:grid-cols-3 gap-8 items-start">
                 {/* Chart */}
                 <div className="lg:col-span-2">
-                   <UnhealthyBarChart 
-                      data={data?.unhealthyBars ?? []}
-                      threshold={10}
-                      topN={topN}
-                      onTopNChange={setTopN}
-                      isLoading={isLoading}
-                    />
+                  <UnhealthyBarChart
+                    data={data?.unhealthyBars ?? []}
+                    threshold={10}
+                    topN={topN}
+                    onTopNChange={setTopN}
+                    isLoading={isLoading}
+                  />
                 </div>
-                {/* Stats */}
+
+                {/* Stats Cards */}
                 <div className="space-y-6">
-                   <Card className="bg-card border-border">
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-primary">
-                          <TrendingUp /> Overall Health
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="grid grid-cols-2 gap-4 text-center">
-                          <div>
-                            <p className="text-4xl font-bold text-[#09b073]">{isLoading ? '—' : `${(metrics?.healthy_percentage ?? 0).toFixed(1)}%`}</p>
-                            <p className="text-sm text-muted-foreground">Healthy</p>
+                  <Card className="bg-card/50 backdrop-blur-sm border-lime-accent/20 hover:border-lime-accent/40 transition-all hover:-translate-y-1">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-lime-accent">
+                        <TrendingUp className="h-5 w-5" />
+                        Overall Health
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-2 gap-4 text-center">
+                      <div>
+                        <p className="text-4xl font-bold text-lime-accent">
+                          {isLoading ? '—' : `${(metrics?.healthy_percentage ?? 0).toFixed(1)}%`}
+                        </p>
+                        <p className="text-sm text-muted-foreground mt-1">Healthy</p>
+                      </div>
+                      <div>
+                        <p className="text-4xl font-bold text-primary">
+                          {isLoading ? '—' : `${(metrics?.unhealthy_percentage ?? 0).toFixed(1)}%`}
+                        </p>
+                        <p className="text-sm text-muted-foreground mt-1">Unhealthy</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="bg-card/50 backdrop-blur-sm border-border/40 hover:border-primary/40 transition-all hover:-translate-y-1">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-muted-foreground">
+                        <Activity className="h-5 w-5" />
+                        System Load
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-2 gap-4 text-center">
+                      <div>
+                        <p className="text-3xl font-bold text-foreground">
+                          {isLoading ? '—' : metrics?.total_sources?.toLocaleString() ?? '—'}
+                        </p>
+                        <p className="text-sm text-muted-foreground mt-1">Sources</p>
+                      </div>
+                      <div>
+                        <p className="text-3xl font-bold text-foreground">
+                          {isLoading ? '—' : metrics?.total_files?.toLocaleString() ?? '—'}
+                        </p>
+                        <p className="text-sm text-muted-foreground mt-1">Data Files</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+            </MotionDiv>
+
+
+          </div>
+        </section>
+
+        {/* ===== FEATURES SECTION - BENTO GRID ===== */}
+        <section id="features" className="py-32 relative overflow-hidden">
+          {/* Background */}
+          <div className="absolute inset-0">
+            <div className="absolute inset-0 bg-muted/30" />
+            <GridBackground gridSize={80} gridColor="var(--landing-grid-features)" fadeEdges={true} />
+          </div>
+
+          <div className="container mx-auto px-6 relative z-10">
+            <div className="text-center mb-20 max-w-4xl mx-auto">
+              <Badge className="mb-4 bg-lime-accent/10 text-lime-accent border-lime-accent/20">
+                Four-Step Process
+              </Badge>
+              <h2 className="text-4xl md:text-5xl font-black text-foreground mb-4">
+                From Raw Data to <span className="text-lime-accent">Clarity</span>
+              </h2>
+              <p className="text-xl text-muted-foreground">
+                Every stage is designed for clarity, speed, and compliance
+              </p>
+            </div>
+
+            {/* Bento Grid Layout */}
+            <BentoGrid className="mb-12">
+              <BentoCard
+                span="wide"
+                icon={<Activity className="h-6 w-6 text-lime-accent" />}
+                title="Real-Time Data Ingestion"
+                description="Stream and normalize alarm events instantly"
+                gradient
+              >
+                <div className="w-full h-full flex items-center justify-center">
+                  <div className="grid grid-cols-3 gap-2 w-full max-w-xs">
+                    {[1, 2, 3, 4, 5, 6].map((i) => (
+                      <div
+                        key={i}
+                        className="h-12 bg-lime-accent/20 rounded-lg animate-pulse"
+                        style={{ animationDelay: `${i * 100}ms` }}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </BentoCard>
+
+              <BentoCard
+                icon={<ShieldCheck className="h-6 w-6 text-primary" />}
+                title="Automated Health Scoring"
+                description="Rolling health scores per source"
+                gradient
+              >
+                <div className="text-5xl font-black text-lime-accent">
+                  <AnimatedCounter value={94.2} decimals={1} suffix="%" />
+                </div>
+              </BentoCard>
+
+              <BentoCard
+                icon={<AlertTriangle className="h-6 w-6 text-yellow-500" />}
+                title="Anomaly Detection"
+                description="Surface issues instantly"
+                gradient
+              >
+                <div className="flex items-center gap-2">
+                  <Bell className="h-8 w-8 text-yellow-500 animate-bounce" />
+                  <span className="text-2xl font-bold">3 Alerts</span>
+                </div>
+              </BentoCard>
+
+              <BentoCard
+                span="wide"
+                icon={<BarChart3 className="h-6 w-6 text-primary" />}
+                title="Actionable Insights"
+                description="Prioritize and track improvements"
+                gradient
+              >
+                <div className="w-full h-full flex items-end justify-between gap-2 px-8">
+                  {[40, 70, 45, 90, 60, 80].map((height, i) => (
+                    <div
+                      key={i}
+                      className="flex-1 bg-gradient-to-t from-lime-accent to-primary rounded-t-lg transition-all hover:scale-105"
+                      style={{ height: `${height}%` }}
+                    />
+                  ))}
+                </div>
+              </BentoCard>
+            </BentoGrid>
+
+            {/* Enhanced Feature Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-12">
+              {features.map((feature, index) => (
+                <MotionDiv key={index} delay={index * 100}>
+                  <FeatureCard
+                    icon={feature.icon}
+                    title={feature.title}
+                    description={feature.description}
+                    iconColor="text-lime-accent"
+                  />
+                </MotionDiv>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ===== BENEFITS SECTION ===== */}
+        <section id="benefits" className="py-32 relative">
+          <div className="container mx-auto px-6">
+            <div className="grid lg:grid-cols-2 gap-20 items-center">
+              {/* Left: Animated Chart */}
+              <div className="relative">
+                <MotionDiv>
+                  <div className="relative">
+                    {/* Decorative glow */}
+                    <GradientOrb size="md" className="top-0 left-0" />
+                    <AnimatedChartDisplay />
+                  </div>
+                </MotionDiv>
+              </div>
+
+              {/* Right: Benefits List */}
+              <div>
+                <MotionDiv>
+                  <Badge className="mb-4 bg-primary/10 text-primary border-primary/20">
+                    Benefits
+                  </Badge>
+                  <h2 className="text-4xl md:text-5xl font-black text-foreground mb-6">
+                    Make Better, <span className="text-lime-accent">Faster</span> Decisions
+                  </h2>
+                  <p className="text-xl text-muted-foreground mb-10 leading-relaxed">
+                    Transform noisy alarm data into clear health metrics,
+                    prioritizing sources that demand attention most.
+                  </p>
+                  <div className="space-y-5">
+                    {benefits.map((benefit, index) => (
+                      <MotionDiv key={index} delay={index * 50}>
+                        <div className="flex items-start gap-4 group">
+                          <div className="p-1.5 bg-lime-accent/10 rounded-lg group-hover:bg-lime-accent/20 transition-colors">
+                            <CheckCircle className="h-5 w-5 text-lime-accent flex-shrink-0" />
                           </div>
-                           <div>
-                            <p className="text-4xl font-bold text-[#6eb43f]">{isLoading ? '—' : `${(metrics?.unhealthy_percentage ?? 0).toFixed(1)}%`}</p>
-                            <p className="text-sm text-muted-foreground">Unhealthy</p>
-                          </div>
-                      </CardContent>
-                   </Card>
-                   <Card className="bg-card border-border">
-                     <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-muted-foreground">
-                          <Activity /> System Load
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="grid grid-cols-2 gap-4 text-center">
-                          <div>
-                            <p className="text-3xl font-bold text-foreground">{isLoading ? '—' : metrics?.total_sources?.toLocaleString() ?? '—'}</p>
-                            <p className="text-sm text-muted-foreground">Sources</p>
-                          </div>
-                           <div>
-                            <p className="text-3xl font-bold text-foreground">{isLoading ? '—' : metrics?.total_files?.toLocaleString() ?? '—'}</p>
-                            <p className="text-sm text-muted-foreground">Data Files</p>
-                          </div>
-                      </CardContent>
-                   </Card>
+                          <span className="text-foreground text-lg leading-relaxed">
+                            {benefit}
+                          </span>
+                        </div>
+                      </MotionDiv>
+                    ))}
+                  </div>
+                </MotionDiv>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ===== CTA SECTION ===== */}
+        <section className="py-32 relative overflow-hidden">
+          {/* Background */}
+          <div className="absolute inset-0">
+            <GridBackground gridSize={40} gridColor="var(--landing-grid-cta)" fadeEdges={false} />
+            <div className="absolute inset-0 bg-gradient-to-br from-background via-lime-accent/5 to-background" />
+          </div>
+
+          <div className="container mx-auto px-6 relative z-10">
+            <MotionDiv>
+              <div className="relative rounded-3xl p-12 md:p-20 text-center overflow-hidden border-2 border-lime-accent/20 bg-card/30 backdrop-blur-xl">
+                {/* Decorative elements */}
+                <GradientOrb size="lg" className="top-0 right-0" />
+
+                <div className="relative z-10">
+                  <h2 className="text-4xl md:text-5xl font-black text-foreground mb-6">
+                    Ready to <span className="text-lime-accent">Optimize</span> Your Operations?
+                  </h2>
+                  <p className="text-xl text-muted-foreground max-w-2xl mx-auto mb-10">
+                    Start with PVC-I today. Bring real-time alarm health, powerful visuals,
+                    and faster decisions to your entire team.
+                  </p>
+                  <Button
+                    size="lg"
+                    asChild
+                    className="bg-lime-accent hover:bg-lime-accent/90 text-black font-bold text-lg px-12 py-7 transition-all hover:scale-105 hover:shadow-2xl hover:shadow-lime-accent/40"
+                  >
+                    <a href="/dashboard">
+                      Access the Live Dashboard
+                      <ArrowRight className="ml-2 h-5 w-5" />
+                    </a>
+                  </Button>
                 </div>
               </div>
             </MotionDiv>
           </div>
         </section>
-
-        {/* Features Section */}
-        <section id="features" className="py-24 sm:py-32 bg-muted/20 border-y border-border">
-          <div className="container mx-auto px-6">
-            <div className="text-center mb-16 max-w-3xl mx-auto">
-              <h2 className="text-3xl md:text-4xl font-bold text-foreground">A Four-Step Process to Clarity</h2>
-              <p className="mt-4 text-lg text-muted-foreground">From raw alarm events to actionable insights—every stage is designed for clarity, speed, and compliance.</p>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {features.map((feature, index) => {
-                const Icon = feature.icon;
-                return (
-                  <MotionDiv key={index} delay={index * 100}>
-                    <Card className="group h-full bg-card border-border hover:border-primary/50 hover:bg-primary/5 transition-all duration-300">
-                      <CardContent className="p-6">
-                        <div className="mb-4 p-3 bg-primary/10 rounded-lg w-fit group-hover:bg-primary/20 transition-colors">
-                          <Icon className="h-6 w-6 text-primary" />
-                        </div>
-                        <h3 className="text-lg font-bold text-foreground mb-2">{feature.title}</h3>
-                        <p className="text-sm text-muted-foreground leading-relaxed">{feature.description}</p>
-                      </CardContent>
-                    </Card>
-                  </MotionDiv>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        {/* Benefits Section */}
-        <section id="benefits" className="py-24 sm:py-32">
-            <div className="container mx-auto px-6">
-                <div className="grid lg:grid-cols-2 gap-16 items-center">
-                    <div className="relative">
-                        <MotionDiv>
-                           <AnimatedChartDisplay />
-                        </MotionDiv>
-                    </div>
-                    <div>
-                        <MotionDiv>
-                            <h2 className="text-3xl md:text-4xl font-bold text-foreground mb-6">
-                                Make Better, Faster Decisions
-                            </h2>
-                            <p className="text-lg text-muted-foreground mb-8 leading-relaxed">
-                                Our platform transforms noisy alarm data into clear health metrics, prioritizing the sources that demand your attention most.
-                            </p>
-                            <div className="space-y-4">
-                                {benefits.map((benefit, index) => (
-                                    <div key={index} className="flex items-start gap-3">
-                                        <CheckCircle className="h-5 w-5 text-primary flex-shrink-0 mt-1" />
-                                        <span className="text-foreground">{benefit}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </MotionDiv>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        {/* CTA Section */}
-        <section className="py-24 sm:py-32">
-            <div className="container mx-auto px-6">
-                <MotionDiv>
-                    <div className="relative rounded-2xl p-10 md:p-16 text-center bg-gradient-to-br from-[#017944] via-[#067e52] to-[#599133] overflow-hidden">
-                        <div className="absolute inset-0 bg-grid-pattern opacity-10"></div>
-                        <div className="relative z-10">
-                            <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">Ready to Optimize Your Operations?</h2>
-                            <p className="text-lg text-white/90 max-w-2xl mx-auto mb-8">
-                                Start with PVC-I today. Bring real-time alarm health, powerful visuals, and faster decisions to your entire team.
-                            </p>
-                            <Button size="lg" asChild className="bg-slate-200 hover:bg-slate-100 text-[#017944] font-bold text-lg px-8 py-6 transition-transform hover:scale-105">
-                                <a href="/dashboard">
-                                    Access the Live Dashboard
-                                    <ArrowRight className="ml-2 h-5 w-5" />
-                                </a>
-                            </Button>
-                        </div>
-                    </div>
-                </MotionDiv>
-            </div>
-        </section>
       </main>
 
-      {/* Footer - Minimal, Dynamic */}
-      <footer className="relative border-t border-border/60 bg-background/80 backdrop-blur-sm">
-        {/* Animated highlight bar */}
-        <div className="footer-bar absolute top-0 inset-x-0" />
-        <div className="container mx-auto px-6 py-12">
-          {/* Top: Brand + compact contact (interactive chips) */}
-          <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
-            <div className="flex items-start gap-3 hover-lift">
-              <img src={engroLogo} alt="Engro Logo" className="h-7 w-auto rounded-sm brand-fade" />
-              <div className="leading-tight">
-                <div className="font-semibold text-foreground">Alarm Management System</div>
-                <p className="text-sm text-muted-foreground mt-0.5">AI-powered AMS by Qbit Dynamics</p>
-              </div>
-            </div>
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 text-sm text-muted-foreground">
-              <div className="chip hover-lift flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-primary" />
-                <span>Karachi, PK</span>
-              </div>
-              <a className="chip hover-lift flex items-center gap-2" href="tel:+9221111411411" aria-label="Call support">
-                <Phone className="h-4 w-4 text-primary" />
-                <span className="text-foreground/90">+92 21 111 411 411</span>
-              </a>
-              <div className="chip hover-lift flex items-center gap-2">
-                <Clock className="h-4 w-4 text-primary" />
-                <span>Mon–Fri · 9am–5pm (PST)</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Divider */}
-          <div className="my-8 border-t border-border/60" />
-
-          {/* Bottom bar */}
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between text-sm text-muted-foreground">
-            <div className="flex items-center flex-wrap gap-x-2 gap-y-1">
-              <span>© {new Date().getFullYear()} Engro Polymer & Chemicals</span>
-              <span className="hidden md:inline">•</span>
-              <span className="md:ml-2">All rights reserved</span>
-            </div>
-            <nav className="flex items-center gap-6">
-              <a href="#" className="link-underline hover:text-foreground">Privacy</a>
-              <a href="#" className="link-underline hover:text-foreground">Disclaimer</a>
-              <a href="#" className="link-underline hover:text-foreground">Sitemap</a>
-            </nav>
-          </div>
-
-          {/* Builder credit (subtle) */}
-          <div className="mt-6 flex items-center justify-center gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Built by</span>
-            <img
-              src={qbitLogo}
-              alt="Qbit Dynamics"
-              className="h-6 w-auto brand-fade invert dark:invert-0"
-            />
-          </div>
-        </div>
-      </footer>
+      {/* ===== FOOTER ===== */}
+      <Footer />
     </div>
   );
 };

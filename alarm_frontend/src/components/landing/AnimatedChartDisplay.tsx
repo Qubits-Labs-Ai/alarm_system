@@ -40,10 +40,10 @@ const charts = [
     component: (data: any[], colors: any) => (
       <BarChart data={data}>
         <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
-        <XAxis dataKey="name" tick={{ fill: colors.mutedForeground, fontSize: 12 }} axisLine={false} tickLine={false} />
-        <YAxis tick={{ fill: colors.mutedForeground, fontSize: 12 }} axisLine={false} tickLine={false} />
+        <XAxis dataKey="name" tick={{ fill: colors.textColor, fontSize: 12 }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fill: colors.textColor, fontSize: 12 }} axisLine={false} tickLine={false} />
         <Tooltip content={<CustomTooltip />} cursor={{ fill: colors.tooltipCursor }} />
-        <Bar dataKey="value" fill={colors.primary} />
+        <Bar dataKey="value" fill={colors.primary} radius={[8, 8, 0, 0]} />
       </BarChart>
     ),
   },
@@ -53,12 +53,12 @@ const charts = [
     component: (data: any[], colors: any) => (
       <ComposedChart data={data}>
         <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
-        <XAxis dataKey="name" tick={{ fill: colors.mutedForeground, fontSize: 12 }} axisLine={false} tickLine={false} />
-        <YAxis yAxisId="left" tick={{ fill: colors.mutedForeground, fontSize: 12 }} axisLine={false} tickLine={false} />
+        <XAxis dataKey="name" tick={{ fill: colors.textColor, fontSize: 12 }} axisLine={false} tickLine={false} />
+        <YAxis yAxisId="left" tick={{ fill: colors.textColor, fontSize: 12 }} axisLine={false} tickLine={false} />
         <YAxis yAxisId="right" orientation="right" tick={{ fill: 'var(--warning)', fontSize: 12 }} tickFormatter={(tick) => `${tick}%`} domain={[0, 100]} axisLine={false} tickLine={false} />
         <Tooltip content={<CustomTooltip />} cursor={{ fill: colors.tooltipCursor }} />
-        <Bar yAxisId="left" dataKey="count" fill={colors.primary} />
-        <Line yAxisId="right" type="monotone" dataKey="cumulative" stroke="var(--warning)" strokeWidth={2} dot={{ r: 4 }} />
+        <Bar yAxisId="left" dataKey="count" fill={colors.primary} radius={[8, 8, 0, 0]} />
+        <Line yAxisId="right" type="monotone" dataKey="cumulative" stroke="var(--warning)" strokeWidth={3} dot={{ r: 5, fill: 'var(--warning)' }} />
       </ComposedChart>
     ),
   },
@@ -82,7 +82,7 @@ const charts = [
             ))}
           </Pie>
           <Tooltip content={<CustomTooltip />} />
-          <Legend wrapperStyle={{ fontSize: '12px', color: colors.mutedForeground }} />
+          <Legend wrapperStyle={{ fontSize: '12px', color: colors.textColor }} />
         </PieChart>
       );
     },
@@ -96,17 +96,19 @@ const AnimatedChartDisplay = () => {
   const [chartData, setChartData] = useState(charts.map(c => ({ ...c, data: c.data })));
   const colors = useMemo(() => {
     const greenPalette = getGreenPalette(4);
-    const isDark = document.documentElement.classList.contains('dark');
+    // We rely on CSS variables for text colors to ensure they update correctly 
+    // regardless of the component's local theme state (which might be out of sync)
 
     return {
-      background: 'hsl(var(--card))',
-      foreground: 'hsl(var(--card-foreground))',
-      border: 'hsl(var(--border))',
-      mutedForeground: 'hsl(var(--muted-foreground))',
-      primary: greenPalette[1] || (isDark ? 'oklch(0.68 0.12 140)' : 'oklch(0.55 0.15 140)'),
-      secondary: '#d11308', // Use a direct hex value for orange to ensure it always renders
+      background: 'var(--card)',
+      foreground: 'var(--card-foreground)',
+      border: 'var(--border)',
+      mutedForeground: 'var(--muted-foreground)', // Removed incorrect hsl() wrapper
+      textColor: 'var(--muted-foreground)', // Use CSS variable for automatic theme switching
+      primary: greenPalette[1] || 'var(--primary)', // Use CSS variable as fallback
+      secondary: '#d11308',
       tooltipCursor: 'transparent',
-      donut: {}, // Colors are now handled directly in the component
+      donut: {},
     };
   }, [theme]);
 
@@ -129,28 +131,43 @@ const AnimatedChartDisplay = () => {
     };
   }, []);
 
-    const currentChart = chartData[chartIndex];
+  const currentChart = chartData[chartIndex];
 
 
   return (
-    <div className="relative w-full h-[400px] p-4 bg-card/80 border-2 border-border rounded-xl shadow-2xl shadow-primary/10 backdrop-blur-sm overflow-hidden">
+    <div className="relative w-full h-[400px] p-6 bg-card/90 border-2 border-primary/30 rounded-2xl shadow-2xl shadow-primary/20 backdrop-blur-md overflow-hidden group hover:border-primary/50 hover:shadow-primary/30 transition-all duration-500">
+      {/* Animated gradient background */}
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-lime-accent/5 opacity-50 group-hover:opacity-70 transition-opacity duration-500" />
+
+      {/* Glow effect on hover */}
+      <div className="absolute inset-0 bg-gradient-to-tr from-primary/0 via-primary/10 to-lime-accent/0 opacity-0 group-hover:opacity-100 transition-opacity duration-700 blur-xl" />
+
       <AnimatePresence mode="wait">
         <motion.div
           key={chartIndex}
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -20 }}
-          transition={{ duration: 0.5, ease: 'easeInOut' }}
-          className="w-full h-full"
+          initial={{ opacity: 0, scale: 0.9, rotateX: 10, filter: 'blur(10px)' }}
+          animate={{ opacity: 1, scale: 1, rotateX: 0, filter: 'blur(0px)' }}
+          exit={{ opacity: 0, scale: 0.9, rotateX: -10, filter: 'blur(10px)' }}
+          transition={{ duration: 0.7, ease: [0.4, 0, 0.2, 1] }}
+          className="w-full h-full relative z-10"
         >
           <ResponsiveContainer width="100%" height="100%">
             {currentChart.component(currentChart.data, colors)}
           </ResponsiveContainer>
         </motion.div>
       </AnimatePresence>
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+
+      {/* Chart indicators with enhanced styling */}
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-3 z-20">
         {charts.map((_, index) => (
-          <div key={index} className={`w-2 h-2 rounded-full transition-all duration-300 ${chartIndex === index ? 'bg-primary' : 'bg-muted'}`} />
+          <motion.div
+            key={index}
+            className={`h-2 rounded-full transition-all duration-500 ${chartIndex === index
+              ? 'w-8 bg-primary shadow-lg shadow-primary/50'
+              : 'w-2 bg-muted-foreground/30 hover:bg-muted-foreground/50'
+              }`}
+            whileHover={{ scale: 1.2 }}
+          />
         ))}
       </div>
     </div>
