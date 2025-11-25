@@ -1,13 +1,10 @@
-import { useState } from 'react';
-import { ArrowRight, ShieldCheck, BarChart3, CheckCircle, TrendingUp, AlertTriangle, Activity, Sparkles, Bell } from 'lucide-react';
+import { ArrowRight, ShieldCheck, BarChart3, CheckCircle, TrendingUp, AlertTriangle, Activity, Sparkles, Bell, Cpu, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Header } from '@/components/shared/Header';
 import { Footer } from '@/components/shared/Footer';
 import PixelBlast from '@/components/ui/PixelBlast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { usePlantHealth } from '@/hooks/usePlantHealth';
-import { UnhealthyBarChart } from '@/components/dashboard/UnhealthyBarChart';
 import AnimatedChartDisplay from '@/components/landing/AnimatedChartDisplay';
 import { GridBackground } from '@/components/landing/GridBackground';
 import { GradientOrb } from '@/components/landing/GradientOrb';
@@ -16,6 +13,9 @@ import { DashboardMockup } from '@/components/landing/DashboardMockup';
 import { BentoGrid, BentoCard } from '@/components/landing/BentoGrid';
 import { FeatureCard } from '@/components/landing/FeatureCard';
 import { ScrollIndicator } from '@/components/landing/ScrollIndicator';
+import { ProcessFlowCard } from '@/components/landing/ProcessFlowCard';
+import { FlowArrow } from '@/components/landing/FlowArrow';
+import { StatsTicker } from '@/components/landing/StatsTicker';
 
 // Motion-aware component for animations
 const MotionDiv = ({ children, delay = 0 }: { children: React.ReactNode, delay?: number }) => (
@@ -28,9 +28,6 @@ const MotionDiv = ({ children, delay = 0 }: { children: React.ReactNode, delay?:
 );
 
 const LandingPage = () => {
-  const [topN, setTopN] = useState<1 | 3>(1);
-  const { data, isLoading } = usePlantHealth('pvcI', topN, 'perSource', 60000);
-  const metrics = data?.metrics;
 
   const features = [
     {
@@ -66,6 +63,14 @@ const LandingPage = () => {
 
   const navLinks = [
     {
+      label: 'How It Works',
+      href: '#how-it-works',
+      onClick: (e: React.MouseEvent) => {
+        e.preventDefault();
+        document.querySelector('#how-it-works')?.scrollIntoView({ behavior: 'smooth' });
+      }
+    },
+    {
       label: 'Features',
       href: '#features',
       onClick: (e: React.MouseEvent) => {
@@ -73,14 +78,7 @@ const LandingPage = () => {
         document.querySelector('#features')?.scrollIntoView({ behavior: 'smooth' });
       }
     },
-    {
-      label: 'Live Snapshot',
-      href: '#snapshot',
-      onClick: (e: React.MouseEvent) => {
-        e.preventDefault();
-        document.querySelector('#snapshot')?.scrollIntoView({ behavior: 'smooth' });
-      }
-    },
+
     {
       label: 'Benefits',
       href: '#benefits',
@@ -194,40 +192,111 @@ const LandingPage = () => {
                 </div>
               </MotionDiv>
 
-              {/* Dashboard Mockups - Both Variants */}
+              {/* Dashboard Mockup - Feature Showcase */}
               <MotionDiv delay={600}>
                 <div className="w-full space-y-8">
                   {/* Browser Frame Mockup */}
                   <DashboardMockup variant="browser">
-                    <div className="grid grid-cols-4 gap-4">
-                      <Card className="col-span-4 md:col-span-2 bg-card/50 border-lime-accent/20">
-                        <CardHeader className="pb-3">
-                          <div className="flex items-center justify-between">
-                            <CardTitle className="text-base">Overall Health</CardTitle>
-                            <TrendingUp className="h-4 w-4 text-lime-accent" />
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* Feature 1: Real-Time Monitoring */}
+                      <Card className="bg-card/50 border-lime-accent/20 hover:border-lime-accent/40 transition-all group">
+                        <CardContent className="pt-6">
+                          <div className="flex items-start gap-3">
+                            <div className="p-2 bg-lime-accent/10 rounded-lg group-hover:bg-lime-accent/20 transition-colors">
+                              <Activity className="h-5 w-5 text-lime-accent" />
+                            </div>
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-sm mb-1">Real-Time Monitoring</h3>
+                              <p className="text-xs text-muted-foreground leading-relaxed">
+                                Continuous alarm tracking across all production lines
+                              </p>
+                            </div>
                           </div>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="text-4xl font-bold text-lime-accent">
-                            <AnimatedCounter value={93.8} decimals={1} suffix="%" />
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-1">System performing optimally</p>
                         </CardContent>
                       </Card>
-                      <Card className="col-span-2 md:col-span-1 bg-card/50 border-primary/20">
-                        <CardContent className="pt-6 text-center">
-                          <div className="text-3xl font-bold text-foreground">
-                            <AnimatedCounter value={26740} />
+
+                      {/* Feature 2: Smart Analytics */}
+                      <Card className="bg-card/50 border-lime-accent/20 hover:border-lime-accent/40 transition-all group">
+                        <CardContent className="pt-6">
+                          <div className="flex items-start gap-3">
+                            <div className="p-2 bg-lime-accent/10 rounded-lg group-hover:bg-lime-accent/20 transition-colors">
+                              <BarChart3 className="h-5 w-5 text-lime-accent" />
+                            </div>
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-sm mb-1">Smart Analytics</h3>
+                              <p className="text-xs text-muted-foreground leading-relaxed">
+                                Advanced algorithms identify patterns and anomalies
+                              </p>
+                            </div>
                           </div>
-                          <p className="text-xs text-muted-foreground mt-1">Active Sources</p>
                         </CardContent>
                       </Card>
-                      <Card className="col-span-2 md:col-span-1 bg-card/50 border-primary/20">
-                        <CardContent className="pt-6 text-center">
-                          <div className="text-3xl font-bold text-foreground">
-                            <AnimatedCounter value={76} />
+
+                      {/* Feature 3: Instant Alerts */}
+                      <Card className="bg-card/50 border-lime-accent/20 hover:border-lime-accent/40 transition-all group">
+                        <CardContent className="pt-6">
+                          <div className="flex items-start gap-3">
+                            <div className="p-2 bg-lime-accent/10 rounded-lg group-hover:bg-lime-accent/20 transition-colors">
+                              <Bell className="h-5 w-5 text-lime-accent" />
+                            </div>
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-sm mb-1">Instant Alerts</h3>
+                              <p className="text-xs text-muted-foreground leading-relaxed">
+                                Get notified immediately when issues are detected
+                              </p>
+                            </div>
                           </div>
-                          <p className="text-xs text-muted-foreground mt-1">Data Files</p>
+                        </CardContent>
+                      </Card>
+
+                      {/* Feature 4: Health Scoring */}
+                      <Card className="bg-card/50 border-lime-accent/20 hover:border-lime-accent/40 transition-all group">
+                        <CardContent className="pt-6">
+                          <div className="flex items-start gap-3">
+                            <div className="p-2 bg-lime-accent/10 rounded-lg group-hover:bg-lime-accent/20 transition-colors">
+                              <ShieldCheck className="h-5 w-5 text-lime-accent" />
+                            </div>
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-sm mb-1">Health Scoring</h3>
+                              <p className="text-xs text-muted-foreground leading-relaxed">
+                                Automated health metrics for every alarm source
+                              </p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      {/* Feature 5: Compliance Ready */}
+                      <Card className="bg-card/50 border-lime-accent/20 hover:border-lime-accent/40 transition-all group">
+                        <CardContent className="pt-6">
+                          <div className="flex items-start gap-3">
+                            <div className="p-2 bg-lime-accent/10 rounded-lg group-hover:bg-lime-accent/20 transition-colors">
+                              <CheckCircle className="h-5 w-5 text-lime-accent" />
+                            </div>
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-sm mb-1">Compliance Ready</h3>
+                              <p className="text-xs text-muted-foreground leading-relaxed">
+                                Meets industry standards and best practices
+                              </p>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      {/* Feature 6: Visual Insights */}
+                      <Card className="bg-card/50 border-lime-accent/20 hover:border-lime-accent/40 transition-all group">
+                        <CardContent className="pt-6">
+                          <div className="flex items-start gap-3">
+                            <div className="p-2 bg-lime-accent/10 rounded-lg group-hover:bg-lime-accent/20 transition-colors">
+                              <TrendingUp className="h-5 w-5 text-lime-accent" />
+                            </div>
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-sm mb-1">Visual Insights</h3>
+                              <p className="text-xs text-muted-foreground leading-relaxed">
+                                Clear charts and graphs for quick decision-making
+                              </p>
+                            </div>
+                          </div>
                         </CardContent>
                       </Card>
                     </div>
@@ -238,97 +307,153 @@ const LandingPage = () => {
               {/* Scroll Indicator */}
               <MotionDiv delay={750}>
                 <div className="mt-20">
-                  <ScrollIndicator targetId="snapshot" />
+                  <ScrollIndicator targetId="how-it-works" />
                 </div>
               </MotionDiv>
             </div>
           </div>
         </section>
 
-        {/* ===== LIVE SNAPSHOT SECTION ===== */}
-        <section id="snapshot" className="py-32 relative">
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-muted/20 to-transparent" />
+        {/* ===== HOW IT WORKS - SYSTEM INTELLIGENCE PIPELINE ===== */}
+        <section id="how-it-works" className="py-32 relative overflow-hidden">
+          {/* Background */}
+          <div className="absolute inset-0">
+            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-muted/20 to-transparent" />
+            <GridBackground gridSize={60} gridColor="var(--landing-grid-features)" fadeEdges={true} />
+          </div>
+
           <div className="container mx-auto px-6 relative z-10">
+            {/* Section Header */}
             <MotionDiv>
-              <div className="text-center mb-20">
-                <Badge className="mb-4 bg-primary/10 text-primary border-primary/20">Live Data</Badge>
+              <div className="text-center mb-16">
+                <Badge className="mb-4 bg-lime-accent/10 text-lime-accent border-lime-accent/20">
+                  How It Works
+                </Badge>
                 <h2 className="text-4xl md:text-5xl font-black text-foreground mb-4">
-                  Live Plant Snapshot: <span className="text-lime-accent">PVC-I</span>
+                  From Raw Data to Actionable Intelligence
                 </h2>
                 <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
-                  Real-time overview of alarm system health and top offenders
-                </p>
-                <p className="text-sm text-muted-foreground/70 mt-3">
-                  Last updated: {metrics?.last_updated ? new Date(metrics.last_updated).toLocaleString() : 'Loading...'}
+                  See how our system transforms alarm chaos into crystal-clear insights in milliseconds
                 </p>
               </div>
             </MotionDiv>
 
-            <MotionDiv delay={200}>
-              <div className="grid lg:grid-cols-3 gap-8 items-start">
-                {/* Chart */}
-                <div className="lg:col-span-2">
-                  <UnhealthyBarChart
-                    data={data?.unhealthyBars ?? []}
-                    threshold={10}
-                    topN={topN}
-                    onTopNChange={setTopN}
-                    isLoading={isLoading}
-                  />
-                </div>
-
-                {/* Stats Cards */}
-                <div className="space-y-6">
-                  <Card className="bg-card/50 backdrop-blur-sm border-lime-accent/20 hover:border-lime-accent/40 transition-all hover:-translate-y-1">
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2 text-lime-accent">
-                        <TrendingUp className="h-5 w-5" />
-                        Overall Health
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="grid grid-cols-2 gap-4 text-center">
-                      <div>
-                        <p className="text-4xl font-bold text-lime-accent">
-                          {isLoading ? '—' : `${(metrics?.healthy_percentage ?? 0).toFixed(1)}%`}
-                        </p>
-                        <p className="text-sm text-muted-foreground mt-1">Healthy</p>
-                      </div>
-                      <div>
-                        <p className="text-4xl font-bold text-primary">
-                          {isLoading ? '—' : `${(metrics?.unhealthy_percentage ?? 0).toFixed(1)}%`}
-                        </p>
-                        <p className="text-sm text-muted-foreground mt-1">Unhealthy</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Card className="bg-card/50 backdrop-blur-sm border-border/40 hover:border-primary/40 transition-all hover:-translate-y-1">
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2 text-muted-foreground">
-                        <Activity className="h-5 w-5" />
-                        System Load
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="grid grid-cols-2 gap-4 text-center">
-                      <div>
-                        <p className="text-3xl font-bold text-foreground">
-                          {isLoading ? '—' : metrics?.total_sources?.toLocaleString() ?? '—'}
-                        </p>
-                        <p className="text-sm text-muted-foreground mt-1">Sources</p>
-                      </div>
-                      <div>
-                        <p className="text-3xl font-bold text-foreground">
-                          {isLoading ? '—' : metrics?.total_files?.toLocaleString() ?? '—'}
-                        </p>
-                        <p className="text-sm text-muted-foreground mt-1">Data Files</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
+            {/* Process Flow Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-16">
+              {/* Card 1: Data Ingestion */}
+              <div className="lg:col-span-1">
+                <ProcessFlowCard
+                  icon={Activity}
+                  title="Data Ingestion"
+                  description="Continuously collect alarm events from multiple sources across your production line"
+                  step={1}
+                  delay={0}
+                  visualElement={
+                    <div className="flex gap-1 justify-center">
+                      {[1, 2, 3].map((i) => (
+                        <div
+                          key={i}
+                          className="h-2 w-2 bg-lime-accent rounded-full animate-pulse"
+                          style={{ animationDelay: `${i * 200}ms` }}
+                        />
+                      ))}
+                    </div>
+                  }
+                />
               </div>
+
+              {/* Arrow 1 */}
+              <FlowArrow className="hidden lg:flex lg:col-span-0" />
+
+              {/* Card 2: Smart Processing */}
+              <div className="lg:col-span-1">
+                <ProcessFlowCard
+                  icon={Cpu}
+                  title="Smart Processing"
+                  description="Normalize and analyze thousands of events per second with advanced algorithms"
+                  step={2}
+                  delay={150}
+                  visualElement={
+                    <div className="flex items-center justify-center gap-2">
+                      <Zap className="h-4 w-4 text-lime-accent animate-pulse" />
+                      <span className="text-xs text-muted-foreground">Processing...</span>
+                    </div>
+                  }
+                />
+              </div>
+
+              {/* Arrow 2 */}
+              <FlowArrow className="hidden lg:flex lg:col-span-0" />
+
+              {/* Card 3: Health Scoring */}
+              <div className="lg:col-span-1">
+                <ProcessFlowCard
+                  icon={ShieldCheck}
+                  title="Health Scoring"
+                  description="Calculate real-time health metrics for every alarm source against industry standards"
+                  step={3}
+                  delay={300}
+                  visualElement={
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-lime-accent">
+                        <AnimatedCounter value={94} suffix="%" />
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">Health Score</p>
+                    </div>
+                  }
+                />
+              </div>
+
+              {/* Arrow 3 */}
+              <FlowArrow className="hidden lg:flex lg:col-span-0" />
+
+              {/* Card 4: Anomaly Detection */}
+              <div className="lg:col-span-1">
+                <ProcessFlowCard
+                  icon={AlertTriangle}
+                  title="Anomaly Detection"
+                  description="Identify unhealthy sources and critical patterns before they become problems"
+                  step={4}
+                  delay={450}
+                  visualElement={
+                    <div className="flex items-center justify-center gap-2">
+                      <Bell className="h-5 w-5 text-yellow-500 animate-bounce" />
+                      <span className="text-xs font-semibold">Alert Triggered</span>
+                    </div>
+                  }
+                />
+              </div>
+
+              {/* Arrow 4 */}
+              <FlowArrow className="hidden lg:flex lg:col-span-0" />
+
+              {/* Card 5: Dashboard Intelligence */}
+              <div className="lg:col-span-1">
+                <ProcessFlowCard
+                  icon={BarChart3}
+                  title="Dashboard Intelligence"
+                  description="Transform complex data into clear visualizations and actionable recommendations"
+                  step={5}
+                  delay={600}
+                  visualElement={
+                    <div className="flex items-end justify-between gap-1 h-12">
+                      {[40, 70, 45, 90, 60].map((height, i) => (
+                        <div
+                          key={i}
+                          className="flex-1 bg-gradient-to-t from-lime-accent to-lime-accent/50 rounded-t transition-all hover:scale-105"
+                          style={{ height: `${height}%` }}
+                        />
+                      ))}
+                    </div>
+                  }
+                />
+              </div>
+            </div>
+
+            {/* Stats Ticker */}
+            <MotionDiv delay={750}>
+              <StatsTicker />
             </MotionDiv>
-
-
           </div>
         </section>
 

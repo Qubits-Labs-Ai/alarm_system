@@ -700,4 +700,23 @@ html {
       background-position: 200% 0;
     }
   }
+
+  /* Infinite horizontal scroll for stats ticker */
+  @keyframes scroll-left {
+    from {
+      transform: translateX(0);
+    }
+
+    to {
+      transform: translateX(-33.333%);
+    }
+  }
+
+  .animate-scroll-left {
+    animation: scroll-left 30s linear infinite;
+  }
+
+  .pause-animation:hover {
+    animation-play-state: paused;
+  }
 }
