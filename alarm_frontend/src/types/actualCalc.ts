@@ -22,6 +22,10 @@ export interface ActualCalcKPIs {
   total_activation_windows?: number;
   overload_windows_count?: number;
   unacceptable_windows_count?: number;
+  // Time coverage (minutes) for aligned Actual-Calc sliding-window metrics
+  total_observation_minutes?: number;
+  overload_time_minutes?: number;
+  unacceptable_time_minutes?: number;
   peak_10min_activation_count?: number;
   peak_10min_window_start?: string | null;
   peak_10min_window_end?: string | null;

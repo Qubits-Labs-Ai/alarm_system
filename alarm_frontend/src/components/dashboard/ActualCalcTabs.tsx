@@ -12,7 +12,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Loader2, Database, TrendingUp, Activity, CheckCircle2, AlertCircle } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
-import ActivationOverloadSummary from './ActivationOverloadSummary';
 import { ActualCalcKPICards } from './ActualCalcKPICards';
 import { ActualCalcTree } from './ActualCalcTree';
 import ComprehensiveHealthCard from './ComprehensiveHealthCard';
@@ -335,31 +334,6 @@ export default function ActualCalcTabs({
 
   return (
     <div className="space-y-6">
-      {/* Always visible: Flood-Free Time Summary */}
-      {actualCalcLoading || !actualCalcData ? (
-        <Card className="shadow-metric-card animate-pulse">
-          <div className="p-6">
-            <div className="h-6 w-64 bg-muted rounded mb-4" />
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="space-y-3">
-                <div className="h-10 w-24 bg-muted rounded" />
-                <div className="h-3 w-48 bg-muted rounded" />
-                <div className="h-2 w-full bg-muted rounded" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="h-24 bg-muted rounded" />
-                <div className="h-24 bg-muted rounded" />
-              </div>
-              <div className="h-24 bg-muted rounded" />
-            </div>
-          </div>
-        </Card>
-      ) : (
-        <ActivationOverloadSummary
-          overall={actualCalcData.overall}
-          params={actualCalcData.params}
-        />
-      )}
 
       {/* Tabbed Content */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'alarm' | 'frequency' | 'analytics')} className="w-full">

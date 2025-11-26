@@ -805,22 +805,19 @@ def compute_activation_window_metrics(
     unacceptable_threshold: int,
 ) -> Dict[str, Any]:
     """
-    Compute ISA-style flood-free time metrics using UNIQUE activations per fixed 10-min window.
-    
-    NOTE: This measures FLOOD-FREE TIME (% of time without alarm floods), NOT overall plant health.
-    A high percentage indicates low flood risk but does NOT account for:
-    - Daily alarm overload (chronic operator fatigue)
-    - Alarm quality issues (chattering, repeating, standing)
-    - Instrument failures or system reliability
-    
-    Returns dict with:
-      - total_windows
-      - overload_windows_count
-      - unacceptable_windows_count
-      - activation_time_in_overload_windows_pct
-      - activation_time_in_unacceptable_windows_pct
-      - activation_overall_health_pct (100 - overload_pct) [RENAMED to flood_free_time in future]
-      - peak_10min_activation_count, peak_10min_window_start, peak_10min_window_end
+    Compute Flood-Free metrics using plant-wide SLIDING 10‑minute windows over UNIQUE activations
+    (Actual‑Calc alignment). Percentages are based on TIME COVERAGE (union of intervals where
+    the sliding window meets threshold) over the observation span.
+
+    Returned keys (backward compatible):
+      - total_windows: approx count of fixed bins in span (for legacy displays)
+      - overload_windows_count: number of merged overload intervals (coverage-based)
+      - unacceptable_windows_count: number of merged unacceptable intervals (coverage-based)
+      - activation_time_in_overload_windows_pct: % of observation time covered by overload
+      - activation_time_in_unacceptable_windows_pct: % of observation time covered by unacceptable
+      - activation_overall_health_pct: 100 - overload_pct
+      - peak_10min_activation_count, peak_10min_window_start, peak_10min_window_end (sliding peak)
+      - total_observation_minutes, overload_time_minutes, unacceptable_time_minutes (new)
     """
     if activations_df is None or activations_df.empty:
         return {
@@ -833,6 +830,9 @@ def compute_activation_window_metrics(
             "peak_10min_activation_count": 0,
             "peak_10min_window_start": None,
             "peak_10min_window_end": None,
+            "total_observation_minutes": 0.0,
+            "overload_time_minutes": 0.0,
+            "unacceptable_time_minutes": 0.0,
         }
 
     df = activations_df.copy()
@@ -849,18 +849,14 @@ def compute_activation_window_metrics(
             "peak_10min_activation_count": 0,
             "peak_10min_window_start": None,
             "peak_10min_window_end": None,
+            "total_observation_minutes": 0.0,
+            "overload_time_minutes": 0.0,
+            "unacceptable_time_minutes": 0.0,
         }
 
-    # Align to fixed windows
-    freq = f"{int(window_minutes)}min"
-    start = df["StartTime"].min().floor(freq)
-    end = (df["StartTime"].max() + pd.Timedelta(minutes=window_minutes)).ceil(freq)
-    # All window starts in range [start, end)
-    window_starts = pd.date_range(start=start, end=end, freq=freq, inclusive="left")
-    counts = df.groupby(df["StartTime"].dt.floor(freq)).size().reindex(window_starts, fill_value=0)
-
-    total_windows = int(len(counts))
-    if total_windows == 0:
+    window = pd.Timedelta(minutes=int(window_minutes))
+    times = df["StartTime"].tolist()
+    if not times:
         return {
             "total_windows": 0,
             "overload_windows_count": 0,
@@ -871,38 +867,83 @@ def compute_activation_window_metrics(
             "peak_10min_activation_count": 0,
             "peak_10min_window_start": None,
             "peak_10min_window_end": None,
+            "total_observation_minutes": 0.0,
+            "overload_time_minutes": 0.0,
+            "unacceptable_time_minutes": 0.0,
         }
 
-    overload_mask = counts.apply(lambda x: _apply_op(int(x), overload_op, int(overload_threshold)))
-    unacceptable_mask = counts.apply(lambda x: _apply_op(int(x), unacceptable_op, int(unacceptable_threshold)))
+    obs_start = min(times)
+    obs_end = max(times) + window
+    total_minutes = max(0.0, (obs_end - obs_start).total_seconds() / 60.0)
+    approx_total_windows = int(np.ceil(total_minutes / float(window_minutes))) if window_minutes else 0
 
-    overload_windows = int(overload_mask.sum())
-    unacceptable_windows = int(unacceptable_mask.sum())
+    def push_interval(acc: list[tuple[pd.Timestamp, pd.Timestamp]], s: pd.Timestamp, e: pd.Timestamp):
+        if s is None or e is None:
+            return
+        if e <= s:
+            return
+        acc.append((s, e))
 
-    overload_pct = round((overload_windows / total_windows) * 100.0, 2)
-    unacceptable_pct = round((unacceptable_windows / total_windows) * 100.0, 2)
+    overload_intervals: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+    unacceptable_intervals: list[tuple[pd.Timestamp, pd.Timestamp]] = []
+
+    start_idx = 0
+    peak_count = 0
+    peak_s = None
+    peak_e = None
+    for end_idx, t_end in enumerate(times):
+        t_start_bound = t_end - window
+        while start_idx <= end_idx and times[start_idx] < t_start_bound:
+            start_idx += 1
+        cnt = end_idx - start_idx + 1
+        if cnt > peak_count:
+            peak_count = cnt
+            peak_s = t_start_bound
+            peak_e = t_end
+        if _apply_op(int(cnt), overload_op, int(overload_threshold)):
+            push_interval(overload_intervals, t_start_bound, t_end)
+        if _apply_op(int(cnt), unacceptable_op, int(unacceptable_threshold)):
+            push_interval(unacceptable_intervals, t_start_bound, t_end)
+
+    def merge(intervals: list[tuple[pd.Timestamp, pd.Timestamp]]):
+        if not intervals:
+            return []
+        intervals = sorted(intervals, key=lambda x: (x[0], x[1]))
+        merged = [intervals[0]]
+        for s, e in intervals[1:]:
+            ls, le = merged[-1]
+            if s <= le:
+                merged[-1] = (ls, max(le, e))
+            else:
+                merged.append((s, e))
+        return merged
+
+    m_over = merge(overload_intervals)
+    m_unacc = merge(unacceptable_intervals)
+
+    over_minutes = sum((e - s).total_seconds() for s, e in m_over) / 60.0
+    unacc_minutes = sum((e - s).total_seconds() for s, e in m_unacc) / 60.0
+
+    overload_pct = round((over_minutes / total_minutes) * 100.0, 2) if total_minutes > 0 else 0.0
+    unacceptable_pct = round((unacc_minutes / total_minutes) * 100.0, 2) if total_minutes > 0 else 0.0
     overall_health_pct = round(100.0 - overload_pct, 2)
 
-    peak_count = int(counts.max()) if not counts.empty else 0
-    if peak_count > 0:
-        peak_start = counts.idxmax()
-        peak_end = peak_start + pd.Timedelta(minutes=window_minutes)
-        peak_start_iso = peak_start.isoformat()
-        peak_end_iso = peak_end.isoformat()
-    else:
-        peak_start_iso = None
-        peak_end_iso = None
+    peak_start_iso = peak_s.isoformat() if peak_s is not None else None
+    peak_end_iso = peak_e.isoformat() if peak_e is not None else None
 
     return {
-        "total_windows": total_windows,
-        "overload_windows_count": overload_windows,
-        "unacceptable_windows_count": unacceptable_windows,
-        "activation_time_in_overload_windows_pct": overload_pct,
-        "activation_time_in_unacceptable_windows_pct": unacceptable_pct,
-        "activation_overall_health_pct": overall_health_pct,
-        "peak_10min_activation_count": peak_count,
+        "total_windows": int(approx_total_windows),
+        "overload_windows_count": int(len(m_over)),
+        "unacceptable_windows_count": int(len(m_unacc)),
+        "activation_time_in_overload_windows_pct": float(overload_pct),
+        "activation_time_in_unacceptable_windows_pct": float(unacceptable_pct),
+        "activation_overall_health_pct": float(overall_health_pct),
+        "peak_10min_activation_count": int(peak_count),
         "peak_10min_window_start": peak_start_iso,
         "peak_10min_window_end": peak_end_iso,
+        "total_observation_minutes": float(round(total_minutes, 2)),
+        "overload_time_minutes": float(round(over_minutes, 2)),
+        "unacceptable_time_minutes": float(round(unacc_minutes, 2)),
     }
 
 
@@ -1907,6 +1948,10 @@ def run_actual_calc(
         "peak_10min_activation_count": act_metrics.get("peak_10min_activation_count", 0),
         "peak_10min_window_start": act_metrics.get("peak_10min_window_start"),
         "peak_10min_window_end": act_metrics.get("peak_10min_window_end"),
+        # New: time coverage fields (minutes)
+        "total_observation_minutes": act_metrics.get("total_observation_minutes", 0.0),
+        "overload_time_minutes": act_metrics.get("overload_time_minutes", 0.0),
+        "unacceptable_time_minutes": act_metrics.get("unacceptable_time_minutes", 0.0),
     })
 
     # Log summary statistics
