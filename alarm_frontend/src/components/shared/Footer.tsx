@@ -17,7 +17,7 @@ export function Footer() {
                             <div className="flex items-center gap-3 mb-4">
                                 <img src={engroLogo} alt="Safety Copilot" className="h-10 w-auto" />
                             </div>
-                            <h3 className="text-lg font-bold text-foreground mb-2">Alarm System</h3>
+                            <h3 className="text-lg font-bold text-foreground mb-2">AlarmCopilot</h3>
                             <p className="text-sm text-muted-foreground leading-relaxed">
                                 Intelligent alarm monitoring and notification system for real-time security and safety management.
                             </p>
@@ -145,7 +145,7 @@ export function Footer() {
                         <div className="flex flex-wrap items-center justify-center gap-4 text-sm text-muted-foreground">
                             <span>© {currentYear} Engro Polymer & Chemicals. All rights reserved.</span>
                             <span className="hidden md:inline">•</span>
-                            <span>Powered by Alarm System</span>
+                            <span>Powered by AlarmCopilot</span>
                         </div>
                         <div className="flex items-center gap-4">
                             <a href="#privacy" className="text-sm text-muted-foreground hover:text-lime-accent transition-colors">

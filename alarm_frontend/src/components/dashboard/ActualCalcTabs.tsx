@@ -31,10 +31,10 @@ import { UnhealthyBarChart } from './UnhealthyBarChart';
 import DateTimeRangePicker from '@/components/dashboard/DateTimeRangePicker';
 import { fetchPlantActualCalcSankey } from '@/api/actualCalc';
 import { filterWindowsByRange, aggregateBarsFromWindows, buildTopActorsFromWindows, buildUnhealthyPeriodsFromWindows } from '@/lib/actualCalcRange';
-import { 
-  ActualCalcOverallResponse, 
-  ActualCalcUnhealthyResponse, 
-  ActualCalcFloodsResponse, 
+import {
+  ActualCalcOverallResponse,
+  ActualCalcUnhealthyResponse,
+  ActualCalcFloodsResponse,
   ActualCalcBadActorsResponse,
   ComprehensiveHealthResponse
 } from '@/types/actualCalc';
@@ -54,18 +54,18 @@ interface ActualCalcTabsProps {
   actualCalcBadActors: ActualCalcBadActorsResponse | null;
   healthScore: ComprehensiveHealthResponse | null;
   actualCalcLoading: boolean;
-  
+
   // Window selection state (for Detailed Analytics)
   selectedWindow: { id: string; label: string; start: string; end: string } | null;
   onWindowChange: (window: { id: string; label: string; start: string; end: string } | null) => void;
-  
+
   // Chart controls
   topWindowsTopK: 5 | 10 | 15;
   onTopKChange: (value: 5 | 10 | 15) => void;
   topN: 1 | 3;
   onTopNChange: (value: 1 | 3) => void;
   includeSystem: boolean;
-  
+
   // Plant ID
   plantId: string;
 }
@@ -174,14 +174,14 @@ export default function ActualCalcTabs({
       const id = w.id;
       const label = `${new Date(w.start).toLocaleString()} — ${new Date(w.end).toLocaleString()}`;
       const top_sources = w.top_sources || [];
-      return { 
-        id, 
-        label, 
-        flood_count: w.flood_count, 
-        start: w.start, 
-        end: w.end, 
-        short_label: idx < 3 ? undefined : new Date(w.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), 
-        rate_per_min: w.rate_per_min, 
+      return {
+        id,
+        label,
+        flood_count: w.flood_count,
+        start: w.start,
+        end: w.end,
+        short_label: idx < 3 ? undefined : new Date(w.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        rate_per_min: w.rate_per_min,
         top_sources,
         start_ts: new Date(w.start).getTime(),
       };
@@ -190,14 +190,14 @@ export default function ActualCalcTabs({
     // Aggregate unhealthy per source across all unhealthy windows
     const aggBars: UnhealthyBar[] = (actualCalcUnhealthy?.per_source || []).map((s) => {
       const hits = s.Unhealthy_Periods;
-      return { 
-        id: s.Source, 
-        source: s.Source, 
-        hits, 
-        threshold, 
-        over_by: Math.max(0, hits - threshold), 
-        bin_start: timeStart, 
-        bin_end: timeEnd 
+      return {
+        id: s.Source,
+        source: s.Source,
+        hits,
+        threshold,
+        over_by: Math.max(0, hits - threshold),
+        bin_start: timeStart,
+        bin_end: timeEnd
       };
     }).sort((a, b) => b.hits - a.hits);
 
@@ -229,8 +229,8 @@ export default function ActualCalcTabs({
       }
     }
 
-    const timePickerDomain = actualCalcData?.sample_range?.start && actualCalcData?.sample_range?.end 
-      ? { start: actualCalcData.sample_range.start, end: actualCalcData.sample_range.end } 
+    const timePickerDomain = actualCalcData?.sample_range?.start && actualCalcData?.sample_range?.end
+      ? { start: actualCalcData.sample_range.start, end: actualCalcData.sample_range.end }
       : undefined;
 
     // Range-based aggregates (apply when a range is selected and no single window is chosen)
@@ -245,14 +245,14 @@ export default function ActualCalcTabs({
       : null;
     const totalFloodCountRange = hasRange
       ? usedWindows.reduce((sum, w) => {
-          const srcs = w?.sources_involved || {};
-          const entries = Object.entries(srcs);
-          const visible = includeSystem ? entries : entries.filter(([k]) => {
-            const s = String(k || '').trim().toUpperCase();
-            return !(s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM'));
-          });
-          return sum + visible.reduce((acc, [, v]) => acc + Number(v || 0), 0);
-        }, 0)
+        const srcs = w?.sources_involved || {};
+        const entries = Object.entries(srcs);
+        const visible = includeSystem ? entries : entries.filter(([k]) => {
+          const s = String(k || '').trim().toUpperCase();
+          return !(s === 'REPORT' || s.startsWith('$') || s.startsWith('ACTIVITY') || s.startsWith('SYS_') || s.startsWith('SYSTEM'));
+        });
+        return sum + visible.reduce((acc, [, v]) => acc + Number(v || 0), 0);
+      }, 0)
       : null;
 
     return {
@@ -321,7 +321,7 @@ export default function ActualCalcTabs({
                 <div className="space-y-2">
                   <p className="font-medium text-blue-900 dark:text-blue-100">First-Time Load</p>
                   <p className="text-sm text-blue-800 dark:text-blue-200">
-                    If this is your first time accessing this data, the system may need 2-5 minutes to generate the cache. 
+                    If this is your first time accessing this data, the system may need 2-5 minutes to generate the cache.
                     Subsequent loads will be instant.
                   </p>
                 </div>
@@ -355,9 +355,9 @@ export default function ActualCalcTabs({
           </div>
         </Card>
       ) : (
-        <ActivationOverloadSummary 
-          overall={actualCalcData.overall} 
-          params={actualCalcData.params} 
+        <ActivationOverloadSummary
+          overall={actualCalcData.overall}
+          params={actualCalcData.params}
         />
       )}
 
@@ -382,8 +382,8 @@ export default function ActualCalcTabs({
             <>
               {/* Comprehensive Health Score Card */}
               {healthScore && (
-                <ComprehensiveHealthCard 
-                  healthScore={healthScore.comprehensive_health} 
+                <ComprehensiveHealthCard
+                  healthScore={healthScore.comprehensive_health}
                   loading={false}
                 />
               )}
@@ -474,15 +474,26 @@ export default function ActualCalcTabs({
                   </p>
                 )}
                 <p className="text-xs text-muted-foreground mt-1">
-                  Generated: {new Date(actualCalcData.generated_at).toLocaleString()} | 
-                  Stale threshold: {actualCalcData.params.stale_min}min | 
+                  Generated: {new Date(actualCalcData.generated_at).toLocaleString()} |
+                  Stale threshold: {actualCalcData.params.stale_min}min |
                   Chatter threshold: {actualCalcData.params.chatter_min}min
                 </p>
               </Card>
 
               {/* NEW: Alarm Summary Visualizations */}
               <div className="space-y-6">
-                {/* Row 1: Composition Sankey + Waterfall */}
+                {/* Row 1: Calendar + Seasonality */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <CalendarDailyHeatmap
+                    plantId={plantId}
+                  />
+                  <SeasonalityHeatmap
+                    plantId={plantId}
+                    includeSystem={includeSystem}
+                  />
+                </div>
+
+                {/* Row 2: Composition Sankey + Waterfall */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   <CompositionSankey
                     plantId={plantId}
@@ -505,22 +516,11 @@ export default function ActualCalcTabs({
                   />
                 </div>
 
-                {/* Row 2: Category Trend (full width) */}
+                {/* Row 3: Category Trend (full width) */}
                 <CategoryTrendArea
                   plantId={plantId}
                   includeSystem={includeSystem}
                 />
-
-                {/* Row 3: Calendar + Seasonality */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <CalendarDailyHeatmap
-                    plantId={plantId}
-                  />
-                  <SeasonalityHeatmap
-                    plantId={plantId}
-                    includeSystem={includeSystem}
-                  />
-                </div>
               </div>
             </>
           )}
@@ -646,15 +646,15 @@ export default function ActualCalcTabs({
                 isLoading={actualCalcLoading || !actualCalcFloods}
                 includeSystem={includeSystem}
                 onSelectWindow={(row) => {
-                  if (!row) { 
-                    onWindowChange(null); 
-                    return; 
+                  if (!row) {
+                    onWindowChange(null);
+                    return;
                   }
-                  onWindowChange({ 
-                    id: row.id, 
-                    label: row.label, 
-                    start: row.start, 
-                    end: row.end 
+                  onWindowChange({
+                    id: row.id,
+                    label: row.label,
+                    start: row.start,
+                    end: row.end
                   });
                 }}
                 selectedWindowId={selectedWindow?.id}

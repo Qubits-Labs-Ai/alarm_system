@@ -31,7 +31,7 @@ export function PageShell({
         variant="dashboard"
         user={user}
         onLogout={handleLogout}
-        title="Standard-Aligned Alarm Management System"
+        title="AlarmCopilot"
         subtitle="Real-time monitoring & analytics"
       />
 

@@ -385,14 +385,14 @@ def calculate_comprehensive_health(metrics: Dict[str, Any]) -> Dict[str, Any]:
             'system_reliability': round(tier4_score * 10.0, 2)   # Scale 0-10 → 0-100
         },
         'sub_scores': {
-            'daily_load': round(daily_load, 2),
-            'window_overload': round(window_overload, 2),
-            'peak_intensity': round(peak_intensity, 2),
-            'nuisance_free': round(nuisance, 2),
-            'instrument_health': round(instrument, 2),
-            'standing_control': round(standing, 2),
-            'response_time': round(response, 2),
-            'consistency': round(consistency, 2)
+            'daily_load_score': round(daily_load, 2),
+            'window_overload_score': round(window_overload, 2),
+            'peak_intensity_score': round(peak_intensity, 2),
+            'nuisance_score': round(nuisance, 2),
+            'instrument_health_score': round(instrument, 2),
+            'standing_control_score': round(standing, 2),
+            'response_score': round(response, 2),
+            'consistency_score': round(consistency, 2)
         },
         'interpretation': interpretation
     }

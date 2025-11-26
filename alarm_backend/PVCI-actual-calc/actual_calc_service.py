@@ -2230,6 +2230,29 @@ def run_actual_calc_with_cache(
     
     csv_path = os.path.join(alarm_data_dir, rel_path, file_name)
     
+    # Infer plant_id if not provided, based on resolved CSV path/filename
+    if not plant_id:
+        # 1. Try matching registry csv_filename
+        for _pid in ["PVCI", "VCMA"]:
+            _info = get_plant_csv_info(_pid)
+            if _info and file_name and str(_info.get("csv_filename", "")).lower() == str(file_name).lower():
+                plant_id = _pid
+                break
+        
+        # 2. Infer from relative path folder name
+        if not plant_id and rel_path:
+            _last = str(rel_path).replace("\\", "/").split("/")[-1].upper()
+            if _last in ("PVCI-MERGED", "PVCI"):
+                plant_id = "PVCI"
+            elif _last in ("VCMA",):
+                plant_id = "VCMA"
+        
+        # 3. Infer from filename stem
+        if not plant_id and file_name:
+            _stem = os.path.splitext(str(file_name))[0].upper()
+            if _stem in ("PVCI", "VCMA"):
+                plant_id = _stem
+    
     # Build params dict for cache validation
     params = {
         "stale_min": calc_params.get("stale_min", 60),

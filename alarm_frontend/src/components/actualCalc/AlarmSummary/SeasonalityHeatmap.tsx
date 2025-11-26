@@ -78,7 +78,7 @@ const SeasonalityHeatmap: React.FC<Props> = ({
     const minutes = Math.floor(loadingSeconds / 60);
     const seconds = loadingSeconds % 60;
     const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-    
+
     return (
       <Card className={className}>
         <CardContent className="flex items-center justify-center h-[500px]">
@@ -139,7 +139,7 @@ const SeasonalityHeatmap: React.FC<Props> = ({
 
   // Create 7×24 matrix
   const matrix: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
-  
+
   data.matrix.forEach(cell => {
     matrix[cell.dow][cell.hour] = cell.avg_activations;
   });
@@ -152,9 +152,9 @@ const SeasonalityHeatmap: React.FC<Props> = ({
   // Get color for value (green scale)
   const getColor = (value: number) => {
     if (value === 0) return '#f3f4f6'; // gray-100
-    
+
     const normalized = (value - minValue) / (maxValue - minValue || 1);
-    
+
     // Green scale from light to dark
     if (normalized < 0.2) return '#d1fae5'; // green-100
     if (normalized < 0.4) return '#6ee7b7'; // green-300
@@ -168,6 +168,34 @@ const SeasonalityHeatmap: React.FC<Props> = ({
   const peakValue = maxValue;
   const peakCell = data.matrix.find(c => c.avg_activations === peakValue);
   const peakTime = peakCell ? `${DOW_LABELS[peakCell.dow]} ${HOUR_LABELS[peakCell.hour]}` : 'N/A';
+
+  // Weekend vs Weekday Analysis
+  const weekdayIndices = [0, 1, 2, 3, 4]; // Mon-Fri
+  const weekendIndices = [5, 6]; // Sat-Sun
+
+  const weekdayValues = data.matrix.filter(c => weekdayIndices.includes(c.dow)).map(c => c.avg_activations);
+  const weekendValues = data.matrix.filter(c => weekendIndices.includes(c.dow)).map(c => c.avg_activations);
+
+  const weekdayAvg = weekdayValues.length > 0 ? weekdayValues.reduce((a, b) => a + b, 0) / weekdayValues.length : 0;
+  const weekendAvg = weekendValues.length > 0 ? weekendValues.reduce((a, b) => a + b, 0) / weekendValues.length : 0;
+
+  const weekdayWeekendDiff = weekdayAvg - weekendAvg;
+  const weekdayWeekendDiffPct = weekdayAvg > 0 ? (weekdayWeekendDiff / weekdayAvg) * 100 : 0;
+
+  // Calculate variance (standard deviation) for each group
+  const calculateStdDev = (values: number[], mean: number) => {
+    if (values.length === 0) return 0;
+    const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
+    return Math.sqrt(variance);
+  };
+
+  const weekdayStdDev = calculateStdDev(weekdayValues, weekdayAvg);
+  const weekendStdDev = calculateStdDev(weekendValues, weekendAvg);
+
+  // Determine pattern insights
+  const hasSignificantDifference = Math.abs(weekdayWeekendDiffPct) > 15; // >15% difference is significant
+  const weekendHigher = weekendAvg > weekdayAvg;
+  const highVariance = weekdayStdDev > weekdayAvg * 0.3 || weekendStdDev > weekendAvg * 0.3; // >30% coefficient of variation
 
   return (
     <Card className={className}>
@@ -206,30 +234,33 @@ const SeasonalityHeatmap: React.FC<Props> = ({
             </div>
 
             {/* Heatmap rows */}
-            {matrix.map((row, dowIdx) => (
-              <div key={dowIdx} className="flex mb-1">
-                {/* DOW label */}
-                <div className="w-16 flex-shrink-0 flex items-center justify-end pr-2 text-sm font-medium text-muted-foreground">
-                  {DOW_LABELS[dowIdx]}
-                </div>
-
-                {/* Hour cells */}
-                {row.map((value, hourIdx) => (
-                  <div
-                    key={hourIdx}
-                    className="flex-1 min-w-[32px] h-8 rounded-sm border border-background cursor-pointer hover:ring-2 hover:ring-primary transition-all"
-                    style={{ backgroundColor: getColor(value) }}
-                    title={`${DOW_LABELS[dowIdx]} ${HOUR_LABELS[hourIdx]}: ${value.toFixed(1)} avg activations`}
-                  >
-                    {value > 0 && value === maxValue && (
-                      <div className="w-full h-full flex items-center justify-center text-white font-bold text-xs">
-                        ★
-                      </div>
-                    )}
+            {matrix.map((row, dowIdx) => {
+              const isWeekend = weekendIndices.includes(dowIdx);
+              return (
+                <div key={dowIdx} className={`flex mb-1 ${isWeekend ? 'rounded-md bg-muted/30 border border-muted-foreground/10' : ''}`}>
+                  {/* DOW label */}
+                  <div className={`w-16 flex-shrink-0 flex items-center justify-end pr-2 text-sm font-medium ${isWeekend ? 'text-foreground' : 'text-muted-foreground'}`}>
+                    {DOW_LABELS[dowIdx]}
                   </div>
-                ))}
-              </div>
-            ))}
+
+                  {/* Hour cells */}
+                  {row.map((value, hourIdx) => (
+                    <div
+                      key={hourIdx}
+                      className="flex-1 min-w-[32px] h-8 rounded-sm border border-background cursor-pointer hover:ring-2 hover:ring-primary transition-all"
+                      style={{ backgroundColor: getColor(value) }}
+                      title={`${DOW_LABELS[dowIdx]} ${HOUR_LABELS[hourIdx]}: ${value.toFixed(1)} avg activations`}
+                    >
+                      {value > 0 && value === maxValue && (
+                        <div className="w-full h-full flex items-center justify-center text-white font-bold text-xs">
+                          ★
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -253,7 +284,7 @@ const SeasonalityHeatmap: React.FC<Props> = ({
         </div>
 
         {/* Statistics */}
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 text-sm">
           <div className="rounded-lg border p-3">
             <div className="text-muted-foreground mb-1">Average (All Hours)</div>
             <div className="text-2xl font-bold">{totalAvg.toFixed(1)}</div>
@@ -269,17 +300,107 @@ const SeasonalityHeatmap: React.FC<Props> = ({
             <div className="text-2xl font-bold">×{(peakValue / totalAvg).toFixed(1)}</div>
             <div className="text-xs text-muted-foreground">times higher</div>
           </div>
+          <div className="rounded-lg border p-3 bg-muted/20">
+            <div className="text-muted-foreground mb-1">Weekday Average</div>
+            <div className="text-2xl font-bold">{weekdayAvg.toFixed(1)}</div>
+            <div className="text-xs text-muted-foreground">Mon-Fri</div>
+          </div>
+          <div className="rounded-lg border p-3 bg-muted/20">
+            <div className="text-muted-foreground mb-1">Weekend Average</div>
+            <div className="text-2xl font-bold">{weekendAvg.toFixed(1)}</div>
+            <div className="text-xs text-muted-foreground">Sat-Sun</div>
+          </div>
         </div>
 
         {/* Insights */}
-        <div className="mt-4 rounded-lg p-3" style={{ backgroundColor: CHART_GREEN_PALE }}>
-          <div className="text-sm text-foreground font-medium mb-1">Operational Patterns</div>
-          <ul className="text-sm text-muted-foreground list-disc ml-5">
-            <li>Darker cells indicate higher alarm activity during that time slot</li>
-            <li>Star (★) marks the peak hour across all weeks</li>
-            <li>Patterns may reveal shift changes, operational cycles, or equipment behavior</li>
-            <li>Weekend vs weekday differences indicate process variation</li>
-          </ul>
+        <div className="mt-4 space-y-3">
+          {/* Weekend vs Weekday Analysis */}
+          <div className="rounded-lg border p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 mt-0.5">
+                <div className={`h-2 w-2 rounded-full ${hasSignificantDifference ? 'bg-amber-500' : 'bg-green-500'}`} />
+              </div>
+              <div className="flex-1">
+                <div className="text-sm font-semibold mb-2">Weekend vs Weekday Pattern Analysis</div>
+                <div className="text-sm text-muted-foreground space-y-2">
+                  {hasSignificantDifference ? (
+                    <>
+                      <p>
+                        <strong className="text-foreground">Significant operational difference detected:</strong> {' '}
+                        {weekendHigher ? 'Weekend' : 'Weekday'} alarm activity is{' '}
+                        <strong className="text-foreground">{Math.abs(weekdayWeekendDiffPct).toFixed(1)}% {weekendHigher ? 'higher' : 'lower'}</strong>{' '}
+                        ({weekendHigher ? 'Weekend' : 'Weekday'}: {(weekendHigher ? weekendAvg : weekdayAvg).toFixed(1)} vs{' '}
+                        {weekendHigher ? 'Weekday' : 'Weekend'}: {(weekendHigher ? weekdayAvg : weekendAvg).toFixed(1)} avg activations/hour).
+                      </p>
+                      <p className="text-xs">
+                        <strong>What this means:</strong> {weekendHigher
+                          ? 'Higher weekend activity may indicate understaffing, deferred maintenance issues surfacing, or different operational procedures during weekends.'
+                          : 'Lower weekend activity suggests reduced production schedules, better staffing ratios, or planned downtime for maintenance.'
+                        }
+                      </p>
+                      <p className="text-xs">
+                        <strong>Recommended action:</strong> {weekendHigher
+                          ? 'Review weekend staffing levels, investigate recurring weekend alarms, and consider if weekend maintenance activities are triggering unnecessary alarms.'
+                          : 'This pattern is typical for batch or scheduled operations. Ensure weekend alarm coverage is adequate for the reduced activity level.'
+                        }
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p>
+                        <strong className="text-foreground">Consistent operational pattern:</strong> {' '}
+                        Weekend and weekday alarm activity are similar (difference: {Math.abs(weekdayWeekendDiffPct).toFixed(1)}%),
+                        indicating <strong className="text-foreground">24/7 continuous operations</strong> with minimal schedule variation.
+                      </p>
+                      <p className="text-xs">
+                        <strong>What this means:</strong> Your process operates consistently throughout the week, suggesting continuous manufacturing,
+                        stable staffing patterns, and uniform operational procedures regardless of the day.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Variance Analysis */}
+          {highVariance && (
+            <div className="rounded-lg border p-4 bg-amber-50 dark:bg-amber-950/20">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <div className="text-sm font-semibold mb-2 text-amber-900 dark:text-amber-100">High Time-Based Variability Detected</div>
+                  <div className="text-sm text-amber-800 dark:text-amber-200 space-y-2">
+                    <p>
+                      Alarm patterns show <strong>high variance</strong> across different hours and days
+                      (Weekday σ: {weekdayStdDev.toFixed(1)}, Weekend σ: {weekendStdDev.toFixed(1)}),
+                      indicating <strong>unpredictable operational behavior</strong>.
+                    </p>
+                    <p className="text-xs">
+                      <strong>Potential causes:</strong> Shift changes, batch processing cycles, equipment cycling,
+                      or inconsistent operational procedures. High variability makes it harder to establish normal operating patterns.
+                    </p>
+                    <p className="text-xs">
+                      <strong>Recommended action:</strong> Investigate peak hours for root causes, standardize shift handover procedures,
+                      and consider time-based alarm suppression for known operational cycles.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* General Operational Patterns */}
+          <div className="rounded-lg p-3" style={{ backgroundColor: CHART_GREEN_PALE }}>
+            <div className="text-sm text-foreground font-medium mb-1">How to Read This Chart</div>
+            <ul className="text-sm text-muted-foreground list-disc ml-5 space-y-1">
+              <li><strong>Darker cells</strong> indicate higher alarm activity during that specific hour and day combination</li>
+              <li><strong>Star (★)</strong> marks the peak hour with the highest average alarm activations across all weeks</li>
+              <li><strong>Weekend rows</strong> (Sat/Sun) are highlighted to make day-of-week patterns easier to spot</li>
+              <li><strong>Vertical patterns</strong> (same hour across days) reveal time-based cycles like shift changes or batch processes</li>
+              <li><strong>Horizontal patterns</strong> (same day across hours) show daily operational rhythms and equipment behavior</li>
+            </ul>
+          </div>
         </div>
       </CardContent>
     </Card>

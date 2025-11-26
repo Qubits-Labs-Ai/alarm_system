@@ -11,12 +11,12 @@
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Shield, 
-  Activity, 
-  Users, 
-  TrendingUp, 
-  ChevronDown, 
+import {
+  Shield,
+  Activity,
+  Users,
+  TrendingUp,
+  ChevronDown,
   ChevronUp,
   Info,
   CheckCircle2,
@@ -32,6 +32,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { HealthScoreDetailsModal } from './HealthScoreDetailsModal';
 
 interface Props {
   healthScore: ComprehensiveHealthScore;
@@ -39,7 +40,7 @@ interface Props {
 }
 
 export default function ComprehensiveHealthCard({ healthScore, loading }: Props) {
-  const [expanded, setExpanded] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   if (loading) {
     return (
@@ -99,9 +100,9 @@ export default function ComprehensiveHealthCard({ healthScore, loading }: Props)
       weight: '40%',
       description: 'Daily alarm rates, window overload, peak intensity',
       subScores: [
-        { name: 'Daily Load', score: sub_scores.daily_load_score, weight: '50%' },
-        { name: 'Window Overload', score: sub_scores.window_overload_score, weight: '30%' },
-        { name: 'Peak Intensity', score: sub_scores.peak_intensity_score, weight: '20%' },
+        { name: 'Daily Load', score: sub_scores?.daily_load_score ?? 0, weight: '50%' },
+        { name: 'Window Overload', score: sub_scores?.window_overload_score ?? 0, weight: '30%' },
+        { name: 'Peak Intensity', score: sub_scores?.peak_intensity_score ?? 0, weight: '20%' },
       ]
     },
     {
@@ -111,8 +112,8 @@ export default function ComprehensiveHealthCard({ healthScore, loading }: Props)
       weight: '30%',
       description: 'Nuisance alarms, chattering, instrument failures',
       subScores: [
-        { name: 'Nuisance Control', score: sub_scores.nuisance_score, weight: '60%' },
-        { name: 'Instrument Health', score: sub_scores.instrument_health_score, weight: '40%' },
+        { name: 'Nuisance Control', score: sub_scores?.nuisance_score ?? 0, weight: '60%' },
+        { name: 'Instrument Health', score: sub_scores?.instrument_health_score ?? 0, weight: '40%' },
       ]
     },
     {
@@ -122,8 +123,8 @@ export default function ComprehensiveHealthCard({ healthScore, loading }: Props)
       weight: '20%',
       description: 'Standing alarm management, response times',
       subScores: [
-        { name: 'Standing Control', score: sub_scores.standing_control_score, weight: '50%' },
-        { name: 'Response Speed', score: sub_scores.response_score, weight: '50%' },
+        { name: 'Standing Control', score: sub_scores?.standing_control_score ?? 0, weight: '50%' },
+        { name: 'Response Speed', score: sub_scores?.response_score ?? 0, weight: '50%' },
       ]
     },
     {
@@ -133,7 +134,7 @@ export default function ComprehensiveHealthCard({ healthScore, loading }: Props)
       weight: '10%',
       description: 'Day-to-day consistency in alarm patterns',
       subScores: [
-        { name: 'Consistency', score: sub_scores.consistency_score, weight: '100%' },
+        { name: 'Consistency', score: sub_scores?.consistency_score ?? 0, weight: '100%' },
       ]
     }
   ];
@@ -156,11 +157,11 @@ export default function ComprehensiveHealthCard({ healthScore, loading }: Props)
             </TooltipProvider>
           </div>
           <button
-            onClick={() => setExpanded(!expanded)}
+            onClick={() => setDetailsOpen(true)}
             className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
           >
-            {expanded ? 'Less' : 'More'}
-            {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            More Details
+            <ChevronDown className="h-3 w-3 -rotate-90" />
           </button>
         </div>
       </CardHeader>
@@ -169,8 +170,8 @@ export default function ComprehensiveHealthCard({ healthScore, loading }: Props)
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
           <div className="space-y-3">
             <div className="flex items-baseline gap-3">
-              <div className={`text-5xl font-bold ${getScoreColor(overall_health)}`}>
-                {overall_health.toFixed(1)}
+              <div className={`text-5xl font-bold ${getScoreColor(overall_health ?? 0)}`}>
+                {(overall_health ?? 0).toFixed(1)}
               </div>
               <div className="text-xl text-muted-foreground">/100</div>
             </div>
@@ -183,9 +184,9 @@ export default function ComprehensiveHealthCard({ healthScore, loading }: Props)
                 <span className="text-sm font-medium text-muted-foreground">{risk_level}</span>
               </div>
             </div>
-            <Progress 
-              value={Math.max(0, Math.min(100, overall_health))} 
-              className={`h-3 ${getProgressColor(overall_health)}`} 
+            <Progress
+              value={Math.max(0, Math.min(100, overall_health ?? 0))}
+              className={`h-3 ${getProgressColor(overall_health ?? 0)}`}
             />
           </div>
 
@@ -219,30 +220,16 @@ export default function ComprehensiveHealthCard({ healthScore, loading }: Props)
                       </Tooltip>
                     </TooltipProvider>
                   </div>
-                  <span className={`text-sm font-bold ${getScoreColor(tier.score)}`}>
-                    {tier.score.toFixed(1)}
+                  <span className={`text-sm font-bold ${getScoreColor(tier.score ?? 0)}`}>
+                    {(tier.score ?? 0).toFixed(1)}
                   </span>
                 </div>
-                <Progress 
-                  value={Math.max(0, Math.min(100, tier.score))} 
-                  className={`h-1.5 ${getProgressColor(tier.score)}`} 
+                <Progress
+                  value={Math.max(0, Math.min(100, tier.score ?? 0))}
+                  className={`h-1.5 ${getProgressColor(tier.score ?? 0)}`}
                 />
 
-                {/* Sub-scores (expanded view only) */}
-                {expanded && (
-                  <div className="mt-3 space-y-2 pl-6 border-l-2 border-muted">
-                    {tier.subScores.map((sub) => (
-                      <div key={sub.name} className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">
-                          {sub.name} <span className="text-[10px]">({sub.weight})</span>
-                        </span>
-                        <span className={`font-semibold ${getScoreColor(sub.score)}`}>
-                          {sub.score.toFixed(1)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+
               </div>
             ))}
           </div>
@@ -254,6 +241,12 @@ export default function ComprehensiveHealthCard({ healthScore, loading }: Props)
           <span>Multi-tier weighted assessment</span>
         </div>
       </CardContent>
-    </Card>
+
+      <HealthScoreDetailsModal
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        healthScore={healthScore}
+      />
+    </Card >
   );
 }

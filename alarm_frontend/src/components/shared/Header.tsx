@@ -37,7 +37,7 @@ export function Header({
     user,
     onLogout,
     navLinks = [],
-    title = 'Alarm Management System',
+    title = 'AlarmCopilot',
     subtitle = 'Real-time monitoring & analytics'
 }: HeaderProps) {
     const getUserInitials = (name?: string) => {
@@ -60,13 +60,13 @@ export function Header({
 
     return (
         <header className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-[95%] max-w-7xl">
-            {/* Glassmorphic Container */}
-            <div className="relative rounded-[25px] border border-border/40 bg-background/60 backdrop-blur-xl shadow-lg">
+            {/* Glassmorphic Container with 3D Effect */}
+            <div className="relative rounded-[25px] border-2 border-border/50 bg-background/70 backdrop-blur-xl shadow-[0_8px_32px_0_rgba(0,0,0,0.12),0_2px_8px_0_rgba(0,0,0,0.08),inset_0_1px_0_0_rgba(255,255,255,0.1)] dark:shadow-[0_8px_32px_0_rgba(0,0,0,0.4),0_2px_8px_0_rgba(0,0,0,0.2),inset_0_1px_0_0_rgba(255,255,255,0.05)]">
                 <div className="px-8 py-4">
                     <div className="flex items-center justify-between gap-8">
                         {/* Left Section - Logo and Title */}
                         <div className="flex items-center gap-4">
-                            <div 
+                            <div
                                 className="flex items-center gap-3 cursor-pointer group"
                                 onClick={() => window.location.href = variant === 'landing' ? '/' : '/dashboard'}
                             >
@@ -184,8 +184,8 @@ export function Header({
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             ) : (
-                                <Button 
-                                    asChild 
+                                <Button
+                                    asChild
                                     className="bg-lime-accent hover:bg-lime-accent/90 text-black font-semibold shadow-sm hover:shadow-md transition-all rounded-full px-6"
                                 >
                                     <a href="/signin">Get Started</a>
